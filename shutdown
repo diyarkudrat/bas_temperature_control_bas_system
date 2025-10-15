@@ -1,6 +1,0 @@
-#!/bin/bash
-# Convenience wrapper for scripts/shutdown.sh
-exec "$(dirname "$0")/scripts/shutdown.sh" "$@"
-
-
-
