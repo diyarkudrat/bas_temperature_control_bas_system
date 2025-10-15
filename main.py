@@ -265,6 +265,13 @@ class SystemOrchestrator:
                 csv_path=csv_path
             )
             
+            # Ensure API server gets a reference even if it was started earlier
+            if self.api_server:
+                try:
+                    self.api_server.telemetry = self.telemetry
+                except Exception:
+                    pass
+            
             self.logger.info("Telemetry collector initialized", buffer_size=buffer_size)
             return True
             

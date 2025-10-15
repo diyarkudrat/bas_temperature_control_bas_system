@@ -220,6 +220,7 @@ class HardenedApiServer:
             'GET /telemetry': self._handle_telemetry,
             'GET /telemetry/stats': self._handle_telemetry_stats,
             'GET /telemetry/health': self._handle_telemetry_health,
+            'GET /telemetry/points': self._handle_telemetry_points,
         }
     
     def start(self, host="0.0.0.0", port=80):
@@ -1233,6 +1234,45 @@ setInterval(updateStats, 30000);  // 30 seconds
             
         except Exception as e:
             self._logger.error("Telemetry health endpoint failed", error=str(e))
+            response = HTTPResponse(500, "Internal Server Error")
+            response.set_json({"error": str(e)})
+            return response
+
+    def _handle_telemetry_points(self, request: HTTPRequest) -> HTTPResponse:
+        """Return normalized telemetry points for scalable ingestion.
+        Supports query params: duration_ms, limit, zone_id
+        """
+        if not self.telemetry:
+            response = HTTPResponse(503, "Service Unavailable")
+            response.set_json({"error": "Telemetry not enabled"})
+            return response
+        try:
+            duration_ms = int(request.query_params.get('duration_ms', 600000))
+            duration_ms = min(duration_ms, 86400000)
+            limit = int(request.query_params.get('limit', 1000))
+            limit = min(max(1, limit), 5000)
+            zone_id = request.query_params.get('zone_id')
+            since_ms = None
+            if 'since_ms' in request.query_params:
+                try:
+                    since_ms = int(request.query_params['since_ms'])
+                except:
+                    since_ms = None
+            fields = request.query_params.get('fields')  # comma-separated
+            compact = request.query_params.get('compact', '0') in ('1','true','True')
+            data = self.telemetry.export_points(
+                duration_ms=duration_ms,
+                limit=limit,
+                zone_filter=zone_id,
+                since_ms=since_ms,
+                fields=fields,
+                compact=compact
+            )
+            response = HTTPResponse()
+            response.set_json(data)
+            return response
+        except Exception as e:
+            self._logger.error("Telemetry points endpoint failed", error=str(e))
             response = HTTPResponse(500, "Internal Server Error")
             response.set_json({"error": str(e)})
             return response

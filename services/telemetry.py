@@ -420,6 +420,81 @@ class TelemetryCollector:
             'count': len(points),
             'duration_ms': duration_ms
         }
+
+    def export_points(self,
+                      duration_ms=600000,
+                      limit=1000,
+                      zone_filter=None,
+                      since_ms=None,
+                      fields=None,
+                      compact=False):
+        """
+        Export telemetry as normalized points suitable for large-scale storage.
+        Each point:
+          - measurement: 'bas_controller'
+          - tags: { zone_id?, state }
+          - fields: { temperature_c, setpoint_c, cooling, heating, alarm, error_code }
+          - timestamp_ms
+        """
+        now_ms = time.ticks_ms()
+        start_time = (since_ms if since_ms is not None else (now_ms - duration_ms))
+        src = self._buffer.get_recent(count=None, start_time_ms=start_time)
+        # src is newest-first; iterate backwards to build up to `limit` without copying src
+        exported = []
+        remaining = limit
+        # Normalize fields selection
+        want = None
+        if fields:
+            # Expect comma-separated list
+            want = {}
+            for f in fields.split(','):
+                want[f.strip()] = True
+        for idx in range(len(src) - 1, -1, -1):  # oldest-first by appending reversed src
+            if remaining == 0:
+                break
+            p = src[idx]
+            # Normalize zone for comparison: None -> 'default'
+            if zone_filter is not None and (p.zone_id if p.zone_id is not None else 'default') != zone_filter:
+                continue
+            # Build fields dict lazily and sparsely
+            temp_c = (p.temp_tenths / 10.0) if p.temp_tenths is not None else None
+            field_obj = {}
+            def addf(name, value):
+                if want is None or name in want:
+                    field_obj[name] = value
+            addf('temperature_c', temp_c)
+            addf('setpoint_c', p.setpoint_tenths / 10.0)
+            addf('cooling', 1 if p.cool_active else 0)
+            addf('heating', 1 if p.heat_active else 0)
+            addf('alarm', 1 if p.alarm else 0)
+            addf('error_code', p.error_code)
+            if compact:
+                # Compact, flat form with short keys reduces payload and allocations
+                exported.append({
+                    'm': 'bas',
+                    'tg': {
+                        'z': p.zone_id if p.zone_id is not None else 'default',
+                        's': p.state
+                    },
+                    'fd': field_obj,
+                    'ts': p.timestamp_ms
+                })
+            else:
+                exported.append({
+                    'measurement': 'bas_controller',
+                    'tags': {
+                        'zone_id': p.zone_id if p.zone_id is not None else 'default',
+                        'state': p.state,
+                    },
+                    'fields': field_obj,
+                    'timestamp_ms': p.timestamp_ms
+                })
+            remaining -= 1
+        return {
+            'count': len(exported),
+            'from_ms': start_time,
+            'points': exported
+        }
     
     def get_statistics(self, duration_ms=3600000):
         """
