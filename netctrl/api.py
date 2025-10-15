@@ -187,9 +187,10 @@ class HardenedApiServer:
     REQUEST_TIMEOUT_MS = 5000    # 5s per request
     MAX_SSE_CLIENTS = 3          # Max SSE connections
     
-    def __init__(self, controller, config_manager, auth_tokens):
+    def __init__(self, controller, config_manager, auth_tokens, telemetry=None):
         self.controller = controller
         self.config = config_manager
+        self.telemetry = telemetry
         self._logger = LoggerFactory.get_logger("ApiServer")
         
         # Security components (generous limits for development/testing)
@@ -208,13 +209,18 @@ class HardenedApiServer:
     def _init_routes(self) -> None:
         """Initialize route handlers."""
         self._routes = {
-            'GET /': self._handle_dashboard,
+            'GET /': self._handle_dashboard_lite,  # Use lightweight dashboard
+            'GET /full': self._handle_dashboard,   # Full dashboard (may cause OOM)
             'GET /status': self._handle_status,
             'POST /set': self._handle_set_config,
             'GET /events': self._handle_events,
             'GET /logs': self._handle_logs,
             'GET /config': self._handle_get_config,
             'POST /config/profile': self._handle_set_profile,
+            'GET /telemetry': self._handle_telemetry,
+            'GET /telemetry/stats': self._handle_telemetry_stats,
+            'GET /telemetry/health': self._handle_telemetry_health,
+            'GET /telemetry/points': self._handle_telemetry_points,
         }
     
     def start(self, host="0.0.0.0", port=80):
@@ -449,56 +455,325 @@ class HardenedApiServer:
         return params
     
     # Route handlers
+    def _handle_dashboard_lite(self, request: HTTPRequest) -> HTTPResponse:
+        """Serve lightweight dashboard for memory-constrained Pico W."""
+        html = """<!DOCTYPE html>
+<html><head><title>BAS Controller</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<style>
+body{font-family:sans-serif;margin:20px;max-width:600px}
+.card{border:1px solid #ddd;padding:15px;margin:10px 0;border-radius:5px}
+.big{font-size:32px;color:#2196f3;font-weight:bold}
+.label{color:#666;font-size:14px}
+.on{color:#4caf50;font-weight:bold}
+.off{color:#999}
+.alarm{background:#ffebee;border-color:#f44336}
+input,button{padding:10px;margin:5px}
+button{background:#2196f3;color:white;border:none;cursor:pointer}
+</style></head>
+<body>
+<h1>BAS Controller</h1>
+<div class="card">
+<div class="label">Temperature</div>
+<div class="big" id="temp">--</div>
+<div class="label">Setpoint: <span id="sp">--</span>°C | State: <span id="state">--</span></div>
+</div>
+<div class="card">
+<div class="label">Cooling: <span id="cool">--</span> | Heating: <span id="heat">--</span></div>
+</div>
+<div class="card" id="alarm" style="display:none">
+<h3>⚠️ ALARM</h3>
+<div>Sensor fault detected</div>
+</div>
+<div class="card">
+<input type="number" id="newsp" placeholder="Setpoint °C" step="0.5">
+<button onclick="update()">Set</button>
+</div>
+<div class="card">
+<a href="/telemetry?duration_ms=600000">📊 Telemetry Data</a> | 
+<a href="/telemetry/stats">📈 Statistics</a> | 
+<a href="/full">🖥️ Full Dashboard</a>
+</div>
+<script>
+async function load(){
+try{
+const r=await fetch('/status');
+const d=await r.json();
+document.getElementById('temp').textContent=(d.temp_tenths?(d.temp_tenths/10).toFixed(1):'--')+'°C';
+document.getElementById('sp').textContent=(d.setpoint_tenths/10).toFixed(1);
+document.getElementById('state').textContent=d.state;
+document.getElementById('cool').className=d.cool_active?'on':'off';
+document.getElementById('cool').textContent=d.cool_active?'ON':'OFF';
+document.getElementById('heat').className=d.heat_active?'on':'off';
+document.getElementById('heat').textContent=d.heat_active?'ON':'OFF';
+document.getElementById('alarm').style.display=d.alarm?'block':'none';
+}catch(e){console.error(e)}
+}
+async function update(){
+const sp=document.getElementById('newsp').value;
+if(!sp)return alert('Enter setpoint');
+const t=prompt('API token:');
+if(!t)return;
+try{
+const r=await fetch(`/set?token=${t}`,{
+method:'POST',
+headers:{'Content-Type':'application/json'},
+body:JSON.stringify({sp:Math.round(parseFloat(sp)*10)})
+});
+if(r.ok){alert('✓ Updated');load();}else{alert('Failed');}
+}catch(e){alert('Error: '+e.message)}
+}
+setInterval(load,3000);
+load();
+</script>
+</body></html>"""
+        response = HTTPResponse()
+        response.set_html(html)
+        return response
+    
     def _handle_dashboard(self, request: HTTPRequest) -> HTTPResponse:
-        """Serve minimal dashboard."""
+        """Serve enhanced dashboard with telemetry graphs."""
         html = """<!DOCTYPE html>
 <html><head><title>BAS Controller</title>
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
 <style>
-body { font-family: system-ui, sans-serif; margin: 20px; max-width: 600px; }
-.status { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin: 20px 0; }
-.card { border: 1px solid #ccc; padding: 15px; border-radius: 5px; }
-.alarm { background-color: #ffebee; border-color: #f44336; }
-input, button { padding: 8px; margin: 5px; }
-button { background: #2196f3; color: white; border: none; cursor: pointer; }
+body { 
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; 
+  margin: 0; padding: 20px; background: #f5f5f5; 
+}
+.container { max-width: 1400px; margin: 0 auto; }
+h1 { color: #333; margin-bottom: 20px; }
+.status-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 15px; margin: 20px 0; }
+.card { background: white; border-radius: 8px; padding: 20px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
+.card h3 { margin: 0 0 15px 0; color: #555; font-size: 16px; text-transform: uppercase; letter-spacing: 0.5px; }
+.metric { display: flex; justify-content: space-between; align-items: center; padding: 10px 0; border-bottom: 1px solid #eee; }
+.metric:last-child { border-bottom: none; }
+.metric-label { color: #666; font-size: 14px; }
+.metric-value { font-size: 20px; font-weight: 600; color: #333; }
+.metric-value.large { font-size: 32px; color: #2196f3; }
+.badge { display: inline-block; padding: 4px 12px; border-radius: 12px; font-size: 12px; font-weight: 600; }
+.badge.on { background: #4caf50; color: white; }
+.badge.off { background: #ccc; color: #666; }
+.badge.idle { background: #2196f3; color: white; }
+.badge.cooling { background: #00bcd4; color: white; }
+.badge.fault { background: #f44336; color: white; }
+.alarm { background: #ffebee; border: 2px solid #f44336; }
+.alarm h3 { color: #f44336; }
+.controls { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; }
+.controls input { padding: 12px; border: none; border-radius: 4px; width: 150px; font-size: 16px; }
+.controls button { padding: 12px 24px; background: white; color: #667eea; border: none; border-radius: 4px; cursor: pointer; font-weight: 600; margin-left: 10px; transition: transform 0.2s; }
+.controls button:hover { transform: scale(1.05); }
+.controls button:active { transform: scale(0.95); }
+.chart-container { position: relative; height: 350px; margin: 20px 0; }
+.tabs { display: flex; gap: 10px; margin-bottom: 15px; }
+.tab { padding: 10px 20px; background: #e0e0e0; border: none; border-radius: 4px; cursor: pointer; font-weight: 600; }
+.tab.active { background: #2196f3; color: white; }
+.stats-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 10px; margin-top: 15px; }
+.stat-item { background: #f8f8f8; padding: 12px; border-radius: 4px; }
+.stat-item .label { font-size: 12px; color: #666; margin-bottom: 5px; }
+.stat-item .value { font-size: 20px; font-weight: 600; color: #333; }
 </style></head>
 <body>
-<h1>BAS Temperature Controller</h1>
-<div class="status">
+<div class="container">
+<h1>🏠 BAS Temperature Controller</h1>
+
+<div class="status-grid">
   <div class="card">
-    <h3>Current Status</h3>
-    <div>Temperature: <span id="temp">--</span>°C</div>
-    <div>Setpoint: <span id="setpoint">--</span>°C</div>
-    <div>State: <span id="state">--</span></div>
+    <h3>Current Temperature</h3>
+    <div class="metric">
+      <span class="metric-label">Reading</span>
+      <span class="metric-value large" id="temp">--</span>
+    </div>
+    <div class="metric">
+      <span class="metric-label">Setpoint</span>
+      <span class="metric-value" id="setpoint">--</span>
+    </div>
   </div>
+  
   <div class="card">
-    <h3>Actuators</h3>
-    <div>Cooling: <span id="cooling">--</span></div>
-    <div>Heating: <span id="heating">--</span></div>
+    <h3>System State</h3>
+    <div class="metric">
+      <span class="metric-label">Controller</span>
+      <span class="badge" id="state-badge">IDLE</span>
+    </div>
+    <div class="metric">
+      <span class="metric-label">Cooling</span>
+      <span class="badge off" id="cooling-badge">OFF</span>
+    </div>
+    <div class="metric">
+      <span class="metric-label">Heating</span>
+      <span class="badge off" id="heating-badge">OFF</span>
+    </div>
+  </div>
+  
+  <div class="card">
+    <h3>Statistics (1 Hour)</h3>
+    <div id="stats-content">Loading...</div>
   </div>
 </div>
+
 <div class="card" id="alarm" style="display:none;">
-  <h3>⚠️ System Alarm</h3>
-  <div id="alarm-msg">Sensor fault detected</div>
+  <h3>⚠️ SYSTEM ALARM</h3>
+  <div id="alarm-msg" style="font-size: 16px; margin-top: 10px;">Sensor fault detected</div>
 </div>
+
+<div class="card controls">
+  <h3>Set Temperature</h3>
+  <div style="margin-top: 15px;">
+    <input type="number" id="new-sp" placeholder="Setpoint (°C)" step="0.1">
+    <button onclick="updateSetpoint()">Update Setpoint</button>
+  </div>
+</div>
+
 <div class="card">
-  <h3>Controls</h3>
-  <input type="number" id="new-sp" placeholder="Setpoint (°C)" step="0.1">
-  <button onclick="updateSetpoint()">Update Setpoint</button>
+  <h3>Temperature History</h3>
+  <div class="tabs">
+    <button class="tab active" onclick="changeTimeRange(600000, this)">10 Min</button>
+    <button class="tab" onclick="changeTimeRange(1800000, this)">30 Min</button>
+    <button class="tab" onclick="changeTimeRange(3600000, this)">1 Hour</button>
+  </div>
+  <div class="chart-container">
+    <canvas id="tempChart"></canvas>
+  </div>
 </div>
+
+<div class="card">
+  <h3>Actuator Activity</h3>
+  <div class="chart-container">
+    <canvas id="actuatorChart"></canvas>
+  </div>
+</div>
+
+</div>
+
 <script>
+let tempChart = null;
+let actuatorChart = null;
+let currentTimeRange = 600000; // 10 minutes default
+let apiToken = null;
+
+// Initialize charts
+function initCharts() {
+  const tempCtx = document.getElementById('tempChart').getContext('2d');
+  tempChart = new Chart(tempCtx, {
+    type: 'line',
+    data: {
+      labels: [],
+      datasets: [
+        {
+          label: 'Temperature',
+          data: [],
+          borderColor: '#f44336',
+          backgroundColor: 'rgba(244, 67, 54, 0.1)',
+          borderWidth: 2,
+          tension: 0.4,
+          fill: true
+        },
+        {
+          label: 'Setpoint',
+          data: [],
+          borderColor: '#2196f3',
+          backgroundColor: 'rgba(33, 150, 243, 0.1)',
+          borderWidth: 2,
+          borderDash: [5, 5],
+          tension: 0,
+          fill: false
+        }
+      ]
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      interaction: { mode: 'index', intersect: false },
+      plugins: {
+        legend: { display: true, position: 'top' },
+        tooltip: { mode: 'index', intersect: false }
+      },
+      scales: {
+        x: { 
+          display: true,
+          title: { display: true, text: 'Time' }
+        },
+        y: {
+          display: true,
+          title: { display: true, text: 'Temperature (°C)' },
+          ticks: { callback: function(value) { return value.toFixed(1) + '°C'; } }
+        }
+      }
+    }
+  });
+  
+  const actCtx = document.getElementById('actuatorChart').getContext('2d');
+  actuatorChart = new Chart(actCtx, {
+    type: 'line',
+    data: {
+      labels: [],
+      datasets: [
+        {
+          label: 'Cooling',
+          data: [],
+          borderColor: '#00bcd4',
+          backgroundColor: 'rgba(0, 188, 212, 0.3)',
+          borderWidth: 2,
+          stepped: true,
+          fill: true
+        },
+        {
+          label: 'Heating',
+          data: [],
+          borderColor: '#ff9800',
+          backgroundColor: 'rgba(255, 152, 0, 0.3)',
+          borderWidth: 2,
+          stepped: true,
+          fill: true
+        }
+      ]
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      interaction: { mode: 'index', intersect: false },
+      plugins: {
+        legend: { display: true, position: 'top' }
+      },
+      scales: {
+        x: { display: true, title: { display: true, text: 'Time' } },
+        y: {
+          display: true,
+          title: { display: true, text: 'State' },
+          min: 0, max: 1,
+          ticks: { stepSize: 1, callback: function(value) { return value === 1 ? 'ON' : 'OFF'; } }
+        }
+      }
+    }
+  });
+}
+
 async function updateStatus() {
   try {
     const response = await fetch('/status');
     const data = await response.json();
     
-    document.getElementById('temp').textContent = 
-      data.temp_tenths ? (data.temp_tenths/10).toFixed(1) : '--';
-    document.getElementById('setpoint').textContent = (data.setpoint_tenths/10).toFixed(1);
-    document.getElementById('state').textContent = data.state;
-    document.getElementById('cooling').textContent = data.cool_active ? 'ON' : 'OFF';
-    document.getElementById('heating').textContent = data.heat_active ? 'ON' : 'OFF';
+    // Update current readings
+    const tempValue = data.temp_tenths ? (data.temp_tenths/10).toFixed(1) + '°C' : '--';
+    document.getElementById('temp').textContent = tempValue;
+    document.getElementById('setpoint').textContent = (data.setpoint_tenths/10).toFixed(1) + '°C';
     
+    // Update state badges
+    const stateBadge = document.getElementById('state-badge');
+    stateBadge.textContent = data.state;
+    stateBadge.className = 'badge ' + data.state.toLowerCase();
+    
+    const coolingBadge = document.getElementById('cooling-badge');
+    coolingBadge.textContent = data.cool_active ? 'ON' : 'OFF';
+    coolingBadge.className = 'badge ' + (data.cool_active ? 'on' : 'off');
+    
+    const heatingBadge = document.getElementById('heating-badge');
+    heatingBadge.textContent = data.heat_active ? 'ON' : 'OFF';
+    heatingBadge.className = 'badge ' + (data.heat_active ? 'on' : 'off');
+    
+    // Update alarm
     const alarm = document.getElementById('alarm');
     if (data.alarm) {
       alarm.style.display = 'block';
@@ -511,34 +786,111 @@ async function updateStatus() {
   }
 }
 
+async function updateTelemetry() {
+  try {
+    const response = await fetch(`/telemetry?duration_ms=${currentTimeRange}&max_points=300`);
+    const data = await response.json();
+    
+    if (data.timestamps && data.timestamps.length > 0) {
+      // Format timestamps as HH:MM:SS
+      const labels = data.timestamps.map(ts => {
+        const date = new Date(ts);
+        return date.toLocaleTimeString();
+      });
+      
+      // Update temperature chart
+      tempChart.data.labels = labels;
+      tempChart.data.datasets[0].data = data.temperatures;
+      tempChart.data.datasets[1].data = data.setpoints;
+      tempChart.update('none');
+      
+      // Update actuator chart
+      actuatorChart.data.labels = labels;
+      actuatorChart.data.datasets[0].data = data.cooling;
+      actuatorChart.data.datasets[1].data = data.heating;
+      actuatorChart.update('none');
+    }
+  } catch (e) {
+    console.error('Failed to fetch telemetry:', e);
+  }
+}
+
+async function updateStats() {
+  try {
+    const response = await fetch('/telemetry/stats?duration_ms=3600000');
+    const data = await response.json();
+    
+    if (data.temperature && !data.temperature.error) {
+      const temp = data.temperature;
+      const duty = data.duty_cycles;
+      
+      let html = '<div class="stats-grid">';
+      html += `<div class="stat-item"><div class="label">Avg Temp</div><div class="value">${temp.avg_c.toFixed(1)}°C</div></div>`;
+      html += `<div class="stat-item"><div class="label">Min / Max</div><div class="value">${temp.min_c.toFixed(1)} / ${temp.max_c.toFixed(1)}°C</div></div>`;
+      html += `<div class="stat-item"><div class="label">Cool Duty</div><div class="value">${duty.cooling_pct.toFixed(1)}%</div></div>`;
+      html += `<div class="stat-item"><div class="label">Cool Cycles</div><div class="value">${duty.cooling_cycles}</div></div>`;
+      html += '</div>';
+      
+      document.getElementById('stats-content').innerHTML = html;
+    }
+  } catch (e) {
+    console.error('Failed to fetch stats:', e);
+  }
+}
+
 async function updateSetpoint() {
   const newSp = document.getElementById('new-sp').value;
-  if (!newSp) return;
+  if (!newSp) {
+    alert('Please enter a setpoint value');
+    return;
+  }
   
-  const token = prompt('Enter API token:');
-  if (!token) return;
+  if (!apiToken) {
+    apiToken = prompt('Enter API token:');
+    if (!apiToken) return;
+  }
   
   try {
-    const response = await fetch(`/set?token=${encodeURIComponent(token)}`, {
+    const response = await fetch(`/set?token=${encodeURIComponent(apiToken)}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ sp: Math.round(parseFloat(newSp) * 10) })
     });
     
     if (response.ok) {
-      alert('Setpoint updated successfully');
+      alert('✓ Setpoint updated successfully');
       updateStatus();
+      setTimeout(updateTelemetry, 500);
     } else {
-      alert('Failed to update setpoint: ' + await response.text());
+      alert('Failed to update setpoint');
+      apiToken = null; // Clear token on failure
     }
   } catch (e) {
     alert('Error: ' + e.message);
   }
 }
 
-// Update every 2 seconds
-setInterval(updateStatus, 2000);
+function changeTimeRange(rangeMs, button) {
+  currentTimeRange = rangeMs;
+  
+  // Update active tab
+  document.querySelectorAll('.tab').forEach(tab => tab.classList.remove('active'));
+  button.classList.add('active');
+  
+  // Refresh telemetry with new range
+  updateTelemetry();
+}
+
+// Initialize
+initCharts();
 updateStatus();
+updateTelemetry();
+updateStats();
+
+// Update intervals
+setInterval(updateStatus, 2000);  // 2 seconds
+setInterval(updateTelemetry, 5000);  // 5 seconds
+setInterval(updateStats, 30000);  // 30 seconds
 </script>
 </body></html>"""
         
@@ -811,6 +1163,119 @@ updateStatus();
         
         for sock in expired:
             self._cleanup_client(sock)
+    
+    def _handle_telemetry(self, request: HTTPRequest) -> HTTPResponse:
+        """Return telemetry time series data for graphing."""
+        if not self.telemetry:
+            response = HTTPResponse(503, "Service Unavailable")
+            response.set_json({"error": "Telemetry not enabled"})
+            return response
+        
+        try:
+            # Parse query parameters
+            duration_ms = int(request.query_params.get('duration_ms', 600000))  # Default 10 minutes
+            max_points = int(request.query_params.get('max_points', 300))
+            
+            # Validate parameters
+            duration_ms = min(duration_ms, 3600000)  # Max 1 hour
+            max_points = min(max_points, 1000)  # Max 1000 points
+            
+            # Get time series data
+            data = self.telemetry.get_time_series_data(duration_ms, max_points)
+            
+            response = HTTPResponse()
+            response.set_json(data)
+            return response
+            
+        except Exception as e:
+            self._logger.error("Telemetry endpoint failed", error=str(e))
+            response = HTTPResponse(500, "Internal Server Error")
+            response.set_json({"error": str(e)})
+            return response
+    
+    def _handle_telemetry_stats(self, request: HTTPRequest) -> HTTPResponse:
+        """Return aggregated telemetry statistics."""
+        if not self.telemetry:
+            response = HTTPResponse(503, "Service Unavailable")
+            response.set_json({"error": "Telemetry not enabled"})
+            return response
+        
+        try:
+            # Parse duration parameter
+            duration_ms = int(request.query_params.get('duration_ms', 3600000))  # Default 1 hour
+            duration_ms = min(duration_ms, 86400000)  # Max 24 hours
+            
+            # Get statistics
+            stats = self.telemetry.get_statistics(duration_ms)
+            
+            response = HTTPResponse()
+            response.set_json(stats)
+            return response
+            
+        except Exception as e:
+            self._logger.error("Telemetry stats endpoint failed", error=str(e))
+            response = HTTPResponse(500, "Internal Server Error")
+            response.set_json({"error": str(e)})
+            return response
+    
+    def _handle_telemetry_health(self, request: HTTPRequest) -> HTTPResponse:
+        """Return telemetry system health metrics."""
+        if not self.telemetry:
+            response = HTTPResponse(503, "Service Unavailable")
+            response.set_json({"error": "Telemetry not enabled"})
+            return response
+        
+        try:
+            health = self.telemetry.get_system_health()
+            
+            response = HTTPResponse()
+            response.set_json(health)
+            return response
+            
+        except Exception as e:
+            self._logger.error("Telemetry health endpoint failed", error=str(e))
+            response = HTTPResponse(500, "Internal Server Error")
+            response.set_json({"error": str(e)})
+            return response
+
+    def _handle_telemetry_points(self, request: HTTPRequest) -> HTTPResponse:
+        """Return normalized telemetry points for scalable ingestion.
+        Supports query params: duration_ms, limit, zone_id
+        """
+        if not self.telemetry:
+            response = HTTPResponse(503, "Service Unavailable")
+            response.set_json({"error": "Telemetry not enabled"})
+            return response
+        try:
+            duration_ms = int(request.query_params.get('duration_ms', 600000))
+            duration_ms = min(duration_ms, 86400000)
+            limit = int(request.query_params.get('limit', 1000))
+            limit = min(max(1, limit), 5000)
+            zone_id = request.query_params.get('zone_id')
+            since_ms = None
+            if 'since_ms' in request.query_params:
+                try:
+                    since_ms = int(request.query_params['since_ms'])
+                except:
+                    since_ms = None
+            fields = request.query_params.get('fields')  # comma-separated; client may send any subset
+            compact = request.query_params.get('compact', '0') in ('1','true','True')
+            data = self.telemetry.export_points(
+                duration_ms=duration_ms,
+                limit=limit,
+                zone_filter=zone_id,
+                since_ms=since_ms,
+                fields=fields,
+                compact=compact
+            )
+            response = HTTPResponse()
+            response.set_json(data)
+            return response
+        except Exception as e:
+            self._logger.error("Telemetry points endpoint failed", error=str(e))
+            response = HTTPResponse(500, "Internal Server Error")
+            response.set_json({"error": str(e)})
+            return response
     
     def get_stats(self):
         """Get server statistics."""

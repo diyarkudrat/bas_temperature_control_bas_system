@@ -9,6 +9,7 @@ from display import Display
 from netctrl.wifi import connect_wifi
 from netctrl.api import HardenedApiServer
 from services import ConfigManager, LoggerFactory, SystemError, SystemErrorCodes, handle_error, ErrorContext
+from services.telemetry import TelemetryCollector
 
 class SystemOrchestrator:
     """Orchestrates all system components with cooperative scheduling."""
@@ -20,6 +21,7 @@ class SystemOrchestrator:
         self.display = None
         self.api_server = None
         self.clock = SystemClock()
+        self.telemetry = None
         
         # System state
         self.running = False
@@ -59,6 +61,10 @@ class SystemOrchestrator:
             # Initialize API server
             if not self._init_api_server():
                 return False
+            
+            # Initialize telemetry (non-critical)
+            if not self._init_telemetry():
+                self.logger.warning("Telemetry initialization failed - continuing without telemetry")
             
             self.logger.info("System initialization completed successfully")
             return True
@@ -223,7 +229,8 @@ class SystemOrchestrator:
             self.api_server = HardenedApiServer(
                 controller=self.controller,
                 config_manager=self.config_manager,
-                auth_tokens=tokens
+                auth_tokens=tokens,
+                telemetry=self.telemetry
             )
             
             # Start server
@@ -240,6 +247,38 @@ class SystemOrchestrator:
             self.logger.warning("API server initialization failed", error=str(e))
             self.api_server = None
             return True
+    
+    def _init_telemetry(self) :
+        """Initialize telemetry collection system."""
+        try:
+            # Buffer size: Reduced for memory constraints on Pico W
+            # 300 points = ~10 minutes at 2s intervals
+            buffer_size = 300
+            
+            # Optional CSV export (disabled by default to save flash writes)
+            # Enable by uncommenting and setting path:
+            # csv_path = "/telemetry.csv"
+            csv_path = None
+            
+            self.telemetry = TelemetryCollector(
+                buffer_size=buffer_size,
+                csv_path=csv_path
+            )
+            
+            # Ensure API server gets a reference even if it was started earlier
+            if self.api_server:
+                try:
+                    self.api_server.telemetry = self.telemetry
+                except Exception:
+                    pass
+            
+            self.logger.info("Telemetry collector initialized", buffer_size=buffer_size)
+            return True
+            
+        except Exception as e:
+            self.logger.error("Telemetry initialization failed", error=str(e))
+            self.telemetry = None
+            return False
     
     def run(self) :
         """Main system loop with cooperative scheduling."""
@@ -301,6 +340,15 @@ class SystemOrchestrator:
         try:
             if self.controller:
                 status = self.controller.step()
+                
+                # Collect telemetry (non-blocking)
+                if self.telemetry:
+                    try:
+                        self.telemetry.collect(status)
+                    except Exception as e:
+                        # Don't let telemetry failures impact control loop
+                        if self.cycle_count % 100 == 0:  # Throttle error logs
+                            self.logger.warning("Telemetry collection failed", error=str(e))
                 
                 # Check if debug logs are enabled
                 try:
@@ -367,8 +415,8 @@ class SystemOrchestrator:
         """Perform housekeeping tasks."""
         current_time = time.ticks_ms()
         
-        # Periodic garbage collection
-        if time.ticks_diff(current_time, self.last_gc_ms) > 10000:  # Every 10 seconds
+        # Periodic garbage collection (more frequent for Pico W memory constraints)
+        if time.ticks_diff(current_time, self.last_gc_ms) > 5000:  # Every 5 seconds
             try:
                 gc.collect()
                 self.last_gc_ms = current_time
@@ -395,6 +443,13 @@ class SystemOrchestrator:
             if self.api_server:
                 self.api_server.stop()
                 self.api_server = None
+            
+            # Flush telemetry data
+            if self.telemetry:
+                try:
+                    self.telemetry.shutdown()
+                except Exception as e:
+                    self.logger.warning("Telemetry shutdown failed", error=str(e))
             
             # Put controller in safe state
             if self.controller:

@@ -2,6 +2,7 @@
 # Production-grade cool-only controller with dependency injection and error handling
 
 from interfaces import TemperatureSensor, Actuator, Clock, SensorReading
+from services import LoggerFactory
 
 class ControllerStatus:
     """
@@ -68,6 +69,14 @@ class CoolOnlyController:
         self._last_on_ms = None  # when fan last turned ON
         self._last_off_ms = self._clock.now_ms() - self._min_off_ms  # min-off satisfied at startup
         self._last_status = None
+        
+        # Logging for state transitions
+        self._logger = LoggerFactory.get_logger("Controller")
+        
+        # Performance tracking
+        self._state_change_count = 0
+        self._cooling_cycle_count = 0
+        self._fault_count = 0
         
         # Initialize heat actuator policy
         if self._heat_always_on:
@@ -190,22 +199,49 @@ class CoolOnlyController:
     def _transition_cooling_on(self) -> None:
         """Transition to COOLING state."""
         self._cool.activate()
+        prev_state = self._state
         self._state = "COOLING"
         self._last_on_ms = self._clock.now_ms()
+        self._state_change_count += 1
+        self._cooling_cycle_count += 1
+        
+        # Log state transition
+        self._logger.info("State transition", 
+                         from_state=prev_state, 
+                         to_state="COOLING",
+                         cooling_cycle=self._cooling_cycle_count)
 
     def _transition_cooling_off(self) -> None:
         """Transition to IDLE state."""
         self._cool.deactivate()
+        prev_state = self._state
         self._state = "IDLE"
         self._last_off_ms = self._clock.now_ms()
+        self._state_change_count += 1
+        
+        # Calculate ON duration for this cycle
+        if self._last_on_ms is not None:
+            on_duration_ms = self._clock.elapsed_ms(self._last_on_ms)
+            self._logger.info("State transition", 
+                             from_state=prev_state, 
+                             to_state="IDLE",
+                             cooling_duration_ms=on_duration_ms)
 
     def _transition_to_fault(self) -> None:
         """Transition to FAULT state with safe actuator states."""
         self._cool.deactivate()  # Fail-safe: turn off cooling
         if not self._heat_always_on:
             self._heat.deactivate()  # Turn off heat if not always-on
+        prev_state = self._state
         self._state = "FAULT"
         self._last_off_ms = self._clock.now_ms()
+        self._state_change_count += 1
+        self._fault_count += 1
+        
+        # Log fault transition with severity
+        self._logger.error("Fault state entered", 
+                          from_state=prev_state,
+                          fault_count=self._fault_count)
     
     def force_safe_state(self) -> None:
         """Force all actuators to safe state (for emergency shutdown)."""
@@ -215,6 +251,24 @@ class CoolOnlyController:
     def last_status(self):
         """Return last status for external access (API, etc.)."""
         return self._last_status
+    
+    def get_performance_metrics(self):
+        """Get controller performance metrics."""
+        uptime_ms = self._clock.now_ms()
+        
+        return {
+            'state_change_count': self._state_change_count,
+            'cooling_cycle_count': self._cooling_cycle_count,
+            'fault_count': self._fault_count,
+            'current_state': self._state,
+            'uptime_ms': uptime_ms,
+            'config': {
+                'setpoint_tenths': self._setpoint,
+                'deadband_tenths': self._deadband,
+                'min_on_ms': self._min_on_ms,
+                'min_off_ms': self._min_off_ms
+            }
+        }
     
     def close(self) -> None:
         """Clean up resources."""
