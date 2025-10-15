@@ -1,9 +1,12 @@
 # tests/test_services.py
 # Tests for services layer (config management, logging, error handling)
 
-import ujson as json
+try:
+    import ujson as json
+except Exception:
+    import json
 import time
-from services import ConfigManager, ConfigProfile, Logger, LogLevel, ErrorHandler, SystemError, SystemErrorCodes
+from services import ConfigManager, ConfigProfile, Logger, LogLevel, ErrorHandler, SystemError, SystemErrorCodes, LoggerFactory
 
 # Test utilities
 def assert_eq(actual, expected, message=""):
@@ -278,6 +281,55 @@ class TestLogging:
         
         print("✓ Ring buffer test passed")
 
+    def test_per_logger_overrides(self):
+        """Test per-logger level/print overrides vs global controls."""
+        # Create two component loggers via factory
+        a = LoggerFactory.get_logger("A")
+        b = LoggerFactory.get_logger("B")
+        a.set_print_enabled(False)
+        b.set_print_enabled(False)
+
+        # Start with a global INFO
+        LoggerFactory.set_global_level(LogLevel.INFO)
+        assert_eq(a.level, LogLevel.INFO, "A should follow global INFO")
+        assert_eq(b.level, LogLevel.INFO, "B should follow global INFO")
+
+        # Override B to ERROR; raise global to DEBUG. B should remain ERROR.
+        LoggerFactory.override_level("B", LogLevel.ERROR)
+        LoggerFactory.set_global_level(LogLevel.DEBUG)
+        assert_eq(a.level, LogLevel.DEBUG, "A follows global DEBUG")
+        assert_eq(b.level, LogLevel.ERROR, "B keeps overridden ERROR")
+
+        # Override print on A only; then globally disable print. A stays as set, B follows global.
+        LoggerFactory.override_print("A", True)
+        LoggerFactory.set_print_enabled(False)
+        assert_true(a._print_enabled, "A print remains True due to override")
+        assert_false(b._print_enabled, "B print follows global False")
+
+        print("✓ Per-logger overrides test passed")
+
+    def test_clear_overrides_and_sync(self):
+        """Clearing overrides should sync logger back to global settings."""
+        c = LoggerFactory.get_logger("C")
+        c.set_print_enabled(False)
+        LoggerFactory.set_global_level(LogLevel.WARNING)
+        LoggerFactory.override_level("C", LogLevel.ERROR)
+        assert_eq(c.level, LogLevel.ERROR, "C level overridden to ERROR")
+
+        # Clear override -> should adopt current global (WARNING)
+        LoggerFactory.clear_level_override("C")
+        assert_eq(c.level, LogLevel.WARNING, "C level synced back to global WARNING")
+
+        # Print override
+        LoggerFactory.override_print("C", True)
+        assert_true(c._print_enabled, "C print True overridden")
+        # Set global False and clear override -> should become False
+        LoggerFactory.set_print_enabled(False)
+        LoggerFactory.clear_print_override("C")
+        assert_false(c._print_enabled, "C print synced back to global False")
+
+        print("✓ Clear overrides sync test passed")
+
 class TestErrorHandler:
     """Test error handling functionality."""
     
@@ -420,6 +472,8 @@ def run_all_services_tests():
     logging_tests.test_log_levels()
     logging_tests.test_structured_logging()
     logging_tests.test_ring_buffer()
+    logging_tests.test_per_logger_overrides()
+    logging_tests.test_clear_overrides_and_sync()
     
     # Error Handler tests
     error_tests = TestErrorHandler()
