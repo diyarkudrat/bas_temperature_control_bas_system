@@ -251,9 +251,9 @@ class SystemOrchestrator:
     def _init_telemetry(self) :
         """Initialize telemetry collection system."""
         try:
-            # Buffer size: ~30 minutes at 2s intervals = 900 points
-            # Using 1000 for round number and some buffer
-            buffer_size = 1000
+            # Buffer size: Reduced for memory constraints on Pico W
+            # 300 points = ~10 minutes at 2s intervals
+            buffer_size = 300
             
             # Optional CSV export (disabled by default to save flash writes)
             # Enable by uncommenting and setting path:
@@ -408,8 +408,8 @@ class SystemOrchestrator:
         """Perform housekeeping tasks."""
         current_time = time.ticks_ms()
         
-        # Periodic garbage collection
-        if time.ticks_diff(current_time, self.last_gc_ms) > 10000:  # Every 10 seconds
+        # Periodic garbage collection (more frequent for Pico W memory constraints)
+        if time.ticks_diff(current_time, self.last_gc_ms) > 5000:  # Every 5 seconds
             try:
                 gc.collect()
                 self.last_gc_ms = current_time

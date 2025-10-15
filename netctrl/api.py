@@ -209,7 +209,8 @@ class HardenedApiServer:
     def _init_routes(self) -> None:
         """Initialize route handlers."""
         self._routes = {
-            'GET /': self._handle_dashboard,
+            'GET /': self._handle_dashboard_lite,  # Use lightweight dashboard
+            'GET /full': self._handle_dashboard,   # Full dashboard (may cause OOM)
             'GET /status': self._handle_status,
             'POST /set': self._handle_set_config,
             'GET /events': self._handle_events,
@@ -453,6 +454,82 @@ class HardenedApiServer:
         return params
     
     # Route handlers
+    def _handle_dashboard_lite(self, request: HTTPRequest) -> HTTPResponse:
+        """Serve lightweight dashboard for memory-constrained Pico W."""
+        html = """<!DOCTYPE html>
+<html><head><title>BAS Controller</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<style>
+body{font-family:sans-serif;margin:20px;max-width:600px}
+.card{border:1px solid #ddd;padding:15px;margin:10px 0;border-radius:5px}
+.big{font-size:32px;color:#2196f3;font-weight:bold}
+.label{color:#666;font-size:14px}
+.on{color:#4caf50;font-weight:bold}
+.off{color:#999}
+.alarm{background:#ffebee;border-color:#f44336}
+input,button{padding:10px;margin:5px}
+button{background:#2196f3;color:white;border:none;cursor:pointer}
+</style></head>
+<body>
+<h1>BAS Controller</h1>
+<div class="card">
+<div class="label">Temperature</div>
+<div class="big" id="temp">--</div>
+<div class="label">Setpoint: <span id="sp">--</span>°C | State: <span id="state">--</span></div>
+</div>
+<div class="card">
+<div class="label">Cooling: <span id="cool">--</span> | Heating: <span id="heat">--</span></div>
+</div>
+<div class="card" id="alarm" style="display:none">
+<h3>⚠️ ALARM</h3>
+<div>Sensor fault detected</div>
+</div>
+<div class="card">
+<input type="number" id="newsp" placeholder="Setpoint °C" step="0.5">
+<button onclick="update()">Set</button>
+</div>
+<div class="card">
+<a href="/telemetry?duration_ms=600000">📊 Telemetry Data</a> | 
+<a href="/telemetry/stats">📈 Statistics</a> | 
+<a href="/full">🖥️ Full Dashboard</a>
+</div>
+<script>
+async function load(){
+try{
+const r=await fetch('/status');
+const d=await r.json();
+document.getElementById('temp').textContent=(d.temp_tenths?(d.temp_tenths/10).toFixed(1):'--')+'°C';
+document.getElementById('sp').textContent=(d.setpoint_tenths/10).toFixed(1);
+document.getElementById('state').textContent=d.state;
+document.getElementById('cool').className=d.cool_active?'on':'off';
+document.getElementById('cool').textContent=d.cool_active?'ON':'OFF';
+document.getElementById('heat').className=d.heat_active?'on':'off';
+document.getElementById('heat').textContent=d.heat_active?'ON':'OFF';
+document.getElementById('alarm').style.display=d.alarm?'block':'none';
+}catch(e){console.error(e)}
+}
+async function update(){
+const sp=document.getElementById('newsp').value;
+if(!sp)return alert('Enter setpoint');
+const t=prompt('API token:');
+if(!t)return;
+try{
+const r=await fetch(`/set?token=${t}`,{
+method:'POST',
+headers:{'Content-Type':'application/json'},
+body:JSON.stringify({sp:Math.round(parseFloat(sp)*10)})
+});
+if(r.ok){alert('✓ Updated');load();}else{alert('Failed');}
+}catch(e){alert('Error: '+e.message)}
+}
+setInterval(load,3000);
+load();
+</script>
+</body></html>"""
+        response = HTTPResponse()
+        response.set_html(html)
+        return response
+    
     def _handle_dashboard(self, request: HTTPRequest) -> HTTPResponse:
         """Serve enhanced dashboard with telemetry graphs."""
         html = """<!DOCTYPE html>
