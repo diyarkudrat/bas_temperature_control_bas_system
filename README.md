@@ -4,6 +4,23 @@ Production-grade temperature control system for Raspberry Pi Pico W with MicroPy
 
 Single-zone closed-loop controller with web API, OLED display, and clean architecture.
 
+## 📋 Table of Contents
+
+- [🚀 Quick Setup](#-quick-setup)
+- [📐 Architecture](#-architecture)
+- [🔧 Configuration](#-configuration)
+- [🛠️ Development](#️-development)
+- [🏗️ Extending the Project](#️-extending-the-project)
+- [📁 Project Structure](#-project-structure)
+- [🌐 API Reference](#-api-reference)
+- [🧪 Testing](#-testing)
+- [🔒 Security](#-security)
+- [📊 Performance](#-performance)
+- [🛡️ Features](#️-features)
+- [🐛 Troubleshooting](#-troubleshooting)
+- [📚 Detailed Documentation](#-detailed-documentation)
+- [📝 License](#-license)
+
 ---
 
 ## 🚀 Quick Setup
@@ -294,7 +311,17 @@ python3 tools/test_api.py
 - Input validation & size limits
 - Connection limits (5 concurrent max)
 
-Change your API token in `config/config.py` before production use!
+**⚠️ Important**: Change your API token in `config/config.py` before production use!
+
+### **Enhanced Authentication (Coming Soon)**
+- **User/Password + SMS MFA**: Modern two-factor authentication
+- **Session-based Access**: Secure session management with automatic expiration
+- **Audit Logging**: Complete tracking of authentication events
+- **Role-based Access**: Granular permission control
+
+📖 **Detailed Security Documentation:**
+- **[AUTH_ENHANCEMENTS.md](./AUTH_ENHANCEMENTS.md)** - Security enhancements and best practices
+- **[SECURITY_AUTH_PLAN.md](./SECURITY_AUTH_PLAN.md)** - Complete authentication system design
 
 ---
 
@@ -333,6 +360,16 @@ Change your API token in `config/config.py` before production use!
 | No WiFi | `scripts/wifi_debug.sh` |
 | Display blank | Check I2C wiring (GP0, GP1) |
 | API errors | Check `./monitor` for logs |
+
+---
+
+## 📚 Detailed Documentation
+
+### **Core System Documentation**
+- **[AUTH_ENHANCEMENTS.md](./AUTH_ENHANCEMENTS.md)** - Comprehensive security enhancements and modern authentication best practices
+- **[SECURITY_AUTH_PLAN.md](./SECURITY_AUTH_PLAN.md)** - Complete authentication system design and implementation plan
+- **[TELEMETRY.md](./TELEMETRY.md)** - Production telemetry system with time-series storage and real-time graphs
+- **[EXTENSIBILITY_GUIDE.md](./EXTENSIBILITY_GUIDE.md)** - Advanced extension patterns for multi-zone, sensors, and integrations
 
 ---
 
