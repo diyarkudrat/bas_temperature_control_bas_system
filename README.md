@@ -1,438 +1,354 @@
-# BAS Temperature Controller
+# BAS Temperature Controller - Distributed Architecture
 
-**Production-grade Building Automation System (BAS) for Raspberry Pi Pico W with MicroPython**
+**Production-grade Building Automation System with Raspberry Pi Pico W + Computer Server**
 
-A comprehensive, enterprise-ready temperature control system featuring modern authentication, real-time telemetry, and extensible architecture. Built specifically for embedded environments with clean code principles and production-grade reliability.
+A distributed temperature control system that solves Pico W storage limitations by running the web interface and control logic on your computer while the Pico W handles only essential hardware operations.
 
-## 📋 Table of Contents
+## 🏗️ Architecture Overview
 
-- [🌟 Key Features](#-key-features)
-- [🎯 Use Cases & Applications](#-use-cases--applications)
-- [🔧 Technical Specifications](#-technical-specifications)
-- [🚀 Quick Setup](#-quick-setup)
-- [📐 Architecture](#-architecture)
-- [🔧 Configuration](#-configuration)
-- [🛠️ Development](#️-development)
-- [🏗️ Extending the Project](#️-extending-the-project)
-- [📁 Project Structure](#-project-structure)
-- [🌐 API Reference](#-api-reference)
-- [🧪 Testing](#-testing)
-- [🔒 Security](#-security)
-- [📊 Performance](#-performance)
-- [🛡️ Features](#️-features)
-- [🐛 Troubleshooting](#-troubleshooting)
-- [📚 Detailed Documentation](#-detailed-documentation)
-- [📝 License](#-license)
-
----
-
-## 🌟 **Key Features**
-
-### **🏭 Industrial-Grade Control**
-- **Closed-loop temperature control** with hysteresis and anti-short-cycle protection
-- **Fail-safe sensor fault handling** with automatic actuator shutdown
-- **Real-time control loop** (2-second intervals) with <50ms execution time
-- **Hardware abstraction layer** for easy sensor/actuator integration
-
-### **🔐 Enterprise Security**
-- **Modern Authentication**: User/password + SMS MFA via Twilio
-- **Session-based Access Control** with automatic expiration
-- **Role-based Permissions** (Operator, Admin, Read-only)
-- **Comprehensive Audit Logging** for compliance and security
-- **Rate Limiting & Account Lockout** protection against attacks
-
-### **📊 Advanced Telemetry**
-- **Real-time Data Collection** with 1000-point ring buffer (~33 minutes)
-- **Interactive Web Dashboard** with Chart.js visualizations
-- **Performance Metrics** and state transition logging
-- **CSV Export** for long-term analysis and compliance
-- **Extensible Data Collection** for custom sensors and metrics
-
-### **🌐 Modern Web Interface**
-- **RESTful API** with comprehensive endpoints
-- **Live Updates** via Server-Sent Events (SSE)
-- **Mobile-responsive Dashboard** with real-time graphs
-- **WebSocket Support** for real-time communication
-- **Security Headers** and input validation
-
-### **Hardware Requirements**
-- **Microcontroller**: Raspberry Pi Pico W (RP2040, 264KB RAM, 2MB Flash)
-- **Temperature Sensor**: DS18B20 (1-Wire, ±0.5°C accuracy)
-- **Actuators**: 2x Relays (Cooling/Heating control)
-- **Display**: SSD1306 OLED (128x64, I²C)
-- **Connectivity**: WiFi 802.11 b/g/n, 2.4GHz
-
-### **Software Stack**
-- **Runtime**: MicroPython 1.19+
-- **Web Server**: Custom non-blocking HTTP server
-- **Database**: JSON-based configuration and telemetry storage
-- **Authentication**: Twilio SMS MFA integration
-- **Frontend**: Vanilla JavaScript with Chart.js
-
-### **Security & Compliance**
-- **Authentication**: Multi-factor authentication (MFA)
-- **Encryption**: TLS/HTTPS for secure communications
-- **Audit Logging**: Complete event tracking and compliance
-- **Standards**: SOC 2, ISO 27001, PCI DSS, HIPAA ready
-- **Rate Limiting**: 100 requests/minute, 5 concurrent connections
-
-
-## 🚀 Quick Setup
-
-### 1. Hardware Connections
-
-**Connect these components to your Raspberry Pi Pico W according to the table below:**
-
-| Component | GPIO | Notes |
-|-----------|------|-------|
-| DS18B20 Sensor | GP4 | 1-Wire + 4.7kΩ pull-up |
-| Cooling Relay | GP15 | Active-HIGH |
-| Heating Relay | GP14 | LEDs, always ON |
-| OLED SDA | GP0 | I²C |
-| OLED SCL | GP1 | I²C |
-
-### 2. Configure WiFi
-
-Edit `config/config.py`:
-```python
-WIFI_SSID = "YourNetwork"
-WIFI_PASS = "YourPassword"
-API_TOKEN = "your-token"       # For API security
-DEFAULT_SETPOINT_C = 270       # 27.0°C (in tenths)
+```
+┌─────────────────┐    WiFi    ┌─────────────────┐
+│   Your Computer │◄─────────►│   Raspberry Pi  │
+│   (Full Server) │           │   Pico W        │
+│                 │           │   (Minimal)     │
+│ • Web Interface │           │ • Temperature   │
+│ • Control Logic │           │   Sensor        │
+│ • Database      │           │ • Relays        │
+│ • Telemetry     │           │ • Basic I/O     │
+└─────────────────┘           └─────────────────┘
 ```
 
-### 3. Deploy
+### ✅ Benefits of This Architecture
 
+**Pico W Advantages:**
+- **Minimal storage usage** - Only essential hardware drivers
+- **Fast deployment** - Small files transfer quickly
+- **Reliable operation** - Simple, focused functionality
+- **Low power consumption** - Efficient sensor/actuator control
+
+**Computer Server Advantages:**
+- **Full web interface** - Rich dashboard with real-time graphs
+- **Data storage** - SQLite database for telemetry
+- **Control logic** - Complex temperature control algorithms
+- **Scalability** - Can control multiple Pico W devices
+
+## 🚀 Quick Start - One-Command Setup
+
+### Option 1: Complete System Setup (Recommended)
 ```bash
-./deploy              # Deploy to Pico
-./monitor             # Watch it run
+./setup.sh
 ```
+This single command handles everything:
+- ✅ Checks system requirements (Python 3, pip3, mpremote)
+- ✅ Sets up server environment with virtual environment
+- ✅ Installs Python dependencies (Flask, Flask-CORS)
+- ✅ Auto-detects your computer's IP address
+- ✅ Updates the Pico client configuration
+- ✅ Makes all scripts executable
 
-### 4. Access
+### Option 2: Manual Setup
+If you prefer step-by-step control:
 
-**Web Dashboard:**
-```
-http://<pico-ip>/
-```
+1. **Configure WiFi Credentials**
+   Edit `pico_client.py` and update:
+   ```python
+   WIFI_SSID = "Your WiFi Network Name"
+   WIFI_PASSWORD = "Your WiFi Password"
+   ```
 
-**API:**
+2. **Deploy Pico W Client**
+   ```bash
+   ./deploy_pico.sh
+   ```
+
+3. **Start the Server**
+   ```bash
+   ./start_server.sh
+   ```
+
+4. **Access the Dashboard**
+   Open your browser: `http://localhost:8080`
+
+## 🎮 One-Command Operations
+
+### Complete System Control
 ```bash
-# Get status
-curl http://<pico-ip>/status
+# Start everything (server + Pico W client)
+./scripts/start_bas.sh
 
-# Set temperature to 25°C
-curl -X POST "http://<pico-ip>/set?token=your-token" \
-  -H "Content-Type: application/json" \
-  -d '{"sp": 250}'
+# Start only the server
+./scripts/start_bas.sh --server-only
+
+# Start only the Pico W client
+./scripts/start_bas.sh --pico-only
+
+# Check system status
+./scripts/status_bas.sh
+
+# Stop everything
+./scripts/stop_bas.sh
 ```
 
----
-
-## 📐 Architecture
-
-### Simple Overview
-
-```
-┌──────────────────────────────────────────────┐
-│  main.py (SystemOrchestrator)                │
-│  ┌──────────┐  ┌─────────┐  ┌────────────┐  │
-│  │Controller│  │ Display │  │ API Server │  │
-│  └──────────┘  └─────────┘  └────────────┘  │
-└──────────────────────────────────────────────┘
-         │              │              │
-┌────────┴──────────────┴──────────────┴───────┐
-│  interfaces/ (Sensor, Actuator, Clock)       │
-└──────────────────────────────────────────────┘
-         │              │              │
-┌────────┴──────────────┴──────────────┴───────┐
-│  core/ (DS18B20, Relay, SystemClock)         │
-└──────────────────────────────────────────────┘
-```
-
-### Key Modules
-
-- **main.py** - Entry point with cooperative scheduler
-- **controller.py** - FSM with hysteresis & anti-short-cycle
-- **display.py** - OLED with view model pattern
-- **core/** - Hardware abstraction (relay, sensor, clock)
-- **interfaces/** - Clean contracts for testability
-- **services/** - Config, logging, error handling
-- **netctrl/** - WiFi connection + HTTP API server
-
----
-
-## 🔧 Configuration
-
-All settings in `config/config.py`:
-
-```python
-# Temperature Control
-DEFAULT_SETPOINT_C = 270      # Target temp (tenths °C)
-DEADBAND_TENTHS_C = 5         # Hysteresis (0.5°C)
-MIN_ON_MS = 10000             # Anti-short-cycle
-MIN_OFF_MS = 10000
-
-# Timing
-SAMPLE_PERIOD_MS = 2000       # Control loop period
-
-# Hardware
-PIN_DS18B20 = 4
-PIN_RELAY_COOL = 15
-PIN_RELAY_HEAT = 14
-RELAY_ACTIVE_HIGH = True
-
-# Network
-WIFI_SSID = "YourNetwork"
-WIFI_PASS = "YourPassword"
-API_TOKEN = "your-token"
-
-# Debug
-ENABLE_DEBUG_LOGS = True      # Show real-time status
-```
-
----
-
-## 🛠️ Development
-
-### Deploy & Monitor
+### Manual Operations
 ```bash
-./deploy              # Deploy to Pico (auto-detects device)
-./monitor             # Real-time output
-./status              # Quick health check
-scripts/repl.sh       # Interactive Python
+# Start server only (in one terminal)
+./start_server.sh
+
+# Deploy and run Pico client (in another terminal)
+./deploy_pico.sh && mpremote connect /dev/cu.usbmodem* run pico_client.py
+
+# Verify system setup
+./verify_system.sh
 ```
-
-### Testing
-```bash
-# On Pico (via REPL)
-import tests.test_runner as t
-t.main()
-
-# From computer
-python3 tools/test_api.py
-```
-
-### Debugging
-```bash
-scripts/wifi_debug.sh      # WiFi diagnostics
-scripts/verify.sh          # Verify installation
-```
-
----
-
-## 🏗️ Extending the Project
-
-### Add a New Sensor
-
-1. Create interface implementation in `core/`:
-```python
-# core/my_sensor.py
-from interfaces import TemperatureSensor, SensorReading
-
-class MySensor(TemperatureSensor):
-    def read(self):
-        # Your implementation
-        return SensorReading(...)
-```
-
-2. Use it in `main.py`:
-```python
-from core import MySensor
-sensor = MySensor(pin=5)
-```
-
-### Add Multi-Zone Support
-
-See `blueprints/multi_zone.py` for complete patterns:
-- Zone Manager with scheduler
-- Event bus for coordination
-- Per-zone configuration
-
-### Telemetry System
-
-**Fully integrated production telemetry with extensibility!** See `TELEMETRY.md` for complete documentation.
-
-Core Features:
-- Ring buffer with 1000-point capacity (~33 minutes @ 2s interval)
-- Real-time graphs with Chart.js
-- Temperature history, actuator activity, statistics
-- Optional CSV export for long-term analysis
-- Memory-bounded, non-blocking design
-- Performance metrics and state transition logging
-
-**Extensibility Features:**
-- **Custom collectors**: Add humidity, pressure, energy monitoring without modifying core
-- **Multi-zone support**: Built-in zone_id for multiple control zones
-- **Custom metrics**: Extensible `custom_data` dict for arbitrary telemetry
-- **Non-intrusive**: Extend functionality without changing core code
-
-See `EXTENSIBILITY_GUIDE.md` for practical extension patterns including:
-- Adding additional sensors (humidity, pressure, light, outdoor temp)
-- Multi-zone aggregation
-- Energy/power monitoring
-- MQTT integration for cloud monitoring
-- Alarm systems with custom thresholds
-- SD card storage for long-term data
-- Occupancy detection integration
-
-Access via web dashboard at `http://<pico-ip>/` or API:
-```bash
-# Get 10 minutes of telemetry data
-curl http://<pico-ip>/telemetry?duration_ms=600000
-
-# Get statistics for last hour
-curl http://<pico-ip>/telemetry/stats?duration_ms=3600000
-
-# Extension example: add custom humidity sensor
-def collect_humidity():
-    return {'humidity_pct': read_sensor()}
-telemetry.register_custom_collector('humidity', collect_humidity)
-```
-
----
 
 ## 📁 Project Structure
 
 ```
 BAS System Project/
-├── README.md              ← Start here
-├── main.py                ← Entry point
-├── controller.py          ← Control logic
-├── display.py             ← OLED interface
-├── boot.py                ← Hardware init
-│
-├── config/                ← System configuration
-├── core/                  ← Hardware drivers
-├── interfaces/            ← Abstract contracts
-├── services/              ← Config, logging, errors
-├── netctrl/               ← WiFi & API
-│
-├── scripts/               ← Deployment tools
-├── tests/                 ← Test suite (40+ tests)
-├── tools/                 ← Development utilities
-└── blueprints/            ← Extension patterns
+├── pico_client.py          # Minimal Pico W client (11.4KB)
+├── server/                 # Computer-based server
+│   ├── bas_server.py       # Flask web server
+│   ├── bas_telemetry.db    # SQLite database
+│   ├── templates/          # Web dashboard
+│   ├── requirements.txt    # Python dependencies
+│   └── setup_server.sh     # Server setup script
+├── scripts/                # System control scripts
+│   ├── start_bas.sh        # 🚀 One-command system startup
+│   ├── status_bas.sh       # 📊 System status checker
+│   └── stop_bas.sh         # 🛑 System shutdown
+├── setup.sh               # Complete system setup
+├── deploy_pico.sh         # Deploy Pico client
+├── start_server.sh        # Start server only
+├── verify_system.sh       # System verification
+└── README.md              # This file
 ```
 
----
+## 🔧 Hardware Connections
 
-## 🌐 API Reference
+Connect these components to your Raspberry Pi Pico W:
 
-### Endpoints
+| Component | GPIO Pin | Notes |
+|-----------|----------|-------|
+| DS18B20 Sensor | GP4 | 1-Wire + 4.7kΩ pull-up |
+| Cooling Relay | GP15 | Active-HIGH |
+| Heating Relay | GP14 | Active-HIGH |
+
+### Wiring Diagram
+```
+Pico W          DS18B20
+GP4 ──────────── Data (with 4.7kΩ pull-up to 3.3V)
+GND ──────────── GND
+3.3V ─────────── VCC
+
+Pico W          Relays
+GP14 ─────────── Heating Relay Control
+GP15 ─────────── Cooling Relay Control
+GND ──────────── Relay GND
+3.3V ─────────── Relay VCC
+```
+
+## 🌐 Web Dashboard Features
+
+### Real-time Monitoring
+- **Current temperature** with live updates
+- **System state** (IDLE, COOLING, HEATING, FAULT)
+- **Actuator status** (ON/OFF indicators)
+- **Sensor health** monitoring
+
+### Interactive Controls
+- **Setpoint adjustment** (10.0°C to 40.0°C)
+- **Deadband configuration** (0.0°C to 5.0°C)
+- **Real-time parameter updates**
+
+### Data Visualization
+- **Temperature history graph** with Chart.js
+- **Setpoint visualization** on the same chart
+- **Historical data** from SQLite database
+
+### Connection Status
+- **Live connection indicator** to Pico W
+- **Automatic reconnection** handling
+- **Error reporting** and status messages
+
+## 📊 Control Logic
+
+### Temperature Control
+- **Hysteresis control** with configurable deadband
+- **Anti-short-cycle protection** (minimum on/off times)
+- **Sensor fault handling** with automatic shutdown
+- **Fail-safe operation** (turns off actuators on sensor fault)
+
+### Communication Protocol
+- **HTTP POST** for sensor data transmission (4096 byte buffer)
+- **JSON response** with control commands
+- **2-second update interval**
+- **Automatic retry** on communication failure
+- **Content-Length parsing** for reliable data exchange
+
+## 🔄 Complete Deployment Workflow
+
+### First-Time Setup
+1. **Clone/Download** the BAS system to your computer
+2. **Connect Hardware** to your Pico W (see Hardware Connections)
+3. **Connect Pico W** to your computer via USB
+4. **Run Setup**: `./setup.sh` (handles everything automatically)
+5. **Start System**: `./scripts/start_bas.sh`
+
+### Daily Operations
+```bash
+# Start the complete system
+./scripts/start_bas.sh
+
+# Check status anytime
+./scripts/status_bas.sh
+
+# Stop when done
+./scripts/stop_bas.sh
+```
+
+### Development Workflow
+```bash
+# Server development
+cd server
+source venv/bin/activate
+python bas_server.py
+
+# Pico W development
+mpremote connect /dev/cu.usbmodem* repl
+mpremote connect /dev/cu.usbmodem* run pico_client.py
+mpremote connect /dev/cu.usbmodem* edit pico_client.py
+```
+
+### Troubleshooting Workflow
+```bash
+# Check system health
+./verify_system.sh
+
+# Check current status
+./scripts/status_bas.sh
+
+# View server logs
+tail -f server.log
+
+# Restart everything
+./scripts/stop_bas.sh && ./scripts/start_bas.sh
+```
+
+### API Endpoints
 
 | Endpoint | Method | Description |
 |----------|--------|-------------|
-| `/` | GET | Web dashboard with telemetry graphs |
-| `/status` | GET | System status (JSON) |
-| `/set?token=xxx` | POST | Update setpoint |
-| `/events` | GET | Live updates (SSE) |
-| `/config` | GET | Configuration |
-| `/logs?token=xxx` | GET | System logs |
-| `/telemetry` | GET | Time-series data for graphing |
-| `/telemetry/stats` | GET | Aggregated statistics |
-| `/telemetry/health` | GET | Telemetry system health |
-
-### Example: Update Setpoint
-
-```bash
-curl -X POST "http://192.168.1.129/set?token=testapitoken" \
-  -H "Content-Type: application/json" \
-  -d '{"sp": 250, "db": 10}'
-```
-
-Response:
-```json
-{"status": "success", "updated": {"setpoint_tenths": 250}}
-```
-
----
-
-## 🧪 Testing
-
-```bash
-# Run full test suite
-scripts/repl.sh
->>> import tests.test_runner as t
->>> t.main()
-
-# Test API from computer
-python3 tools/test_api.py
-```
-
----
+| `/` | GET | Web dashboard |
+| `/api/status` | GET | System status |
+| `/api/sensor_data` | POST | Receive sensor data |
+| `/api/set_setpoint` | POST | Update setpoint/deadband |
+| `/api/telemetry` | GET | Historical data |
+| `/api/health` | GET | Health check |
 
 ## 🔒 Security
 
-- Rate limiting: 100 requests/minute
-- Token authentication (timing-safe comparison)
-- Input validation & size limits
-- Connection limits (5 concurrent max)
+### Network Security
+- **Local network only** - No internet exposure required
+- **WiFi encryption** - Use WPA2/WPA3 networks
+- **Input validation** - All parameters validated
+- **Error handling** - Graceful failure modes
 
-**⚠️ Important**: Change your API token in `config/config.py` before production use!
+### Data Protection
+- **Local database** - No cloud dependencies
+- **Connection monitoring** - Automatic fault detection
+- **Safe defaults** - Conservative control parameters
 
-### **Enhanced Authentication (Coming Soon)**
-- **User/Password + SMS MFA**: Modern two-factor authentication
-- **Session-based Access**: Secure session management with automatic expiration
-- **Audit Logging**: Complete tracking of authentication events
-- **Role-based Access**: Granular permission control
+## 📱 Mobile Access
 
-📖 **Detailed Security Documentation:**
-- **[AUTH_ENHANCEMENTS.md](./AUTH_ENHANCEMENTS.md)** - Security enhancements and best practices
-- **[SECURITY_AUTH_PLAN.md](./SECURITY_AUTH_PLAN.md)** - Complete authentication system design
-
----
-
-## 📊 Performance
-
-- Control loop: 2000ms period, <50ms execution
-- API response: <200ms typical
-- Memory: ~20KB used / 264KB total (7.5%)
-- Boot time: ~10 seconds
-
----
-
-## 🛡️ Features
-
-- ✅ Closed-loop temperature control with hysteresis
-- ✅ Anti-short-cycle protection
-- ✅ Fail-safe sensor fault handling
-- ✅ Web API with live updates (SSE)
-- ✅ OLED display with status icons
-- ✅ Structured logging with fault codes
-- ✅ **Production telemetry system with time-series storage**
-- ✅ **Interactive web dashboard with real-time graphs**
-- ✅ **Performance metrics and state transition logging**
-- ✅ Dependency injection for testability
-- ✅ Cooperative scheduling (no threading)
-- ✅ WiFi auto-reconnect with retry
-- ✅ Configuration profiles with validation
-
----
+The web dashboard is **mobile-responsive** and works on:
+- **Smartphones** - iOS and Android
+- **Tablets** - iPad and Android tablets
+- **Laptops** - Windows, Mac, Linux
+- **Any device** with a web browser
 
 ## 🐛 Troubleshooting
 
+### Common Issues
+
 | Issue | Solution |
 |-------|----------|
-| Won't boot | `scripts/repl.sh` to see errors |
-| No WiFi | `scripts/wifi_debug.sh` |
-| Display blank | Check I2C wiring (GP0, GP1) |
-| API errors | Check `./monitor` for logs |
+| Pico W not found | Check USB connection, try BOOTSEL mode |
+| WiFi connection fails | Verify credentials in pico_client.py |
+| Server won't start | Run `cd server && ./setup_server.sh` |
+| No data from Pico | Check IP address in SERVER_URL |
+| Dashboard not loading | Check server is running on port 8080 |
 
----
+### Debug Commands
+```bash
+# Check Pico W connection
+mpremote connect /dev/cu.usbmodem* exec "import network; print(network.WLAN().ifconfig())"
 
-## 📚 Detailed Documentation
+# Check server logs
+cd server && source venv/bin/activate && python bas_server.py
 
-### **Core System Documentation**
-- **[AUTH_ENHANCEMENTS.md](./AUTH_ENHANCEMENTS.md)** - Comprehensive security enhancements and modern authentication best practices
-- **[SECURITY_AUTH_PLAN.md](./SECURITY_AUTH_PLAN.md)** - Complete authentication system design and implementation plan
-- **[TELEMETRY.md](./TELEMETRY.md)** - Production telemetry system with time-series storage and real-time graphs
-- **[EXTENSIBILITY_GUIDE.md](./EXTENSIBILITY_GUIDE.md)** - Advanced extension patterns for multi-zone, sensors, and integrations
+# Test API
+curl http://localhost:8080/api/health
+```
 
----
+## 🎯 Use Cases
+
+### Home Automation
+- **HVAC control** for individual rooms
+- **Temperature monitoring** with alerts
+- **Energy efficiency** through smart control
+
+### Industrial Applications
+- **Process control** for small systems
+- **Environmental monitoring** in controlled spaces
+- **Equipment protection** through temperature limits
+
+### Research & Development
+- **Prototype testing** with real-time data
+- **Control algorithm development**
+- **Sensor validation** and calibration
+
+## 📈 Performance
+
+### Pico W Client
+- **Memory usage**: ~15KB RAM / 2MB Flash
+- **Update rate**: 2-second intervals
+- **Power consumption**: ~100mA active
+- **Reliability**: Designed for 24/7 operation
+
+### Computer Server
+- **Response time**: <100ms typical
+- **Database**: SQLite with automatic cleanup
+- **Concurrent connections**: Multiple Pico W support
+- **Data retention**: 7 days automatic cleanup
+
+## 🚀 Future Enhancements
+
+### Planned Features
+- **Multiple zone support** for complex systems
+- **MQTT integration** for cloud connectivity
+- **Mobile app** for remote monitoring
+- **Advanced analytics** and reporting
+
+### Extensibility
+- **Custom sensor support** through plugin system
+- **Additional actuators** (fans, pumps, valves)
+- **Integration APIs** for home automation systems
+- **Backup and restore** functionality
 
 ## 📝 License
 
 MIT License - Free for personal and commercial use.
 
+## 🤝 Contributing
+
+Contributions welcome! Please see the development guidelines and submit pull requests for:
+- Bug fixes
+- New features
+- Documentation improvements
+- Hardware support additions
+
 ---
 
-Built with clean architecture patterns for maintainable embedded systems.
+**Built with clean architecture principles for reliable embedded systems.**
+
+*This distributed architecture solves the Pico W storage limitations while providing a full-featured temperature control system.*
