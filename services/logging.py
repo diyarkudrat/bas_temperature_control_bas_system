@@ -95,14 +95,43 @@ class Logger:
         self.level = level
         self._buffer = RingBuffer(buffer_size)
         self._print_enabled = True
+        # Per-logger override flags. When True, global changes will not clobber this logger.
+        self._level_overridden = False
+        self._print_overridden = False
     
     def set_level(self, level: int) :
-        """Set minimum log level."""
+        """Set minimum log level and mark as overridden for this logger."""
         self.level = level
+        self._level_overridden = True
     
     def set_print_enabled(self, enabled: bool) :
-        """Enable/disable console output."""
+        """Enable/disable console output and mark as overridden for this logger."""
         self._print_enabled = enabled
+        self._print_overridden = True
+
+    # --- Global application helpers (do not mark as overridden) ---
+    def _apply_global_level(self, level: int) :
+        if not self._level_overridden:
+            self.level = level
+            
+    def _apply_global_print_enabled(self, enabled: bool) :
+        if not self._print_overridden:
+            self._print_enabled = enabled
+
+    # --- Override management ---
+    def clear_level_override(self) :
+        """Allow future global level changes to affect this logger."""
+        self._level_overridden = False
+
+    def clear_print_override(self) :
+        """Allow future global print changes to affect this logger."""
+        self._print_overridden = False
+
+    def is_level_overridden(self) -> bool:
+        return self._level_overridden
+        
+    def is_print_overridden(self) -> bool:
+        return self._print_overridden
     
     def _log(self, level: int, message: str, **kwargs) :
         """Internal logging method."""
@@ -191,6 +220,7 @@ class LoggerFactory:
     
     _loggers = {}
     _global_level = LogLevel.INFO
+    _global_print_enabled = True
     
     @classmethod
     def get_logger(cls, component: str) -> Logger:
@@ -204,10 +234,40 @@ class LoggerFactory:
         """Set log level for all loggers."""
         cls._global_level = level
         for logger in cls._loggers.values():
-            logger.set_level(level)
+            logger._apply_global_level(level)
     
     @classmethod
     def set_print_enabled(cls, enabled: bool) :
         """Enable/disable console output for all loggers."""
+        cls._global_print_enabled = enabled
         for logger in cls._loggers.values():
-            logger.set_print_enabled(enabled)
+            logger._apply_global_print_enabled(enabled)
+
+    # --- Per-logger override API ---
+    @classmethod
+    def override_level(cls, component: str, level: int) -> None:
+        """Set a specific logger's level, marking it as overridden."""
+        logger = cls.get_logger(component)
+        logger.set_level(level)
+    
+    @classmethod
+    def clear_level_override(cls, component: str) -> None:
+        """Clear level override so global changes apply again."""
+        logger = cls.get_logger(component)
+        logger.clear_level_override()
+        # Optionally sync with current global level immediately
+        logger._apply_global_level(cls._global_level)
+    
+    @classmethod
+    def override_print(cls, component: str, enabled: bool) -> None:
+        """Set a specific logger's print flag, marking it as overridden."""
+        logger = cls.get_logger(component)
+        logger.set_print_enabled(enabled)
+    
+    @classmethod
+    def clear_print_override(cls, component: str) -> None:
+        """Clear print override so global changes apply again."""
+        logger = cls.get_logger(component)
+        logger.clear_print_override()
+        # Sync with current global print setting
+        logger._apply_global_print_enabled(cls._global_print_enabled)
