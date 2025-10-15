@@ -1,0 +1,4 @@
+#!/bin/bash
+# Convenience wrapper for scripts/deploy.sh
+exec "$(dirname "$0")/scripts/deploy.sh" "$@"
+
