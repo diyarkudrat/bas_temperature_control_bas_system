@@ -436,6 +436,9 @@ class TelemetryCollector:
           - fields: { temperature_c, setpoint_c, cooling, heating, alarm, error_code }
           - timestamp_ms
         """
+        # Effective window start:
+        # - If since_ms is provided, we return points with timestamps strictly > since_ms
+        # - Otherwise, we return points within the last duration_ms
         now_ms = time.ticks_ms()
         start_time = (since_ms if since_ms is not None else (now_ms - duration_ms))
         src = self._buffer.get_recent(count=None, start_time_ms=start_time)
@@ -449,6 +452,8 @@ class TelemetryCollector:
             want = {}
             for f in fields.split(','):
                 want[f.strip()] = True
+        # Track the maximum timestamp we actually emit, to help clients advance cursors
+        max_ts = since_ms if since_ms is not None else start_time
         for idx in range(len(src) - 1, -1, -1):  # oldest-first by appending reversed src
             if remaining == 0:
                 break
@@ -468,6 +473,9 @@ class TelemetryCollector:
             addf('heating', 1 if p.heat_active else 0)
             addf('alarm', 1 if p.alarm else 0)
             addf('error_code', p.error_code)
+            # Track max timestamp for cursor progression
+            if p.timestamp_ms is not None and (max_ts is None or p.timestamp_ms > max_ts):
+                max_ts = p.timestamp_ms
             if compact:
                 # Compact, flat form with short keys reduces payload and allocations
                 exported.append({
@@ -490,9 +498,12 @@ class TelemetryCollector:
                     'timestamp_ms': p.timestamp_ms
                 })
             remaining -= 1
+        # next_since_ms lets clients perform stateless, duplicate-free pagination:
+        #   pass the returned value as since_ms in the next request to fetch only newer points
         return {
             'count': len(exported),
             'from_ms': start_time,
+            'next_since_ms': max_ts,
             'points': exported
         }
     

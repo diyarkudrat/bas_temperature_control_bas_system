@@ -1258,7 +1258,7 @@ setInterval(updateStats, 30000);  // 30 seconds
                     since_ms = int(request.query_params['since_ms'])
                 except:
                     since_ms = None
-            fields = request.query_params.get('fields')  # comma-separated
+            fields = request.query_params.get('fields')  # comma-separated; client may send any subset
             compact = request.query_params.get('compact', '0') in ('1','true','True')
             data = self.telemetry.export_points(
                 duration_ms=duration_ms,
