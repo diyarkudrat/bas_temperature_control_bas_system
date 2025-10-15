@@ -175,12 +175,46 @@ See `blueprints/multi_zone.py` for complete patterns:
 - Event bus for coordination
 - Per-zone configuration
 
-### Add Telemetry
+### Telemetry System
 
-See `blueprints/telemetry.py` for patterns:
-- Data collection framework
-- Pluggable backends (CSV, HTTP, MQTT)
-- Batch processing
+**Fully integrated production telemetry with extensibility!** See `TELEMETRY.md` for complete documentation.
+
+Core Features:
+- Ring buffer with 1000-point capacity (~33 minutes @ 2s interval)
+- Real-time graphs with Chart.js
+- Temperature history, actuator activity, statistics
+- Optional CSV export for long-term analysis
+- Memory-bounded, non-blocking design
+- Performance metrics and state transition logging
+
+**Extensibility Features:**
+- **Custom collectors**: Add humidity, pressure, energy monitoring without modifying core
+- **Multi-zone support**: Built-in zone_id for multiple control zones
+- **Custom metrics**: Extensible `custom_data` dict for arbitrary telemetry
+- **Non-intrusive**: Extend functionality without changing core code
+
+See `EXTENSIBILITY_GUIDE.md` for practical extension patterns including:
+- Adding additional sensors (humidity, pressure, light, outdoor temp)
+- Multi-zone aggregation
+- Energy/power monitoring
+- MQTT integration for cloud monitoring
+- Alarm systems with custom thresholds
+- SD card storage for long-term data
+- Occupancy detection integration
+
+Access via web dashboard at `http://<pico-ip>/` or API:
+```bash
+# Get 10 minutes of telemetry data
+curl http://<pico-ip>/telemetry?duration_ms=600000
+
+# Get statistics for last hour
+curl http://<pico-ip>/telemetry/stats?duration_ms=3600000
+
+# Extension example: add custom humidity sensor
+def collect_humidity():
+    return {'humidity_pct': read_sensor()}
+telemetry.register_custom_collector('humidity', collect_humidity)
+```
 
 ---
 
@@ -214,12 +248,15 @@ BAS System Project/
 
 | Endpoint | Method | Description |
 |----------|--------|-------------|
-| `/` | GET | Web dashboard |
+| `/` | GET | Web dashboard with telemetry graphs |
 | `/status` | GET | System status (JSON) |
 | `/set?token=xxx` | POST | Update setpoint |
 | `/events` | GET | Live updates (SSE) |
 | `/config` | GET | Configuration |
 | `/logs?token=xxx` | GET | System logs |
+| `/telemetry` | GET | Time-series data for graphing |
+| `/telemetry/stats` | GET | Aggregated statistics |
+| `/telemetry/health` | GET | Telemetry system health |
 
 ### Example: Update Setpoint
 
@@ -278,6 +315,9 @@ Change your API token in `config/config.py` before production use!
 - ✅ Web API with live updates (SSE)
 - ✅ OLED display with status icons
 - ✅ Structured logging with fault codes
+- ✅ **Production telemetry system with time-series storage**
+- ✅ **Interactive web dashboard with real-time graphs**
+- ✅ **Performance metrics and state transition logging**
 - ✅ Dependency injection for testability
 - ✅ Cooperative scheduling (no threading)
 - ✅ WiFi auto-reconnect with retry
