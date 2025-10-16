@@ -116,6 +116,43 @@ else
 fi
 
 echo ""
+print_info "Setting up authentication system..."
+
+# Setup authentication directly
+if [ -f "scripts/setup_auth.py" ]; then
+    print_info "Configuring authentication system..."
+    
+    # Check if virtual environment exists
+    if [ ! -d "server/venv" ]; then
+        print_error "Server virtual environment not found"
+        print_info "Please run server setup first"
+        exit 1
+    fi
+    
+    # Activate virtual environment and run auth setup
+    cd server
+    source venv/bin/activate
+    
+    # Run authentication setup from server directory
+    python ../scripts/setup_auth.py
+    AUTH_SETUP_RESULT=$?
+    
+    # Deactivate virtual environment
+    deactivate
+    cd ..
+    
+    if [ $AUTH_SETUP_RESULT -eq 0 ]; then
+        print_status "Authentication setup completed"
+    else
+        print_error "Authentication setup failed"
+        exit 1
+    fi
+else
+    print_error "Authentication setup script not found"
+    exit 1
+fi
+
+echo ""
 print_info "Auto-detecting network configuration..."
 
 # Auto-detect computer IP address
@@ -189,6 +226,7 @@ print_info "Setup Summary"
 echo "==============="
 print_status "✅ System requirements checked"
 print_status "✅ Server environment configured"
+print_status "✅ Authentication system configured"
 print_status "✅ Network configuration detected"
 print_status "✅ Scripts prepared for execution"
 
@@ -198,16 +236,23 @@ echo "1. Update WiFi credentials in pico_client.py:"
 echo "   WIFI_SSID = \"Your Network Name\""
 echo "   WIFI_PASSWORD = \"Your Password\""
 echo ""
-echo "2. Connect your Pico W via USB"
+echo "2. Configure Twilio credentials in config/secrets.json:"
+echo "   Add your Twilio account_sid, auth_token, and from_number"
 echo ""
-echo "3. Deploy to Pico W:"
+echo "3. Change default admin password:"
+echo "   python scripts/auth_admin.py reset-password admin <new_password>"
+echo ""
+echo "4. Connect your Pico W via USB"
+echo ""
+echo "5. Deploy to Pico W:"
 echo "   ./deploy_pico.sh"
 echo ""
-echo "4. Start the server:"
+echo "6. Start the server:"
 echo "   ./start_server.sh"
 echo ""
-echo "5. Open dashboard:"
+echo "7. Open dashboard:"
 echo "   http://localhost:8080"
+echo "   Login: http://localhost:8080/auth/login"
 echo ""
 
 print_info "Hardware Connections:"

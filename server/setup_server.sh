@@ -38,6 +38,12 @@ pip install --upgrade pip
 echo "📥 Installing Python dependencies..."
 pip install -r requirements.txt
 
+# Setup authentication system
+echo "🔐 Setting up authentication system..."
+cd ..
+python scripts/setup_auth.py
+cd server
+
 echo ""
 echo "✅ Setup complete!"
 echo ""
@@ -46,7 +52,12 @@ echo "   1. Activate the virtual environment: source venv/bin/activate"
 echo "   2. Run the server: python bas_server.py"
 echo ""
 echo "🌐 The dashboard will be available at: http://localhost:8080"
+echo "🔐 Authentication system is enabled - login at: http://localhost:8080/auth/login"
 echo "📱 Make sure to update the SERVER_URL in pico_client.py with your computer's IP address"
+echo ""
+echo "⚠️  IMPORTANT: Change the default admin credentials immediately!"
+echo "   Default: admin / Admin123!@#X / +1234567890"
+echo "   Use: python scripts/auth_admin.py reset-password admin <new_password>"
 echo ""
 echo "💡 To find your computer's IP address:"
 echo "   - Mac/Linux: ifconfig | grep 'inet '"

@@ -7,6 +7,7 @@ A distributed temperature control system that solves Pico W storage limitations 
 ## 📋 Table of Contents
 
 ### **Getting Started**
+- [⚡ Quick Reference](docs/QUICK_REFERENCE.md) - Essential commands and troubleshooting
 - [🏗️ Architecture Overview](#️-architecture-overview)
 - [🔧 Hardware Connections](#-hardware-connections)
 - [🚀 Quick Start & Setup](#-quick-start--setup)
@@ -86,10 +87,18 @@ GND ──────────── Relay GND
 This single command handles everything:
 - ✅ Checks system requirements (Python 3, pip3, mpremote)
 - ✅ Sets up server environment with virtual environment
-- ✅ Installs Python dependencies (Flask, Flask-CORS)
+- ✅ Installs Python dependencies (Flask, Flask-CORS, Twilio)
+- ✅ Configures authentication system with default admin user
 - ✅ Auto-detects your computer's IP address
 - ✅ Updates the Pico client configuration
 - ✅ Makes all scripts executable
+
+### Authentication Setup
+The system includes a complete authentication system:
+- **Default admin user**: `admin` / `Admin123!@#X` (change immediately!)
+- **User management**: `python3 scripts/auth_admin.py --help`
+- **Login page**: http://localhost:8080/auth/login
+- **Configuration**: JSON files in `config/` or environment variables
 
 ## 🔄 Setup & Daily Operations
 
@@ -98,32 +107,131 @@ This single command handles everything:
 2. **Connect Hardware** to your Pico W (see Hardware Connections)
 3. **Connect Pico W** to your computer via USB
 4. **Run Setup**: `./setup.sh` (handles everything automatically)
-5. **Start System**: `./scripts/start_bas.sh`
+5. **Configure WiFi** in `pico_client.py` (WIFI_SSID and WIFI_PASSWORD)
+6. **Change Admin Password**: `python3 scripts/auth_admin.py reset-password admin <new_password>`
+7. **Start System**: `./scripts/start_bas.sh`
+
+### Script Organization
+The BAS system uses a consolidated script structure for better organization:
+
+```
+scripts/                    # 🎯 Centralized script management
+├── start_bas.sh           # 🚀 Complete system startup
+├── status_bas.sh          # 📊 System status checker  
+├── stop_bas.sh            # 🛑 System shutdown
+├── start_hardware.sh      # 🔧 Hardware startup (Pico W)
+├── status_hardware.sh     # 📊 Hardware status checker
+├── stop_hardware.sh       # 🛑 Hardware shutdown
+└── auth_admin.py          # 👤 User management tool
+```
+
+**Key Benefits:**
+- **Unified Interface** - All operations through `scripts/` directory
+- **Consistent Options** - All scripts support similar command-line options
+- **Clear Separation** - System vs. hardware operations
+- **Easy Maintenance** - Single source of truth for each operation
 
 ### Daily Operations
+
+#### Complete System Control
 ```bash
-# Start the complete system
+# Start the complete system (server + hardware)
 ./scripts/start_bas.sh
 
-# Check status anytime
+# Start only the server
+./scripts/start_bas.sh --server-only
+
+# Start only the hardware (Pico W client)
+./scripts/start_bas.sh --hardware-only
+
+# Check system status
 ./scripts/status_bas.sh
 
-# Stop when done
+# Stop the complete system
 ./scripts/stop_bas.sh
 ```
 
-### Troubleshooting Workflow
-```bash
-# Check system health
-./verify_system.sh
+#### Hardware-Only Operations
+For dedicated hardware management and troubleshooting:
 
-# Check current status
+```bash
+# Basic hardware operations
+./scripts/start_hardware.sh                    # Auto-detect and start
+./scripts/status_hardware.sh                  # Check hardware status
+./scripts/stop_hardware.sh                    # Stop hardware
+
+# Advanced hardware options
+./scripts/start_hardware.sh --deploy-only      # Deploy but don't start
+./scripts/start_hardware.sh --monitor         # Start with REPL access
+./scripts/start_hardware.sh --device /dev/ttyACM0  # Use specific device
+./scripts/status_hardware.sh --verbose        # Detailed hardware info
+./scripts/stop_hardware.sh --reset           # Stop and reset device
+```
+
+#### Server-Only Operations
+For server management and development:
+
+```bash
+# Start server only
+./scripts/start_bas.sh --server-only
+
+# Check server status
 ./scripts/status_bas.sh
 
 # View server logs
 tail -f server/logs/server.log
 
-# Restart everything
+# Manual server startup (for debugging)
+cd server && source venv/bin/activate && python3 bas_server.py
+```
+
+### Authentication & User Management
+The system includes comprehensive authentication with user management:
+
+```bash
+# User management commands
+python3 scripts/auth_admin.py create-user john password123 +1234567890 --role operator
+python3 scripts/auth_admin.py list-users
+python3 scripts/auth_admin.py reset-password admin newpassword
+python3 scripts/auth_admin.py unlock-user john
+python3 scripts/auth_admin.py delete-user john
+
+# Configuration options
+# Method 1: JSON files (default)
+cp config/templates/secrets.json.template config/secrets.json
+# Edit config/secrets.json with Twilio credentials
+
+# Method 2: Environment variables
+cp config/auth.example.env .env
+# Edit .env with your settings
+```
+
+### Troubleshooting Workflow
+```bash
+# System health check
+./verify_system.sh
+
+# Check complete system status
+./scripts/status_bas.sh
+
+# Check hardware specifically
+./scripts/status_hardware.sh --verbose
+
+# View server logs
+tail -f server/logs/server.log
+
+# Authentication troubleshooting
+python3 scripts/auth_admin.py list-users
+curl http://localhost:8080/api/health
+
+# Hardware troubleshooting
+./scripts/start_hardware.sh --deploy-only
+./scripts/status_hardware.sh --device /dev/ttyACM0
+
+# Server troubleshooting
+./scripts/start_bas.sh --server-only
+
+# Complete system restart
 ./scripts/stop_bas.sh && ./scripts/start_bas.sh
 ```
 
@@ -131,20 +239,40 @@ tail -f server/logs/server.log
 
 ### Complete System Control
 ```bash
-# Start everything (server + Pico W client)
+# Start everything (server + hardware)
 ./scripts/start_bas.sh
 
 # Start only the server
 ./scripts/start_bas.sh --server-only
 
-# Start only the Pico W client
-./scripts/start_bas.sh --pico-only
+# Start only the hardware (Pico W client)
+./scripts/start_bas.sh --hardware-only
 
 # Check system status
 ./scripts/status_bas.sh
 
 # Stop everything
 ./scripts/stop_bas.sh
+```
+
+### Dedicated Hardware Management
+For advanced hardware control and troubleshooting:
+
+```bash
+# Hardware startup with options
+./scripts/start_hardware.sh                    # Auto-detect and start
+./scripts/start_hardware.sh --device /dev/ttyACM0  # Use specific device
+./scripts/start_hardware.sh --deploy-only     # Deploy but don't start
+./scripts/start_hardware.sh --monitor         # Start with REPL access
+
+# Hardware status and diagnostics
+./scripts/status_hardware.sh                   # Basic status check
+./scripts/status_hardware.sh --verbose         # Detailed information
+./scripts/status_hardware.sh --device /dev/ttyACM0  # Check specific device
+
+# Hardware shutdown
+./scripts/stop_hardware.sh                     # Graceful stop
+./scripts/stop_hardware.sh --reset            # Stop and reset device
 ```
 
 ## 📊 Control Logic
@@ -174,50 +302,23 @@ BAS System Project/
 │   ├── requirements.txt    # Python dependencies
 │   └── setup_server.sh     # Server setup script
 ├── scripts/                # System control scripts
-│   ├── start_bas.sh        # 🚀 One-command system startup
+│   ├── start_bas.sh        # 🚀 Complete system startup
 │   ├── status_bas.sh       # 📊 System status checker
-│   └── stop_bas.sh         # 🛑 System shutdown
+│   ├── stop_bas.sh         # 🛑 System shutdown
+│   ├── start_hardware.sh   # 🔧 Hardware startup (Pico W)
+│   ├── status_hardware.sh  # 📊 Hardware status checker
+│   ├── stop_hardware.sh    # 🛑 Hardware shutdown
+│   └── auth_admin.py       # 👤 User management tool
 ├── setup.sh               # Complete system setup
-├── deploy_pico.sh         # Deploy Pico client
-├── start_server.sh        # Start server only
 ├── verify_system.sh       # System verification
 └── README.md              # This file
 ```
 
 ## 🌐 API Endpoints
 
-| Endpoint | Method | Description |
-|----------|--------|-------------|
-| `/` | GET | Web dashboard |
-| `/api/status` | GET | System status |
-| `/api/sensor_data` | POST | Receive sensor data from Pico W |
-| `/api/set_setpoint` | POST | Update setpoint/deadband |
-| `/api/telemetry` | GET | Historical telemetry data |
-| `/api/config` | GET | System configuration |
-| `/api/health` | GET | Health check |
+The BAS system provides a comprehensive REST API for temperature control, telemetry data, and system management.
 
-### Quick API Examples
-
-```bash
-# Check system health
-curl http://localhost:8080/api/health
-
-# Get current status
-curl http://localhost:8080/api/status
-
-# Update setpoint to 25.0°C
-curl -X POST http://localhost:8080/api/set_setpoint \
-  -H "Content-Type: application/json" \
-  -d '{"setpoint_tenths": 250}'
-
-# Get system configuration
-curl http://localhost:8080/api/config
-
-# Get last 20 telemetry points
-curl "http://localhost:8080/api/telemetry?limit=20"
-```
-
-📚 **Complete API Documentation**: See [API_REFERENCE.md](docs/API_REFERENCE.md) for detailed endpoint documentation, request/response formats, error codes, and client examples.
+📚 **Complete API Documentation**: See [API Documentation](docs/api/README.md) for detailed endpoint documentation, request/response formats, error codes, authentication requirements, and client examples.
 
 ## 🐛 Troubleshooting
 
@@ -237,7 +338,7 @@ curl "http://localhost:8080/api/telemetry?limit=20"
 mpremote connect /dev/cu.usbmodem* exec "import network; print(network.WLAN().ifconfig())"
 
 # Check server logs
-cd server && source venv/bin/activate && python bas_server.py
+cd server && source venv/bin/activate && python3 bas_server.py
 
 # Test API
 curl http://localhost:8080/api/health
@@ -268,9 +369,8 @@ The BAS system includes comprehensive documentation for developers, system admin
 | **Category** | **Document** | **Description** |
 |--------------|--------------|-----------------|
 | **System Architecture** | [SYSTEM_OVERVIEW.md](docs/SYSTEM_OVERVIEW.md) | Complete system architecture, component diagrams, and design principles |
-| **API Integration** | [API_REFERENCE.md](docs/API_REFERENCE.md) | Complete REST API documentation with examples and error codes |
-| **Security** | [AUTH_ENHANCEMENTS.md](docs/AUTH_ENHANCEMENTS.md) | Comprehensive security enhancements and modern authentication best practices |
-| **Authentication** | [SECURITY_AUTH_PLAN.md](docs/SECURITY_AUTH_PLAN.md) | Complete authentication system design and implementation plan |
+| **API Integration** | [API Documentation](docs/api/README.md) | Complete REST API documentation with examples and error codes |
+| **Authentication & Security** | [Authentication Documentation](docs/auth/README.md) | Complete authentication system design, implementation, and security features |
 | **Development** | [README.md](docs/README.md) | Alternative project documentation with focus on core system features |
 
 ## 📝 License

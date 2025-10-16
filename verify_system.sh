@@ -69,11 +69,11 @@ print_info "Checking project structure..."
 ESSENTIAL_FILES=(
     "pico_client.py"
     "setup.sh"
-    "deploy_pico.sh"
-    "start_server.sh"
     "server/bas_server.py"
     "server/requirements.txt"
     "server/templates/dashboard.html"
+    "scripts/start_bas.sh"
+    "scripts/start_hardware.sh"
 )
 
 for file in "${ESSENTIAL_FILES[@]}"; do
@@ -90,7 +90,7 @@ echo ""
 # Check script permissions
 print_info "Checking script permissions..."
 
-SCRIPTS=("setup.sh" "deploy_pico.sh" "start_server.sh")
+SCRIPTS=("setup.sh" "scripts/start_bas.sh" "scripts/start_hardware.sh")
 
 for script in "${SCRIPTS[@]}"; do
     if [ -x "$script" ]; then
@@ -206,8 +206,8 @@ if [ "$VERIFICATION_PASSED" = true ]; then
     print_info "Ready to deploy! Next steps:"
     echo "1. Update WiFi credentials in pico_client.py"
     echo "2. Connect your Pico W via USB"
-    echo "3. Run: ./deploy_pico.sh"
-    echo "4. Run: ./start_server.sh"
+    echo "3. Run: ./scripts/start_hardware.sh --deploy-only"
+    echo "4. Run: ./scripts/start_bas.sh --server-only"
     echo "5. Open: http://localhost:8080"
     echo ""
     print_status "System is ready for deployment! 🎉"
