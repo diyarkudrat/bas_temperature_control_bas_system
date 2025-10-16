@@ -6,6 +6,7 @@ A comprehensive, enterprise-ready temperature control system featuring modern au
 
 ## 📋 Table of Contents
 
+- [⚡ Quick Reference](QUICK_REFERENCE.md) - Essential commands and troubleshooting
 - [🌟 Key Features](#-key-features)
 - [🎯 Use Cases & Applications](#-use-cases--applications)
 - [🔧 Technical Specifications](#-technical-specifications)
@@ -28,7 +29,7 @@ A comprehensive, enterprise-ready temperature control system featuring modern au
 | **Topic** | **Document** | **Focus** |
 |-----------|--------------|-----------|
 | **System Architecture** | [SYSTEM_OVERVIEW.md](./SYSTEM_OVERVIEW.md) | Complete architecture diagrams, component relationships, design principles |
-| **API Integration** | [API_REFERENCE.md](./API_REFERENCE.md) | Complete REST API documentation, authentication, real-time updates |
+| **API Integration** | [API Documentation](./api/README.md) | Complete REST API documentation, authentication, real-time updates |
 | **Configuration** | [Configuration](#-configuration) | Two-tier config system, profiles, runtime updates |
 | **Security** | [SECURITY_AUTH_PLAN.md](./SECURITY_AUTH_PLAN.md) | Authentication system, MFA, security best practices |
 | **Telemetry** | [Telemetry System](#-telemetry-system) | Data collection, time-series storage, analytics |
@@ -380,7 +381,7 @@ BAS System Project/
 ├── docs/                       ← Documentation
 │   ├── README.md              ← This file
 │   ├── SYSTEM_OVERVIEW.md     ← Architecture docs
-│   ├── API_REFERENCE.md       ← API documentation
+│   ├── api/                   ← API documentation
 │   └── SECURITY_AUTH_PLAN.md  ← Security documentation
 │
 └── deploy_pico.sh             ← Deployment script
@@ -496,7 +497,7 @@ python3 tools/test_api.py
 
 ### **System Architecture & Design**
 - **[SYSTEM_OVERVIEW.md](./SYSTEM_OVERVIEW.md)** - Complete system architecture, component diagrams, and design principles
-- **[API_REFERENCE.md](./API_REFERENCE.md)** - Complete REST API documentation with examples and error codes
+- **[API Documentation](./api/README.md)** - Complete REST API documentation with examples and error codes
 - **[TELEMETRY.md](./TELEMETRY.md)** - Production telemetry system with time-series storage and real-time graphs
 - **[EXTENSIBILITY_GUIDE.md](./EXTENSIBILITY_GUIDE.md)** - Advanced extension patterns for multi-zone, sensors, and integrations
 

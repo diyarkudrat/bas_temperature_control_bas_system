@@ -7,6 +7,7 @@ A distributed temperature control system that solves Pico W storage limitations 
 ## 📋 Table of Contents
 
 ### **Getting Started**
+- [⚡ Quick Reference](docs/QUICK_REFERENCE.md) - Essential commands and troubleshooting
 - [🏗️ Architecture Overview](#️-architecture-overview)
 - [🔧 Hardware Connections](#-hardware-connections)
 - [🚀 Quick Start & Setup](#-quick-start--setup)
@@ -315,38 +316,9 @@ BAS System Project/
 
 ## 🌐 API Endpoints
 
-| Endpoint | Method | Description |
-|----------|--------|-------------|
-| `/` | GET | Web dashboard |
-| `/api/status` | GET | System status |
-| `/api/sensor_data` | POST | Receive sensor data from Pico W |
-| `/api/set_setpoint` | POST | Update setpoint/deadband |
-| `/api/telemetry` | GET | Historical telemetry data |
-| `/api/config` | GET | System configuration |
-| `/api/health` | GET | Health check |
+The BAS system provides a comprehensive REST API for temperature control, telemetry data, and system management.
 
-### Quick API Examples
-
-```bash
-# Check system health
-curl http://localhost:8080/api/health
-
-# Get current status
-curl http://localhost:8080/api/status
-
-# Update setpoint to 25.0°C
-curl -X POST http://localhost:8080/api/set_setpoint \
-  -H "Content-Type: application/json" \
-  -d '{"setpoint_tenths": 250}'
-
-# Get system configuration
-curl http://localhost:8080/api/config
-
-# Get last 20 telemetry points
-curl "http://localhost:8080/api/telemetry?limit=20"
-```
-
-📚 **Complete API Documentation**: See [API_REFERENCE.md](docs/API_REFERENCE.md) for detailed endpoint documentation, request/response formats, error codes, and client examples.
+📚 **Complete API Documentation**: See [API Documentation](docs/api/README.md) for detailed endpoint documentation, request/response formats, error codes, authentication requirements, and client examples.
 
 ## 🐛 Troubleshooting
 
@@ -397,9 +369,8 @@ The BAS system includes comprehensive documentation for developers, system admin
 | **Category** | **Document** | **Description** |
 |--------------|--------------|-----------------|
 | **System Architecture** | [SYSTEM_OVERVIEW.md](docs/SYSTEM_OVERVIEW.md) | Complete system architecture, component diagrams, and design principles |
-| **API Integration** | [API_REFERENCE.md](docs/API_REFERENCE.md) | Complete REST API documentation with examples and error codes |
-| **Security** | [AUTH_ENHANCEMENTS.md](docs/AUTH_ENHANCEMENTS.md) | Comprehensive security enhancements and modern authentication best practices |
-| **Authentication** | [SECURITY_AUTH_PLAN.md](docs/SECURITY_AUTH_PLAN.md) | Complete authentication system design and implementation plan |
+| **API Integration** | [API Documentation](docs/api/README.md) | Complete REST API documentation with examples and error codes |
+| **Authentication & Security** | [Authentication Documentation](docs/auth/README.md) | Complete authentication system design, implementation, and security features |
 | **Development** | [README.md](docs/README.md) | Alternative project documentation with focus on core system features |
 
 ## 📝 License
