@@ -9,7 +9,7 @@ import sqlite3
 import time
 import threading
 from datetime import datetime, timedelta
-from flask import Flask, render_template, jsonify, request
+from flask import Flask, render_template, jsonify, request, g
 from flask_cors import CORS
 import logging
 
@@ -19,6 +19,10 @@ from auth import (
     AuditLogger, RateLimiter,
     require_auth, add_security_headers
 )
+
+# Firestore imports
+from services.firestore.service_factory import get_service_factory
+from auth.tenant_middleware import TenantMiddleware
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -216,10 +220,15 @@ session_manager = None
 audit_logger = None
 rate_limiter = None
 
+# Firestore global variables
+firestore_factory = None
+tenant_middleware = None
+
 def init_auth():
     """Initialize authentication system."""
     global auth_config, user_manager, session_manager
     global audit_logger, rate_limiter
+    global firestore_factory, tenant_middleware
     
     try:
         logger.info("Initializing authentication system")
@@ -230,12 +239,30 @@ def init_auth():
             logger.error("Invalid auth configuration")
             return False
         
-        # Initialize managers
-        user_manager = UserManager(database.db_path, auth_config)
-        session_manager = SessionManager(database.db_path, auth_config)
+        # Initialize Firestore if enabled
+        if any([auth_config.use_firestore_telemetry, auth_config.use_firestore_auth, auth_config.use_firestore_audit]):
+            logger.info("Initializing Firestore services")
+            firestore_factory = get_service_factory(auth_config)
+            
+            # Health check
+            health = firestore_factory.health_check()
+            if health['status'] != 'healthy':
+                logger.error(f"Firestore health check failed: {health}")
+                return False
+            
+            logger.info("Firestore services initialized successfully")
+        
+        # Initialize tenant middleware if Firestore is enabled
+        if firestore_factory:
+            tenant_middleware = TenantMiddleware(auth_config, firestore_factory)
+            logger.info("Tenant middleware initialized")
+        
+        # Initialize managers (will use Firestore if enabled)
+        user_manager = UserManager(database.db_path, auth_config, firestore_factory)
+        session_manager = SessionManager(database.db_path, auth_config, firestore_factory)
         
         # Initialize services
-        audit_logger = AuditLogger(database.db_path)
+        audit_logger = AuditLogger(database.db_path, firestore_factory)
         rate_limiter = RateLimiter(auth_config)
         
         logger.info("Authentication system initialized successfully")
@@ -259,7 +286,21 @@ def auth_login_page():
 @app.route('/api/health')
 def health():
     """Health check endpoint."""
-    return jsonify({"status": "healthy", "timestamp": time.time()})
+    health_status = {
+        "status": "healthy", 
+        "timestamp": time.time(),
+        "services": {
+            "auth": auth_config is not None,
+            "firestore": firestore_factory is not None
+        }
+    }
+    
+    # Add Firestore health if available
+    if firestore_factory:
+        firestore_health = firestore_factory.health_check()
+        health_status["firestore"] = firestore_health
+    
+    return jsonify(health_status)
 
 @app.route('/api/sensor_data', methods=['POST'])
 def receive_sensor_data():
@@ -288,7 +329,34 @@ def receive_sensor_data():
             'state': controller.state
         }
         
-        database.store_data(telemetry_data)
+        # Store in appropriate database based on feature flags
+        if firestore_factory and firestore_factory.is_telemetry_enabled():
+            try:
+                # Store in Firestore with tenant isolation
+                tenant_id = getattr(g, 'tenant_id', 'default')
+                device_id = data.get('device_id', 'unknown')
+                
+                telemetry_service = firestore_factory.get_telemetry_service()
+                telemetry_service.add_telemetry(
+                    tenant_id=tenant_id,
+                    device_id=device_id,
+                    timestamp_ms=int(telemetry_data['timestamp']),
+                    temp_tenths=telemetry_data['temp_tenths'],
+                    setpoint_tenths=telemetry_data['setpoint_tenths'],
+                    deadband_tenths=telemetry_data['deadband_tenths'],
+                    cool_active=telemetry_data['cool_active'],
+                    heat_active=telemetry_data['heat_active'],
+                    state=telemetry_data['state'],
+                    sensor_ok=telemetry_data['sensor_ok']
+                )
+                logger.debug(f"Stored telemetry in Firestore for tenant={tenant_id}, device={device_id}")
+            except Exception as e:
+                logger.error(f"Failed to store telemetry in Firestore: {e}")
+                # Fallback to SQLite
+                database.store_data(telemetry_data)
+        else:
+            # Use SQLite as fallback or when Firestore is disabled
+            database.store_data(telemetry_data)
         
         # Return control commands
         commands = controller.get_control_commands()
@@ -354,7 +422,29 @@ def get_telemetry():
     try:
         logger.debug(f"Telemetry request from {getattr(request, 'session', None).username if hasattr(getattr(request, 'session', None), 'username') else 'unknown'}")
         limit = request.args.get('limit', 100, type=int)
-        data = database.get_recent_data(limit)
+        device_id = request.args.get('device_id', 'unknown')
+        
+        # Get data from appropriate source based on feature flags
+        if firestore_factory and firestore_factory.is_telemetry_enabled():
+            try:
+                tenant_id = getattr(g, 'tenant_id', 'default')
+                telemetry_service = firestore_factory.get_telemetry_service()
+                
+                # Query recent telemetry with tenant isolation
+                data = telemetry_service.query_recent(
+                    tenant_id=tenant_id,
+                    device_id=device_id,
+                    limit=limit
+                )
+                logger.debug(f"Retrieved {len(data)} telemetry records from Firestore")
+            except Exception as e:
+                logger.error(f"Failed to get telemetry from Firestore: {e}")
+                # Fallback to SQLite
+                data = database.get_recent_data(limit)
+        else:
+            # Use SQLite when Firestore is disabled
+            data = database.get_recent_data(limit)
+        
         return jsonify(data)
         
     except Exception as e:
@@ -511,6 +601,10 @@ def setup_auth_context():
         request.auth_config = auth_config
         request.session_manager = session_manager
         request.audit_logger = audit_logger
+        
+        # Initialize tenant context if middleware is available
+        if tenant_middleware:
+            tenant_middleware.setup_tenant_context(request)
 
 # Apply security headers
 app.after_request(add_security_headers)

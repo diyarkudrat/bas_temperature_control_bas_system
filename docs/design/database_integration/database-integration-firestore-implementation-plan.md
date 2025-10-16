@@ -117,9 +117,9 @@
 
 | File | Changes | Status |
 |---|---|---|
-| `server/bas_server.py` | Read flags/env; init Firestore client factory (emulator vs ADC); wire DALs; register tenant middleware; gate endpoints. | ⏳ **PENDING** |
+| `server/bas_server.py` | Read flags/env; init Firestore client factory (emulator vs ADC); wire DALs; register tenant middleware; gate endpoints. | ✅ **COMPLETED** |
 | `server/auth/config.py` | Add config keys: flags, project id, emulator host, secret names. | ✅ **COMPLETED** |
-| `server/auth/middleware.py` | Tenant enforcement; 403 + AuditLogStore call. | ⏳ **PENDING** |
+| `server/auth/middleware.py` | Tenant enforcement; 403 + AuditLogStore call. | ✅ **COMPLETED** |
 | `server/auth/models.py` | Ensure `user_id`, `username`, `role`, `expires_at`, `tenant_id` fields. | ⏳ **PENDING** |
 | `server/auth/services.py` | Branch to Firestore-backed Users/Sessions on flags; enforce re-login at cutover. | ⏳ **PENDING** |
 | `server/auth/managers.py` | Integrate stores for login/logout; structured audit hooks. | ⏳ **PENDING** |

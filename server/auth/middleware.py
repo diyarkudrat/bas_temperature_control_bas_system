@@ -2,13 +2,14 @@
 
 import logging
 from functools import wraps
-from flask import request, jsonify
+from flask import request, jsonify, g
 from .exceptions import AuthError
+from .tenant_middleware import TenantMiddleware
 
 logger = logging.getLogger(__name__)
 
-def require_auth(required_role="operator"):
-    """Decorator for protected endpoints."""
+def require_auth(required_role="operator", require_tenant=False):
+    """Decorator for protected endpoints with optional tenant enforcement."""
     def decorator(f):
         @wraps(f)
         def decorated_function(*args, **kwargs):
@@ -40,6 +41,7 @@ def require_auth(required_role="operator"):
             # Validate session ID format
             if not session_id or not isinstance(session_id, str) or len(session_id) < 10:
                 logger.warning(f"Invalid session ID format for {request.endpoint}")
+                _audit_auth_failure("INVALID_SESSION_ID", request.remote_addr, request.endpoint)
                 return jsonify({
                     "error": "Invalid session ID",
                     "message": "Please login again",
@@ -54,6 +56,7 @@ def require_auth(required_role="operator"):
             session = session_manager.validate_session(session_id, request)
             if not session:
                 logger.warning(f"Invalid or expired session for {request.endpoint}")
+                _audit_auth_failure("SESSION_INVALID", request.remote_addr, request.endpoint)
                 return jsonify({
                     "error": "Invalid or expired session",
                     "message": "Please login again",
@@ -63,11 +66,18 @@ def require_auth(required_role="operator"):
             # Check role permissions
             if not _has_permission(session.role, required_role):
                 logger.warning(f"Insufficient permissions for {session.username} ({session.role}) to access {request.endpoint} (requires {required_role})")
+                _audit_permission_denied(session.username, session.user_id, request.remote_addr, request.endpoint, f"ROLE_{required_role.upper()}")
                 return jsonify({
                     "error": "Insufficient permissions",
                     "message": f"{session.role} role cannot perform this action",
                     "code": "PERMISSION_DENIED"
                 }), 403
+            
+            # Enforce tenant isolation if required
+            if require_tenant:
+                tenant_result = _enforce_tenant_isolation(session, request)
+                if tenant_result is not True:
+                    return tenant_result
             
             # Update last access
             session_manager.update_last_access(session_id)
@@ -100,6 +110,127 @@ def _has_permission(user_role: str, required_role: str) -> bool:
     has_permission = user_level >= required_level
     logger.debug(f"Permission check result: {has_permission}")
     return has_permission
+
+def _enforce_tenant_isolation(session, request):
+    """Enforce tenant isolation for the session."""
+    try:
+        # Get tenant ID from request header
+        tenant_header = getattr(request.auth_config, 'tenant_id_header', 'X-BAS-Tenant')
+        requested_tenant_id = request.headers.get(tenant_header)
+        
+        if not requested_tenant_id:
+            logger.warning(f"Missing tenant ID in request to {request.endpoint}")
+            _audit_permission_denied(
+                session.username, session.user_id, request.remote_addr, 
+                request.endpoint, "MISSING_TENANT_ID"
+            )
+            return jsonify({
+                'error': 'Tenant ID required',
+                'code': 'MISSING_TENANT_ID'
+            }), 400
+        
+        # Get user's tenant from session
+        user_tenant_id = getattr(session, 'tenant_id', None)
+        if not user_tenant_id:
+            logger.warning(f"No tenant ID in session for user {session.username}")
+            _audit_permission_denied(
+                session.username, session.user_id, request.remote_addr,
+                request.endpoint, "NO_SESSION_TENANT"
+            )
+            return jsonify({
+                'error': 'User not assigned to tenant',
+                'code': 'NO_SESSION_TENANT'
+            }), 400
+        
+        # Validate tenant access
+        if user_tenant_id != requested_tenant_id:
+            logger.warning(f"Tenant violation: user {session.username} "
+                         f"attempted to access tenant {requested_tenant_id}, "
+                         f"allowed tenant: {user_tenant_id}")
+            
+            _audit_tenant_violation(
+                session.user_id, session.username, request.remote_addr,
+                requested_tenant_id, user_tenant_id
+            )
+            
+            return jsonify({
+                'error': 'Access denied to tenant',
+                'code': 'TENANT_ACCESS_DENIED'
+            }), 403
+        
+        # Store validated tenant ID in request context
+        g.tenant_id = requested_tenant_id
+        
+        return True
+        
+    except Exception as e:
+        logger.error(f"Error enforcing tenant isolation: {e}")
+        return jsonify({
+            'error': 'Tenant validation error',
+            'code': 'TENANT_VALIDATION_ERROR'
+        }), 500
+
+def _audit_auth_failure(reason: str, ip_address: str, endpoint: str):
+    """Audit authentication failure."""
+    try:
+        if hasattr(request, 'audit_logger') and request.audit_logger:
+            # Try Firestore audit if available
+            if hasattr(request.audit_logger, 'firestore_audit') and request.audit_logger.firestore_audit:
+                request.audit_logger.firestore_audit.log_event(
+                    event_type='AUTH_FAILURE',
+                    ip_address=ip_address,
+                    user_agent=request.headers.get('User-Agent'),
+                    details={'endpoint': endpoint, 'reason': reason}
+                )
+            else:
+                # Fallback to SQLite audit
+                request.audit_logger.log_auth_failure(None, ip_address, reason)
+    except Exception as e:
+        logger.error(f"Failed to audit auth failure: {e}")
+
+def _audit_permission_denied(username: str, user_id: str, ip_address: str, endpoint: str, reason: str):
+    """Audit permission denied event."""
+    try:
+        if hasattr(request, 'audit_logger') and request.audit_logger:
+            # Try Firestore audit if available
+            if hasattr(request.audit_logger, 'firestore_audit') and request.audit_logger.firestore_audit:
+                request.audit_logger.firestore_audit.log_event(
+                    event_type='PERMISSION_DENIED',
+                    user_id=user_id,
+                    username=username,
+                    ip_address=ip_address,
+                    user_agent=request.headers.get('User-Agent'),
+                    details={'endpoint': endpoint, 'reason': reason}
+                )
+            else:
+                # Fallback to SQLite audit
+                request.audit_logger.log_permission_denied(username, user_id, ip_address, endpoint, reason)
+    except Exception as e:
+        logger.error(f"Failed to audit permission denied: {e}")
+
+def _audit_tenant_violation(user_id: str, username: str, ip_address: str, attempted_tenant: str, allowed_tenant: str):
+    """Audit tenant access violation."""
+    try:
+        if hasattr(request, 'audit_logger') and request.audit_logger:
+            # Try Firestore audit if available
+            if hasattr(request.audit_logger, 'firestore_audit') and request.audit_logger.firestore_audit:
+                request.audit_logger.firestore_audit.log_event(
+                    event_type='TENANT_VIOLATION',
+                    user_id=user_id,
+                    username=username,
+                    ip_address=ip_address,
+                    user_agent=request.headers.get('User-Agent'),
+                    details={
+                        'attempted_tenant': attempted_tenant,
+                        'allowed_tenant': allowed_tenant,
+                        'endpoint': request.endpoint
+                    }
+                )
+            else:
+                # Fallback to SQLite audit
+                request.audit_logger.log_tenant_violation(user_id, username, ip_address, attempted_tenant, allowed_tenant)
+    except Exception as e:
+        logger.error(f"Failed to audit tenant violation: {e}")
 
 def add_security_headers(response):
     """Add security headers to response."""
