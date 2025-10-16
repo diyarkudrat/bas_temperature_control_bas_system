@@ -1,0 +1,45 @@
+name: Feature Request
+description: Suggest a new feature or enhancement
+title: "[Feature] "
+labels: ["idea"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for suggesting a new feature! Please provide the following information:
+        
+  - type: textarea
+    id: goal
+    attributes:
+      label: Goal
+      description: What should this feature accomplish?
+      placeholder: Describe the main objective of this feature...
+    validations:
+      required: true
+      
+  - type: textarea
+    id: context
+    attributes:
+      label: Context
+      description: Why is this feature needed? What problem does it solve?
+      placeholder: Explain the background and motivation...
+    validations:
+      required: true
+      
+  - type: textarea
+    id: approach
+    attributes:
+      label: Rough Approach
+      description: Any initial thoughts on how this might be implemented?
+      placeholder: High-level implementation ideas, considerations, or alternatives...
+      
+  - type: checkboxes
+    id: acceptance
+    attributes:
+      label: Acceptance Criteria
+      description: How will we know when this feature is complete?
+      options:
+        - label: Clear success metrics defined
+        - label: User-facing functionality working
+        - label: Code reviewed and tested
+        - label: Documentation updated

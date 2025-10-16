@@ -1,0 +1,34 @@
+# GitHub Labels Configuration
+# Import with: gh label import .github/labels.yml
+
+- name: idea
+  color: 0075ca
+  description: Initial concept or feature request
+
+- name: in-progress
+  color: 0e8a16
+  description: Work in progress
+
+- name: done
+  color: 7057ff
+  description: Completed work
+
+- name: spike
+  color: c2e0c6
+  description: Investigation or research task
+
+- name: tech-debt
+  color: ffc107
+  description: Technical debt items
+
+- name: perf
+  color: 28a745
+  description: Performance improvements
+
+- name: security
+  color: dc3545
+  description: Security-related items
+
+- name: blocked
+  color: 6c757d
+  description: Items waiting on external dependencies
