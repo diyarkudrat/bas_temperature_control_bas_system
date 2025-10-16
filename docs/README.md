@@ -32,8 +32,8 @@ A comprehensive, enterprise-ready temperature control system featuring modern au
 | **API Integration** | [API_REFERENCE.md](./API_REFERENCE.md) | Complete REST API documentation, authentication, real-time updates |
 | **Configuration** | [Configuration](#-configuration) | Two-tier config system, profiles, runtime updates |
 | **Security** | [SECURITY_AUTH_PLAN.md](./SECURITY_AUTH_PLAN.md) | Authentication system, MFA, security best practices |
-| **Telemetry** | [TELEMETRY.md](./TELEMETRY.md) | Data collection, time-series storage, analytics |
-| **Extension** | [EXTENSIBILITY_GUIDE.md](./EXTENSIBILITY_GUIDE.md) | Multi-zone support, custom sensors, integrations |
+| **Telemetry** | [Telemetry System](#-telemetry-system) | Data collection, time-series storage, analytics |
+| **Extension** | [Extending the Project](#️-extending-the-project) | Multi-zone support, custom sensors, integrations |
 | **Testing** | [Testing](#-testing) | Unit tests, integration tests, performance validation |
 | **Hardware** | [Hardware Connections](#-hardware-connections) | GPIO pins, wiring diagrams, component specifications |
 
@@ -158,7 +158,7 @@ curl -X POST "http://<pico-ip>/set?token=your-token" \
 └──────────────────────────────────────────────┘
          │              │              │
 ┌────────┴──────────────┴──────────────┴───────┐
-│  core/ (DS18B20, Relay, SystemClock)         │
+│  src/bas/hardware/ (DS18B20, Relay, SystemClock) │
 └──────────────────────────────────────────────┘
 ```
 
@@ -167,7 +167,7 @@ curl -X POST "http://<pico-ip>/set?token=your-token" \
 - **main.py** - Entry point with cooperative scheduler
 - **controller.py** - FSM with hysteresis & anti-short-cycle
 - **display.py** - OLED with view model pattern
-- **core/** - Hardware abstraction (relay, sensor, clock)
+- **src/bas/hardware/** - Hardware abstraction (relay, sensor, clock)
 - **interfaces/** - Clean contracts for testability
 - **services/** - Config, logging, error handling
 - **netctrl/** - WiFi connection + HTTP API server
@@ -293,9 +293,9 @@ scripts/verify.sh          # Verify installation
 
 ### Add a New Sensor
 
-1. Create interface implementation in `core/`:
+1. Create interface implementation in `src/bas/hardware/`:
 ```python
-# core/my_sensor.py
+# src/bas/hardware/sensors/my_sensor.py
 from interfaces import TemperatureSensor, SensorReading
 
 class MySensor(TemperatureSensor):
@@ -306,7 +306,7 @@ class MySensor(TemperatureSensor):
 
 2. Use it in `main.py`:
 ```python
-from core import MySensor
+from src.bas.hardware.sensors import MySensor
 sensor = MySensor(pin=5)
 ```
 
@@ -364,22 +364,55 @@ telemetry.register_custom_collector('humidity', collect_humidity)
 
 ```
 BAS System Project/
-├── README.md              ← Start here
-├── main.py                ← Entry point
-├── controller.py          ← Control logic
-├── display.py             ← OLED interface
-├── boot.py                ← Hardware init
+├── README.md                    ← Start here
+├── pico_client.py              ← Main entry point
+├── multi_zone.py               ← Multi-zone controller
 │
-├── config/                ← System configuration
-├── core/                  ← Hardware drivers
-├── interfaces/            ← Abstract contracts
-├── services/              ← Config, logging, errors
-├── netctrl/               ← WiFi & API
+├── src/bas/                    ← Core BAS system
+│   ├── main.py                 ← System orchestrator
+│   ├── controller.py           ← Control logic
+│   ├── display.py              ← OLED interface
+│   ├── config/                 ← Configuration management
+│   ├── hardware/               ← Hardware drivers
+│   │   ├── sensors/            ← Temperature sensors (DS18B20)
+│   │   ├── actuators/          ← Relay controls
+│   │   ├── displays/           ← OLED display drivers
+│   │   └── interfaces/         ← Hardware abstractions
+│   ├── network/                ← WiFi & API
+│   │   └── api/                ← REST API server
+│   ├── services/               ← Core services
+│   │   ├── config_manager.py   ← Configuration service
+│   │   ├── telemetry.py        ← Data collection
+│   │   ├── logging.py          ← Logging service
+│   │   └── error_handler.py    ← Error management
+│   ├── plugins/                ← Extension system (empty)
+│   ├── tools/                  ← Development utilities
+│   └── utils/                  ← Common utilities
 │
-├── scripts/               ← Deployment tools
-├── tests/                 ← Test suite (40+ tests)
-├── tools/                 ← Development utilities
-└── blueprints/            ← Extension patterns
+├── server/                     ← Python server (optional)
+│   ├── bas_server.py          ← Flask web server
+│   ├── templates/              ← Web dashboard
+│   └── requirements.txt        ← Server dependencies
+│
+├── config/                     ← System configuration
+│   ├── config.py              ← Configuration settings
+│   └── templates/              ← Config templates
+│
+├── scripts/                    ← Deployment tools
+│   ├── start_bas.sh           ← Start system
+│   ├── stop_bas.sh            ← Stop system
+│   └── status_bas.sh          ← Check status
+│
+├── tests/                      ← Test suite
+│   └── unit/                  ← Unit tests
+│
+├── docs/                       ← Documentation
+│   ├── README.md              ← This file
+│   ├── SYSTEM_OVERVIEW.md     ← Architecture docs
+│   ├── API_REFERENCE.md       ← API documentation
+│   └── SECURITY_AUTH_PLAN.md  ← Security documentation
+│
+└── deploy_pico.sh             ← Deployment script
 ```
 
 ---

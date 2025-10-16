@@ -1,4 +1,0 @@
-#!/bin/bash
-# Convenience wrapper for scripts/status.sh
-exec "$(dirname "$0")/scripts/status.sh" "$@"
-

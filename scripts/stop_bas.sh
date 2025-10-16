@@ -66,9 +66,10 @@ else
 fi
 
 # Clean up log files
-if [ -f "server.log" ]; then
+if [ -f "server/logs/server.log" ]; then
     print_info "Archiving server logs..."
-    mv server.log "server.log.$(date +%Y%m%d_%H%M%S)" 2>/dev/null || true
+    mkdir -p server/logs
+    mv server/logs/server.log "server/logs/server.log.$(date +%Y%m%d_%H%M%S)" 2>/dev/null || true
     print_status "Server logs archived"
 fi
 

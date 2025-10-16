@@ -44,8 +44,9 @@ Desktop.ini
 # BAS System specific
 # Server runtime files
 server.pid
-server.log
-server.log.*
+
+# Server logs folder (all log files)
+server/logs/
 
 # Database files (keep structure but ignore data)
 server/bas_telemetry.db
@@ -57,9 +58,8 @@ server/*.db
 secrets.json
 config.local.py
 
-# Log files
+# Log files (general)
 *.log
-logs/
 
 # Temporary files
 *.tmp

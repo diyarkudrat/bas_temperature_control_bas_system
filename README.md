@@ -121,7 +121,7 @@ This single command handles everything:
 ./scripts/status_bas.sh
 
 # View server logs
-tail -f server.log
+tail -f server/logs/server.log
 
 # Restart everything
 ./scripts/stop_bas.sh && ./scripts/start_bas.sh
@@ -241,16 +241,13 @@ curl http://localhost:8080/api/health
 
 The BAS system includes comprehensive documentation for developers, system administrators, and integrators:
 
-### **System Architecture & Design**
-- **[docs/SYSTEM_OVERVIEW.md](docs/SYSTEM_OVERVIEW.md)** - Complete system architecture, component diagrams, and design principles
-- **[docs/API_REFERENCE.md](docs/API_REFERENCE.md)** - Complete REST API documentation with examples and error codes
-
-### **Security & Authentication**
-- **[docs/AUTH_ENHANCEMENTS.md](docs/AUTH_ENHANCEMENTS.md)** - Comprehensive security enhancements and modern authentication best practices
-- **[docs/SECURITY_AUTH_PLAN.md](docs/SECURITY_AUTH_PLAN.md)** - Complete authentication system design and implementation plan
-
-### **Development & Integration**
-- **[docs/README.md](docs/README.md)** - Alternative project documentation with focus on core system features
+| **Category** | **Document** | **Description** |
+|--------------|--------------|-----------------|
+| **System Architecture** | [SYSTEM_OVERVIEW.md](docs/SYSTEM_OVERVIEW.md) | Complete system architecture, component diagrams, and design principles |
+| **API Integration** | [API_REFERENCE.md](docs/API_REFERENCE.md) | Complete REST API documentation with examples and error codes |
+| **Security** | [AUTH_ENHANCEMENTS.md](docs/AUTH_ENHANCEMENTS.md) | Comprehensive security enhancements and modern authentication best practices |
+| **Authentication** | [SECURITY_AUTH_PLAN.md](docs/SECURITY_AUTH_PLAN.md) | Complete authentication system design and implementation plan |
+| **Development** | [README.md](docs/README.md) | Alternative project documentation with focus on core system features |
 
 ## 📝 License
 

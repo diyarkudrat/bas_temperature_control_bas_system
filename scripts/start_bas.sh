@@ -117,7 +117,8 @@ start_server() {
     
     # Start server in background
     source venv/bin/activate
-    nohup python bas_server.py > ../server.log 2>&1 &
+    mkdir -p logs
+    nohup python bas_server.py > logs/server.log 2>&1 &
     SERVER_PID=$!
     
     cd ..
@@ -129,12 +130,12 @@ start_server() {
     if kill -0 $SERVER_PID 2>/dev/null; then
         print_status "Server started successfully (PID: $SERVER_PID)"
         print_info "Dashboard: http://localhost:8080"
-        print_info "Logs: tail -f server.log"
+        print_info "Logs: tail -f server/logs/server.log"
         echo $SERVER_PID > server.pid
         return 0
     else
         print_error "Failed to start server"
-        print_info "Check server.log for details"
+        print_info "Check server/logs/server.log for details"
         return 1
     fi
 }

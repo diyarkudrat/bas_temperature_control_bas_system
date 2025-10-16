@@ -136,9 +136,9 @@ echo ""
 
 # Check logs
 print_info "Recent server logs:"
-if [ -f "server.log" ]; then
+if [ -f "server/logs/server.log" ]; then
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-    tail -10 server.log
+    tail -10 server/logs/server.log
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 else
     print_warning "No server logs found"

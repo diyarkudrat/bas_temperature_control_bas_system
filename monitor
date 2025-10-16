@@ -1,4 +1,0 @@
-#!/bin/bash
-# Convenience wrapper for scripts/monitor.sh
-exec "$(dirname "$0")/scripts/monitor.sh" "$@"
-
