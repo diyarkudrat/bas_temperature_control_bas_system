@@ -1,0 +1,128 @@
+{% extends "auth/base.html" %}
+
+{% block title %}MFA Verification - BAS System{% endblock %}
+{% block subtitle %}Enter your verification code{% endblock %}
+
+{% block content %}
+<div id="error-message" class="error" style="display: none;"></div>
+<div id="success-message" class="success" style="display: none;"></div>
+
+<div class="loading" id="loading-section">
+    <p>Loading verification...</p>
+</div>
+
+<div id="verify-section" style="display: none;">
+    <p>Please enter the 6-digit code sent to your phone:</p>
+    
+    <form id="verifyForm">
+        <div class="form-group">
+            <label for="mfa_code">MFA Code:</label>
+            <input type="text" id="mfa_code" name="mfa_code" maxlength="6" required autofocus>
+        </div>
+        
+        <button type="submit" class="btn" id="verifyBtn" data-original-text="Verify">Verify</button>
+    </form>
+    
+    <div style="text-align: center; margin-top: 20px;">
+        <button type="button" class="btn" onclick="resendCode()" id="resendBtn" data-original-text="Resend Code" style="background: #6c757d;">Resend Code</button>
+    </div>
+</div>
+
+<script>
+let currentUsername = '';
+let currentPhoneNumber = '';
+
+// Check if we have pending MFA data
+document.addEventListener('DOMContentLoaded', function() {
+    const urlParams = new URLSearchParams(window.location.search);
+    const username = urlParams.get('username');
+    const phone = urlParams.get('phone');
+    
+    if (username && phone) {
+        currentUsername = username;
+        currentPhoneNumber = phone;
+        document.getElementById('loading-section').style.display = 'none';
+        document.getElementById('verify-section').style.display = 'block';
+    } else {
+        showError('Invalid verification link');
+    }
+});
+
+document.getElementById('verifyForm').addEventListener('submit', async function(e) {
+    e.preventDefault();
+    
+    const code = document.getElementById('mfa_code').value;
+    
+    const verifyBtn = document.getElementById('verifyBtn');
+    setLoading(verifyBtn, true);
+    
+    try {
+        const response = await fetch('/auth/verify', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                username: currentUsername,
+                code: code
+            })
+        });
+        
+        const data = await response.json();
+        
+        if (response.ok && data.status === 'success') {
+            // Store session ID for future requests
+            localStorage.setItem('bas_session_id', data.session_id);
+            showSuccess('Verification successful! Redirecting...');
+            
+            // Redirect to dashboard
+            setTimeout(() => {
+                window.location.href = '/';
+            }, 1000);
+        } else {
+            showError(data.error || 'Verification failed');
+        }
+    } catch (error) {
+        console.error('Verification error:', error);
+        showError('Network error occurred');
+    } finally {
+        setLoading(verifyBtn, false);
+    }
+});
+
+async function resendCode() {
+    const resendBtn = document.getElementById('resendBtn');
+    setLoading(resendBtn, true);
+    
+    try {
+        const response = await fetch('/auth/login', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                username: currentUsername,
+                password: '', // This will fail, but we need to trigger MFA
+                phone_number: currentPhoneNumber
+            })
+        });
+        
+        const data = await response.json();
+        
+        if (data.status === 'mfa_required') {
+            showSuccess('New code sent to your phone');
+        } else {
+            showError('Failed to resend code');
+        }
+    } catch (error) {
+        console.error('Resend error:', error);
+        showError('Network error occurred');
+    } finally {
+        setLoading(resendBtn, false);
+    }
+}
+
+// Auto-focus on code input
+document.getElementById('mfa_code').focus();
+</script>
+{% endblock %}

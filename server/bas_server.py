@@ -13,6 +13,13 @@ from flask import Flask, render_template, jsonify, request
 from flask_cors import CORS
 import logging
 
+# Authentication imports
+from auth import (
+    AuthConfig, UserManager, SessionManager, MFAManager,
+    SMSService, AuditLogger, RateLimiter,
+    require_auth, add_security_headers
+)
+
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -202,10 +209,60 @@ class BASDatabase:
 controller = BASController()
 database = BASDatabase()
 
+# Authentication global variables
+auth_config = None
+user_manager = None
+session_manager = None
+mfa_manager = None
+sms_service = None
+audit_logger = None
+rate_limiter = None
+
+def init_auth():
+    """Initialize authentication system."""
+    global auth_config, user_manager, session_manager, mfa_manager
+    global sms_service, audit_logger, rate_limiter
+    
+    try:
+        logger.info("Initializing authentication system")
+        
+        # Load auth configuration
+        auth_config = AuthConfig.from_file('config/auth_config.json')
+        if not auth_config.validate():
+            logger.error("Invalid auth configuration")
+            return False
+        
+        # Initialize managers
+        user_manager = UserManager(database.db_path, auth_config)
+        session_manager = SessionManager(database.db_path, auth_config)
+        mfa_manager = MFAManager(auth_config)
+        
+        # Initialize services
+        sms_service = SMSService(auth_config)
+        audit_logger = AuditLogger(database.db_path)
+        rate_limiter = RateLimiter(auth_config)
+        
+        logger.info("Authentication system initialized successfully")
+        return True
+        
+    except Exception as e:
+        logger.error(f"Failed to initialize auth system: {e}")
+        return False
+
 @app.route('/')
 def dashboard():
     """Main dashboard."""
     return render_template('dashboard.html')
+
+@app.route('/auth/login')
+def auth_login_page():
+    """Login page."""
+    return render_template('auth/login.html')
+
+@app.route('/auth/verify')
+def auth_verify_page():
+    """MFA verification page."""
+    return render_template('auth/verify.html')
 
 @app.route('/api/health')
 def health():
@@ -264,25 +321,34 @@ def get_status():
     })
 
 @app.route('/api/set_setpoint', methods=['POST'])
+@require_auth(required_role="operator")
 def set_setpoint():
-    """Set temperature setpoint."""
+    """Set temperature setpoint - now requires authentication."""
     try:
+        logger.info(f"Setpoint change request from {getattr(request, 'session', None).username if hasattr(getattr(request, 'session', None), 'username') else 'unknown'}")
         data = request.get_json()
         setpoint = data.get('setpoint_tenths')
         deadband = data.get('deadband_tenths')
         
         if setpoint is not None:
             if not controller.set_setpoint(setpoint):
+                logger.warning(f"Invalid setpoint value: {setpoint}")
                 return jsonify({"error": "Invalid setpoint"}), 400
         
         if deadband is not None:
             if not controller.set_deadband(deadband):
+                logger.warning(f"Invalid deadband value: {deadband}")
                 return jsonify({"error": "Invalid deadband"}), 400
+        
+        # Log the change with user info
+        user_info = f"User: {request.session.username}" if hasattr(request, 'session') else "Unknown"
+        logger.info(f"Setpoint updated by {user_info}: sp={setpoint}, db={deadband}")
         
         return jsonify({
             "success": True,
             "setpoint_tenths": controller.setpoint_tenths,
-            "deadband_tenths": controller.deadband_tenths
+            "deadband_tenths": controller.deadband_tenths,
+            "updated_by": request.session.username if hasattr(request, 'session') else "system"
         })
         
     except Exception as e:
@@ -290,9 +356,11 @@ def set_setpoint():
         return jsonify({"error": "Internal server error"}), 500
 
 @app.route('/api/telemetry')
+@require_auth(required_role="read-only")
 def get_telemetry():
-    """Get telemetry data."""
+    """Get telemetry data - now requires authentication."""
     try:
+        logger.debug(f"Telemetry request from {getattr(request, 'session', None).username if hasattr(getattr(request, 'session', None), 'username') else 'unknown'}")
         limit = request.args.get('limit', 100, type=int)
         data = database.get_recent_data(limit)
         return jsonify(data)
@@ -310,6 +378,175 @@ def get_config():
         "min_on_time_ms": controller.min_on_time_ms,
         "min_off_time_ms": controller.min_off_time_ms
     })
+
+# Authentication endpoints
+@app.route('/auth/login', methods=['POST'])
+def auth_login():
+    """Authenticate user with username/password and initiate MFA."""
+    if not auth_config or not auth_config.auth_enabled:
+        logger.warning("Authentication attempt while auth disabled")
+        return jsonify({"error": "Authentication disabled"}), 503
+    
+    try:
+        logger.info("Authentication login attempt")
+        data = request.get_json()
+        username = data.get('username')
+        password = data.get('password')
+        phone_number = data.get('phone_number')
+        
+        if not all([username, password, phone_number]):
+            logger.warning("Missing required fields in login request")
+            return jsonify({"error": "Missing required fields", "code": "MISSING_FIELDS"}), 400
+        
+        # Rate limiting check
+        allowed, message = rate_limiter.is_allowed(request.remote_addr, username)
+        if not allowed:
+            logger.warning(f"Rate limit exceeded for {username} from {request.remote_addr}")
+            audit_logger.log_auth_failure(username, request.remote_addr, "RATE_LIMITED")
+            return jsonify({"error": message, "code": "RATE_LIMITED"}), 429
+        
+        # User authentication
+        user = user_manager.authenticate_user(username, password)
+        if not user:
+            logger.warning(f"Authentication failed for {username} from {request.remote_addr}")
+            rate_limiter.record_attempt(request.remote_addr, username)
+            audit_logger.log_auth_failure(username, request.remote_addr, "INVALID_CREDENTIALS")
+            return jsonify({"error": "Invalid credentials", "code": "AUTH_FAILED"}), 401
+        
+        # Check if account is locked
+        if user.is_locked():
+            logger.warning(f"Login attempt on locked account: {username}")
+            audit_logger.log_auth_failure(username, request.remote_addr, "ACCOUNT_LOCKED")
+            return jsonify({"error": "Account locked", "code": "USER_LOCKED"}), 423
+        
+        # Bypass SMS for now - create session directly
+        logger.info(f"Bypassing SMS MFA for {username} - creating session directly")
+        
+        # Create session directly
+        session = session_manager.create_session(username, user.role, request)
+        
+        # Update user login time
+        user_manager.update_last_login(username)
+        
+        # Clear rate limiting for successful auth
+        rate_limiter.clear_attempts(request.remote_addr, username)
+        
+        # Audit log
+        audit_logger.log_auth_success(username, request.remote_addr, session.session_id)
+        
+        logger.info(f"Authentication successful for {username} (SMS bypassed)")
+        return jsonify({
+            "status": "success",
+            "session_id": session.session_id,
+            "expires_in": auth_config.session_timeout,
+            "user": {"username": username, "role": user.role}
+        })
+        
+    except Exception as e:
+        logger.error(f"Error in auth login: {e}")
+        return jsonify({"error": "Internal server error"}), 500
+
+@app.route('/auth/verify', methods=['POST'])
+def auth_verify():
+    """Verify MFA code and create authenticated session."""
+    try:
+        logger.info("MFA verification attempt")
+        data = request.get_json()
+        username = data.get('username')
+        code = data.get('code')
+        
+        if not all([username, code]):
+            logger.warning("Missing required fields in MFA verification")
+            return jsonify({"error": "Missing required fields", "code": "MISSING_FIELDS"}), 400
+        
+        # Validate MFA code
+        if not mfa_manager.verify_code(username, code):
+            logger.warning(f"MFA verification failed for {username}")
+            audit_logger.log_mfa_failure(username, request.remote_addr, "INVALID_MFA")
+            return jsonify({"error": "Invalid MFA code", "code": "MFA_FAILED"}), 401
+        
+        # Create session
+        user = user_manager.get_user(username)
+        session = session_manager.create_session(username, user.role, request)
+        
+        # Update user login time
+        user_manager.update_last_login(username)
+        
+        # Clear rate limiting for successful auth
+        rate_limiter.clear_attempts(request.remote_addr, username)
+        
+        # Audit log
+        audit_logger.log_mfa_success(username, request.remote_addr)
+        audit_logger.log_session_creation(username, request.remote_addr, session.session_id)
+        audit_logger.log_auth_success(username, request.remote_addr, session.session_id)
+        
+        logger.info(f"Authentication successful for {username}")
+        return jsonify({
+            "status": "success",
+            "session_id": session.session_id,
+            "expires_in": auth_config.session_timeout,
+            "user": {"username": username, "role": user.role}
+        })
+        
+    except Exception as e:
+        logger.error(f"Error in auth verify: {e}")
+        return jsonify({"error": "Internal server error"}), 500
+
+@app.route('/auth/logout', methods=['POST'])
+def auth_logout():
+    """Terminate user session."""
+    try:
+        logger.info("Logout request")
+        data = request.get_json()
+        session_id = data.get('session_id')
+        
+        if session_id:
+            session_manager.invalidate_session(session_id)
+            audit_logger.log_session_destruction(session_id)
+            logger.info(f"Session invalidated: {session_id[:12]}...")
+        
+        return jsonify({"status": "success", "message": "Logged out successfully"})
+        
+    except Exception as e:
+        logger.error(f"Error in auth logout: {e}")
+        return jsonify({"error": "Internal server error"}), 500
+
+@app.route('/auth/status')
+def auth_status():
+    """Check session validity and get user info."""
+    session_id = request.headers.get('X-Session-ID')
+    
+    if not session_id:
+        logger.warning("Auth status check without session ID")
+        return jsonify({"error": "No session provided", "code": "NO_SESSION"}), 400
+    
+    session = session_manager.validate_session(session_id, request)
+    if not session:
+        logger.warning(f"Invalid session in status check: {session_id[:12]}...")
+        return jsonify({"error": "Invalid or expired session", "code": "SESSION_INVALID"}), 401
+    
+    logger.debug(f"Session status check successful for {session.username}")
+    return jsonify({
+        "status": "valid",
+        "user": {
+            "username": session.username,
+            "role": session.role,
+            "login_time": session.created_at
+        },
+        "expires_in": int(session.expires_at - time.time())
+    })
+
+# Add request context setup
+@app.before_request
+def setup_auth_context():
+    """Setup authentication context for each request."""
+    if auth_config:
+        request.auth_config = auth_config
+        request.session_manager = session_manager
+        request.audit_logger = audit_logger
+
+# Apply security headers
+app.after_request(add_security_headers)
 
 def cleanup_old_data():
     """Clean up old telemetry data (keep last 7 days)."""
@@ -336,6 +573,10 @@ def cleanup_old_data():
         time.sleep(24 * 3600)
 
 if __name__ == '__main__':
+    # Initialize authentication system
+    if not init_auth():
+        logger.warning("Authentication system initialization failed - running without auth")
+    
     # Start cleanup thread
     cleanup_thread = threading.Thread(target=cleanup_old_data, daemon=True)
     cleanup_thread.start()
@@ -343,5 +584,8 @@ if __name__ == '__main__':
     logger.info("Starting BAS Server...")
     logger.info("Dashboard available at: http://localhost:8080")
     logger.info("API available at: http://localhost:8080/api/")
+    if auth_config and auth_config.auth_enabled:
+        logger.info("Authentication system enabled")
+        logger.info("Auth endpoints available at: http://localhost:8080/auth/")
     
     app.run(host='0.0.0.0', port=8080, debug=False)

@@ -116,6 +116,24 @@ else
 fi
 
 echo ""
+print_info "Setting up authentication system..."
+
+# Setup authentication
+if [ -f "setup_auth.sh" ]; then
+    chmod +x setup_auth.sh
+    ./setup_auth.sh
+    if [ $? -eq 0 ]; then
+        print_status "Authentication setup completed"
+    else
+        print_error "Authentication setup failed"
+        exit 1
+    fi
+else
+    print_error "Authentication setup script not found"
+    exit 1
+fi
+
+echo ""
 print_info "Auto-detecting network configuration..."
 
 # Auto-detect computer IP address
@@ -189,6 +207,7 @@ print_info "Setup Summary"
 echo "==============="
 print_status "✅ System requirements checked"
 print_status "✅ Server environment configured"
+print_status "✅ Authentication system configured"
 print_status "✅ Network configuration detected"
 print_status "✅ Scripts prepared for execution"
 
@@ -198,16 +217,23 @@ echo "1. Update WiFi credentials in pico_client.py:"
 echo "   WIFI_SSID = \"Your Network Name\""
 echo "   WIFI_PASSWORD = \"Your Password\""
 echo ""
-echo "2. Connect your Pico W via USB"
+echo "2. Configure Twilio credentials in config/secrets.json:"
+echo "   Add your Twilio account_sid, auth_token, and from_number"
 echo ""
-echo "3. Deploy to Pico W:"
+echo "3. Change default admin password:"
+echo "   python scripts/auth_admin.py reset-password admin <new_password>"
+echo ""
+echo "4. Connect your Pico W via USB"
+echo ""
+echo "5. Deploy to Pico W:"
 echo "   ./deploy_pico.sh"
 echo ""
-echo "4. Start the server:"
+echo "6. Start the server:"
 echo "   ./start_server.sh"
 echo ""
-echo "5. Open dashboard:"
+echo "7. Open dashboard:"
 echo "   http://localhost:8080"
+echo "   Login: http://localhost:8080/auth/login"
 echo ""
 
 print_info "Hardware Connections:"
