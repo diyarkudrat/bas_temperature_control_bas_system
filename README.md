@@ -95,7 +95,7 @@ This single command handles everything:
 ### Authentication Setup
 The system includes a complete authentication system:
 - **Default admin user**: `admin` / `Admin123!@#X` (change immediately!)
-- **User management**: `python scripts/auth_admin.py --help`
+- **User management**: `python3 scripts/auth_admin.py --help`
 - **Login page**: http://localhost:8080/auth/login
 - **Configuration**: JSON files in `config/` or environment variables
 
@@ -107,8 +107,28 @@ The system includes a complete authentication system:
 3. **Connect Pico W** to your computer via USB
 4. **Run Setup**: `./setup.sh` (handles everything automatically)
 5. **Configure WiFi** in `pico_client.py` (WIFI_SSID and WIFI_PASSWORD)
-6. **Change Admin Password**: `python scripts/auth_admin.py reset-password admin <new_password>`
+6. **Change Admin Password**: `python3 scripts/auth_admin.py reset-password admin <new_password>`
 7. **Start System**: `./scripts/start_bas.sh`
+
+### Script Organization
+The BAS system uses a consolidated script structure for better organization:
+
+```
+scripts/                    # 🎯 Centralized script management
+├── start_bas.sh           # 🚀 Complete system startup
+├── status_bas.sh          # 📊 System status checker  
+├── stop_bas.sh            # 🛑 System shutdown
+├── start_hardware.sh      # 🔧 Hardware startup (Pico W)
+├── status_hardware.sh     # 📊 Hardware status checker
+├── stop_hardware.sh       # 🛑 Hardware shutdown
+└── auth_admin.py          # 👤 User management tool
+```
+
+**Key Benefits:**
+- **Unified Interface** - All operations through `scripts/` directory
+- **Consistent Options** - All scripts support similar command-line options
+- **Clear Separation** - System vs. hardware operations
+- **Easy Maintenance** - Single source of truth for each operation
 
 ### Daily Operations
 
@@ -131,22 +151,37 @@ The system includes a complete authentication system:
 ```
 
 #### Hardware-Only Operations
-For dedicated hardware management, use the specialized hardware scripts:
+For dedicated hardware management and troubleshooting:
 
 ```bash
-# Start hardware (Pico W client)
-./scripts/start_hardware.sh
-
-# Check hardware status
-./scripts/status_hardware.sh
-
-# Stop hardware
-./scripts/stop_hardware.sh
+# Basic hardware operations
+./scripts/start_hardware.sh                    # Auto-detect and start
+./scripts/status_hardware.sh                  # Check hardware status
+./scripts/stop_hardware.sh                    # Stop hardware
 
 # Advanced hardware options
-./scripts/start_hardware.sh --deploy-only    # Deploy but don't start
-./scripts/start_hardware.sh --monitor       # Start with REPL access
-./scripts/stop_hardware.sh --reset          # Stop and reset device
+./scripts/start_hardware.sh --deploy-only      # Deploy but don't start
+./scripts/start_hardware.sh --monitor         # Start with REPL access
+./scripts/start_hardware.sh --device /dev/ttyACM0  # Use specific device
+./scripts/status_hardware.sh --verbose        # Detailed hardware info
+./scripts/stop_hardware.sh --reset           # Stop and reset device
+```
+
+#### Server-Only Operations
+For server management and development:
+
+```bash
+# Start server only
+./scripts/start_bas.sh --server-only
+
+# Check server status
+./scripts/status_bas.sh
+
+# View server logs
+tail -f server/logs/server.log
+
+# Manual server startup (for debugging)
+cd server && source venv/bin/activate && python3 bas_server.py
 ```
 
 ### Authentication & User Management
@@ -172,10 +207,10 @@ cp config/auth.example.env .env
 
 ### Troubleshooting Workflow
 ```bash
-# Check system health
+# System health check
 ./verify_system.sh
 
-# Check current status
+# Check complete system status
 ./scripts/status_bas.sh
 
 # Check hardware specifically
@@ -185,14 +220,17 @@ cp config/auth.example.env .env
 tail -f server/logs/server.log
 
 # Authentication troubleshooting
-python scripts/auth_admin.py list-users
+python3 scripts/auth_admin.py list-users
 curl http://localhost:8080/api/health
 
 # Hardware troubleshooting
 ./scripts/start_hardware.sh --deploy-only
 ./scripts/status_hardware.sh --device /dev/ttyACM0
 
-# Restart everything
+# Server troubleshooting
+./scripts/start_bas.sh --server-only
+
+# Complete system restart
 ./scripts/stop_bas.sh && ./scripts/start_bas.sh
 ```
 
@@ -271,8 +309,6 @@ BAS System Project/
 │   ├── stop_hardware.sh    # 🛑 Hardware shutdown
 │   └── auth_admin.py       # 👤 User management tool
 ├── setup.sh               # Complete system setup
-├── deploy_pico.sh         # Deploy Pico client
-├── start_server.sh        # Start server only
 ├── verify_system.sh       # System verification
 └── README.md              # This file
 ```
@@ -330,7 +366,7 @@ curl "http://localhost:8080/api/telemetry?limit=20"
 mpremote connect /dev/cu.usbmodem* exec "import network; print(network.WLAN().ifconfig())"
 
 # Check server logs
-cd server && source venv/bin/activate && python bas_server.py
+cd server && source venv/bin/activate && python3 bas_server.py
 
 # Test API
 curl http://localhost:8080/api/health
