@@ -13,7 +13,6 @@ A comprehensive, enterprise-ready temperature control system featuring modern au
 - [📐 Architecture](#-architecture)
 - [🔧 Configuration](#-configuration)
 - [🛠️ Development](#️-development)
-- [🏗️ Extending the Project](#️-extending-the-project)
 - [📁 Project Structure](#-project-structure)
 - [🌐 API Reference](#-api-reference)
 - [🧪 Testing](#-testing)
@@ -288,34 +287,6 @@ scripts/verify.sh          # Verify installation
 ```
 
 ---
-
-## 🏗️ Extending the Project
-
-### Add a New Sensor
-
-1. Create interface implementation in `src/bas/hardware/`:
-```python
-# src/bas/hardware/sensors/my_sensor.py
-from interfaces import TemperatureSensor, SensorReading
-
-class MySensor(TemperatureSensor):
-    def read(self):
-        # Your implementation
-        return SensorReading(...)
-```
-
-2. Use it in `main.py`:
-```python
-from src.bas.hardware.sensors import MySensor
-sensor = MySensor(pin=5)
-```
-
-### Add Multi-Zone Support
-
-See `blueprints/multi_zone.py` for complete patterns:
-- Zone Manager with scheduler
-- Event bus for coordination
-- Per-zone configuration
 
 ### Telemetry System
 

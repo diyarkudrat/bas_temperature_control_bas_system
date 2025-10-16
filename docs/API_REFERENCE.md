@@ -11,12 +11,8 @@
 - [⚙️ Control APIs](#️-control-apis)
 - [📋 Configuration APIs](#-configuration-apis)
 - [📈 Telemetry APIs](#-telemetry-apis)
-- [🔄 Real-time Updates](#-real-time-updates)
-- [📝 Logging APIs](#-logging-apis)
 - [🌐 Web Dashboard](#-web-dashboard)
-- [🔐 Authentication APIs (Coming Soon)](#-authentication-apis-coming-soon)
 - [📊 Error Codes](#-error-codes)
-- [🔧 Rate Limiting](#-rate-limiting)
 - [📱 Client Examples](#-client-examples)
 
 ---
@@ -25,34 +21,26 @@
 
 ### **Base URL**
 ```
-http://<pico-ip-address>/
+http://localhost:8080/
 ```
 
-**Example**: `http://192.168.1.129/`
+**Example**: `http://localhost:8080/`
+
+> **Note**: This API runs on the computer-based server, not on the Pico W device. The Pico W connects to this server via WiFi.
 
 ### **Authentication Methods**
 
-#### Current System (Token-based)
-```bash
-# Add token as query parameter
-curl "http://192.168.1.129/status?token=your-api-token"
-```
-
-#### Enhanced System (Session-based) - Coming Soon
-```bash
-# Use session header
-curl -H "X-Session-ID: sess_abc123def456" "http://192.168.1.129/status"
-```
+**Current Implementation**: No authentication required. All endpoints are publicly accessible.
 
 ---
 
 ## 📊 System Status APIs
 
-### **GET /status**
+### **GET /api/status**
 Get current system status
 
 **HTTP Method:** `GET`  
-**Endpoint Path:** `/status`  
+**Endpoint Path:** `/api/status`  
 **Authentication:** Not required
 
 **Query Parameters:** None
@@ -61,7 +49,7 @@ Get current system status
 
 **Example Request:**
 ```bash
-curl "http://192.168.1.129/status"
+curl "http://localhost:8080/api/status"
 ```
 
 **Example Response:**
@@ -74,9 +62,7 @@ curl "http://192.168.1.129/status"
   "cool_active": false,
   "heat_active": true,
   "sensor_ok": true,
-  "alarm": false,
-  "error_code": 0,
-  "timestamp": 1700000000
+  "timestamp": 1700000000000
 }
 ```
 
@@ -88,23 +74,20 @@ curl "http://192.168.1.129/status"
 - `cool_active` (boolean): Cooling relay status
 - `heat_active` (boolean): Heating relay status
 - `sensor_ok` (boolean): Temperature sensor health
-- `alarm` (boolean): System alarm status
-- `error_code` (integer): Error code (0 = no error)
 - `timestamp` (integer): Unix timestamp in milliseconds
 
 ---
 
 ## ⚙️ Control APIs
 
-### **POST /set**
+### **POST /api/set_setpoint**
 Update temperature setpoint and deadband
 
 **HTTP Method:** `POST`  
-**Endpoint Path:** `/set`  
-**Authentication:** Required (token or session)
+**Endpoint Path:** `/api/set_setpoint`  
+**Authentication:** Not required
 
-**Query Parameters:**
-- `token` (string, required): API authentication token
+**Query Parameters:** None
 
 **Request Headers:**
 - `Content-Type: application/json` (required)
@@ -112,67 +95,107 @@ Update temperature setpoint and deadband
 **Request Body:**
 ```json
 {
-  "sp": 250,
-  "db": 10
+  "setpoint_tenths": 250,
+  "deadband_tenths": 10
 }
 ```
 
 **Request Fields:**
-- `sp` (integer, required): Setpoint in tenths of °C (250 = 25.0°C)
-- `db` (integer, optional): Deadband in tenths of °C (10 = 1.0°C)
+- `setpoint_tenths` (integer, optional): Setpoint in tenths of °C (250 = 25.0°C)
+- `deadband_tenths` (integer, optional): Deadband in tenths of °C (10 = 1.0°C)
 
 **Example Request:**
 ```bash
-curl -X POST "http://192.168.1.129/set?token=your-token" \
+curl -X POST "http://localhost:8080/api/set_setpoint" \
   -H "Content-Type: application/json" \
   -d '{
-    "sp": 250,
-    "db": 10
+    "setpoint_tenths": 250,
+    "deadband_tenths": 10
   }'
 ```
 
 **Success Response (200):**
 ```json
 {
-  "status": "success",
-  "updated": {
-    "setpoint_tenths": 250,
-    "deadband_tenths": 10
-  },
-  "timestamp": 1700000000
+  "success": true,
+  "setpoint_tenths": 250,
+  "deadband_tenths": 10
 }
 ```
 
 **Error Response (400):**
 ```json
 {
-  "error": "Invalid parameters",
-  "code": "INVALID_REQUEST",
-  "details": {
-    "message": "Setpoint must be between 100 and 400 (10.0°C to 40.0°C)"
-  }
+  "error": "Invalid setpoint"
 }
 ```
 
 **Response Fields:**
-- `status` (string): "success" or "error"
-- `updated` (object): Updated configuration values
-  - `setpoint_tenths` (integer): New setpoint value
-  - `deadband_tenths` (integer): New deadband value
-- `timestamp` (integer): Unix timestamp in milliseconds
+- `success` (boolean): True if operation succeeded
+- `setpoint_tenths` (integer): Current setpoint value
+- `deadband_tenths` (integer): Current deadband value
 - `error` (string, error only): Error message
-- `code` (string, error only): Error code
-- `details` (object, error only): Additional error information
+
+### **POST /api/sensor_data**
+Internal endpoint for Pico W client to send sensor readings
+
+**HTTP Method:** `POST`  
+**Endpoint Path:** `/api/sensor_data`  
+**Authentication:** Not required
+
+**Request Headers:**
+- `Content-Type: application/json` (required)
+
+**Request Body:**
+```json
+{
+  "temp_tenths": 235,
+  "sensor_ok": true,
+  "timestamp": 1700000000000
+}
+```
+
+**Response:**
+```json
+{
+  "cool_active": false,
+  "heat_active": true,
+  "setpoint_tenths": 230,
+  "deadband_tenths": 10
+}
+```
+
+> **Note**: This endpoint is used internally by the Pico W client and returns control commands.
+
+### **GET /api/health**
+Health check endpoint
+
+**HTTP Method:** `GET`  
+**Endpoint Path:** `/api/health`  
+**Authentication:** Not required
+
+**Example Request:**
+```bash
+curl "http://localhost:8080/api/health"
+```
+
+**Example Response:**
+```json
+{
+  "status": "healthy",
+  "timestamp": 1700000000
+}
+```
 
 ---
 
 ## 📋 Configuration APIs
 
-### **GET /config**
+### **GET /api/config**
 Get current system configuration
 
 **HTTP Method:** `GET`  
-**Endpoint Path:** `/config`  
+**Endpoint Path:** `/api/config`  
 **Authentication:** Not required
 
 **Query Parameters:** None
@@ -181,286 +204,63 @@ Get current system configuration
 
 **Example Request:**
 ```bash
-curl "http://192.168.1.129/config"
+curl "http://localhost:8080/api/config"
 ```
 
 **Example Response:**
 ```json
 {
-  "current_profile": "default",
-  "profiles": {
-    "default": {
-      "setpoint_tenths": 230,
-      "deadband_tenths": 5,
-      "sample_period_ms": 2000,
-      "min_on_ms": 10000,
-      "min_off_ms": 10000,
-      "pin_ds18b20": 4,
-      "pin_relay_cool": 15,
-      "pin_relay_heat": 14,
-      "relay_active_high": true,
-      "cool_only": true,
-      "heat_always_on": true
-    }
-  },
-  "hardware": {
-    "sensor_type": "DS18B20",
-    "display_type": "SSD1306",
-    "network_status": "connected"
-  }
+  "setpoint_tenths": 230,
+  "deadband_tenths": 10,
+  "min_on_time_ms": 10000,
+  "min_off_time_ms": 10000
 }
 ```
 
 **Response Fields:**
-- `current_profile` (string): Active configuration profile name
-- `profiles` (object): Available configuration profiles
-  - `[profile_name]` (object): Profile configuration
-    - `setpoint_tenths` (integer): Default setpoint in tenths of °C
-    - `deadband_tenths` (integer): Default deadband in tenths of °C
-    - `sample_period_ms` (integer): Control loop period in milliseconds
-    - `min_on_ms` (integer): Minimum actuator on time
-    - `min_off_ms` (integer): Minimum actuator off time
-    - `pin_ds18b20` (integer): DS18B20 sensor GPIO pin
-    - `pin_relay_cool` (integer): Cooling relay GPIO pin
-    - `pin_relay_heat` (integer): Heating relay GPIO pin
-    - `relay_active_high` (boolean): Relay activation logic
-    - `cool_only` (boolean): Cooling-only mode
-    - `heat_always_on` (boolean): Heating always on mode
-- `hardware` (object): Hardware information
-  - `sensor_type` (string): Temperature sensor type
-  - `display_type` (string): Display type
-  - `network_status` (string): Network connection status
+- `setpoint_tenths` (integer): Current setpoint in tenths of °C
+- `deadband_tenths` (integer): Current deadband in tenths of °C
+- `min_on_time_ms` (integer): Minimum actuator on time in milliseconds
+- `min_off_time_ms` (integer): Minimum actuator off time in milliseconds
 
-### **POST /set_profile**
-Switch configuration profile
-
-**HTTP Method:** `POST`  
-**Endpoint Path:** `/set_profile`  
-**Authentication:** Required (token or session)
-
-**Query Parameters:**
-- `token` (string, required): API authentication token
-
-**Request Headers:**
-- `Content-Type: application/json` (required)
-
-**Request Body:**
-```json
-{
-  "profile": "production"
-}
-```
-
-**Request Fields:**
-- `profile` (string, required): Profile name to switch to
-
-**Example Request:**
-```bash
-curl -X POST "http://192.168.1.129/set_profile?token=your-token" \
-  -H "Content-Type: application/json" \
-  -d '{"profile": "production"}'
-```
-
-**Success Response (200):**
-```json
-{
-  "status": "success",
-  "active_profile": "production",
-  "message": "Profile switched successfully"
-}
-```
-
-**Error Response (400):**
-```json
-{
-  "error": "Profile not found",
-  "code": "PROFILE_NOT_FOUND",
-  "details": {
-    "available_profiles": ["default", "debug"]
-  }
-}
-```
-
-**Response Fields:**
-- `status` (string): "success" or "error"
-- `active_profile` (string): Currently active profile name
-- `message` (string): Success message
-- `error` (string, error only): Error message
-- `code` (string, error only): Error code
-- `details` (object, error only): Additional error information
 
 ---
 
 ## 📈 Telemetry Endpoints
 
-### **GET /telemetry**
+### **GET /api/telemetry**
 Get time-series telemetry data
 
 **Parameters:**
-- `duration_ms` (integer): Time range in milliseconds (default: 600000 = 10 minutes)
-- `limit` (integer): Maximum number of points (default: 300)
-- `fields` (string): Comma-separated field list (default: all)
+- `limit` (integer): Maximum number of points (default: 100)
 
 **Example:**
 ```bash
-curl "http://192.168.1.129/telemetry?duration_ms=3600000&limit=100&fields=temp_tenths,state"
+curl "http://localhost:8080/api/telemetry?limit=50"
 ```
 
 **Response:**
 ```json
-{
-  "points": [
-    {
-      "timestamp_ms": 1700000000,
-      "temp_tenths": 235,
-      "setpoint_tenths": 250,
-      "state": "IDLE",
-      "cool_active": false,
-      "heat_active": true,
-      "alarm": false
-    }
-  ],
-  "metadata": {
-    "total_points": 100,
-    "duration_ms": 3600000,
-    "start_time_ms": 1699996400,
-    "end_time_ms": 1700000000
-  }
-}
-```
-
-### **GET /telemetry/stats**
-Get aggregated telemetry statistics
-
-**Parameters:**
-- `duration_ms` (integer): Time range in milliseconds (default: 3600000 = 1 hour)
-
-**Response:**
-```json
-{
-  "temperature": {
-    "current": 23.5,
-    "average": 23.2,
-    "min": 22.8,
-    "max": 24.1,
-    "std_dev": 0.3
-  },
-  "actuators": {
-    "cooling_cycles": 12,
-    "total_cooling_time_ms": 180000,
-    "average_cycle_duration_ms": 15000,
-    "heating_uptime_percent": 95.5
-  },
-  "system": {
-    "uptime_ms": 86400000,
-    "alarm_count": 0,
-    "error_count": 0,
-    "data_points": 43200
-  }
-}
-```
-
-### **GET /telemetry/health**
-Get telemetry system health status
-
-**Response:**
-```json
-{
-  "status": "healthy",
-  "buffer_utilization": 45.2,
-  "points_collected": 1000,
-  "export_success_rate": 98.5,
-  "last_export_ms": 1700000000,
-  "backends": [
-    {
-      "name": "CSV",
-      "status": "active",
-      "export_count": 150,
-      "error_count": 2
-    }
-  ]
-}
-```
-
----
-
-## 🔄 Real-time Updates
-
-### **GET /events**
-Server-Sent Events (SSE) for real-time updates
-
-**Usage:**
-```javascript
-const eventSource = new EventSource('http://192.168.1.129/events');
-eventSource.onmessage = function(event) {
-  const data = JSON.parse(event.data);
-  console.log('Update:', data);
-};
-```
-
-**Event Types:**
-- `status_update`: Controller status changes
-- `temperature_change`: Temperature readings
-- `state_transition`: Controller state changes
-- `alarm`: System alarms
-- `error`: System errors
-
-**Event Format:**
-```json
-{
-  "type": "status_update",
-  "timestamp": 1700000000,
-  "data": {
+[
+  {
+    "timestamp": 1700000000000,
     "temp_tenths": 235,
-    "state": "COOLING",
-    "cool_active": true
+    "setpoint_tenths": 250,
+    "deadband_tenths": 10,
+    "cool_active": false,
+    "heat_active": true,
+    "state": "IDLE",
+    "sensor_ok": true
   }
-}
+]
 ```
+
 
 ---
 
-## 📝 Logging Endpoints
 
-### **GET /logs**
-Get system logs
+---
 
-**Authentication:** Required
-
-**Parameters:**
-- `level` (string): Log level filter (debug, info, warning, error)
-- `component` (string): Component filter
-- `limit` (integer): Maximum number of entries (default: 50)
-
-**Example:**
-```bash
-curl "http://192.168.1.129/logs?token=your-token&level=error&limit=20"
-```
-
-**Response:**
-```json
-{
-  "logs": [
-    {
-      "timestamp_ms": 1700000000,
-      "level": "error",
-      "component": "Controller",
-      "message": "Sensor read failed",
-      "data": {
-        "error_code": 102,
-        "retry_count": 3
-      }
-    }
-  ],
-  "metadata": {
-    "total_entries": 20,
-    "filtered_by": {
-      "level": "error",
-      "limit": 20
-    }
-  }
-}
-```
 
 ---
 
@@ -476,99 +276,28 @@ Web dashboard with real-time graphs and controls
 - System health indicators
 - Telemetry visualization
 
-**Access:** Open `http://<pico-ip>/` in your browser
+**Access:** Open `http://localhost:8080/` in your browser
 
 ---
 
-## 🔐 Authentication Endpoints (Coming Soon)
-
-### **POST /auth/login**
-Authenticate with username/password
-
-**Request:**
-```json
-{
-  "username": "operator1",
-  "password": "user_password",
-  "phone_number": "+1234567890"
-}
-```
-
-**Response:**
-```json
-{
-  "status": "mfa_required",
-  "message": "MFA code sent to your phone",
-  "expires_in": 300
-}
-```
-
-### **POST /auth/verify**
-Verify MFA code
-
-**Request:**
-```json
-{
-  "username": "operator1",
-  "code": "123456"
-}
-```
-
-**Response:**
-```json
-{
-  "status": "success",
-  "session_id": "sess_abc123def456",
-  "expires_in": 1800,
-  "user": {
-    "username": "operator1",
-    "role": "operator"
-  }
-}
-```
-
-### **POST /auth/logout**
-Terminate session
-
-**Request:**
-```json
-{
-  "session_id": "sess_abc123def456"
-}
-```
-
-### **GET /auth/status**
-Check session validity
-
-**Headers:**
-```
-X-Session-ID: sess_abc123def456
-```
 
 ---
 
 ## 📊 Error Codes
 
-| Code | Description | Action |
-|------|-------------|--------|
-| 0 | No error | - |
-| 101 | Sensor not found | Check DS18B20 wiring |
-| 102 | Sensor read failed | Check sensor connection |
-| 201 | Actuator init failed | Check relay wiring |
-| 301 | Controller invalid state | System restart required |
-| 401 | Network connection failed | Check WiFi credentials |
-| 501 | System out of memory | Reduce telemetry buffer size |
-| 601 | Display init failed | Check I2C wiring |
+| HTTP Code | Description | Action |
+|-----------|-------------|--------|
+| 400 | Bad Request | Check request format and parameters |
+| 500 | Internal Server Error | Check server logs for details |
+
+### Common Error Messages
+- `"Invalid setpoint"`: Setpoint value is outside valid range (100-400 tenths)
+- `"Invalid deadband"`: Deadband value is outside valid range (0-50 tenths)
+- `"No data received"`: POST request body is empty or invalid JSON
+- `"Internal server error"`: Server-side processing error
 
 ---
 
-## 🔧 Rate Limiting
-
-- **General API**: 100 requests/minute per IP
-- **Authentication**: 5 attempts per 15 minutes per IP
-- **SSE Connections**: 3 maximum concurrent
-- **Request Size**: 8KB maximum
-- **Connection Timeout**: 30 seconds
 
 ---
 
@@ -579,45 +308,65 @@ X-Session-ID: sess_abc123def456
 import requests
 
 # Get status
-response = requests.get('http://192.168.1.129/status')
+response = requests.get('http://localhost:8080/api/status')
 status = response.json()
 
 # Set temperature
 response = requests.post(
-    'http://192.168.1.129/set?token=your-token',
-    json={'sp': 250, 'db': 10}
+    'http://localhost:8080/api/set_setpoint',
+    json={'setpoint_tenths': 250, 'deadband_tenths': 10}
 )
+
+# Get telemetry data
+response = requests.get('http://localhost:8080/api/telemetry?limit=50')
+telemetry = response.json()
 ```
 
 ### **JavaScript**
 ```javascript
-// Get telemetry data
-fetch('http://192.168.1.129/telemetry?duration_ms=3600000')
+// Get system status
+fetch('http://localhost:8080/api/status')
   .then(response => response.json())
   .then(data => console.log(data));
 
-// Real-time updates
-const eventSource = new EventSource('http://192.168.1.129/events');
-eventSource.onmessage = event => {
-  const data = JSON.parse(event.data);
-  updateDisplay(data);
-};
+// Set temperature
+fetch('http://localhost:8080/api/set_setpoint', {
+  method: 'POST',
+  headers: {
+    'Content-Type': 'application/json'
+  },
+  body: JSON.stringify({
+    setpoint_tenths: 250,
+    deadband_tenths: 10
+  })
+});
+
+// Get telemetry data
+fetch('http://localhost:8080/api/telemetry?limit=50')
+  .then(response => response.json())
+  .then(data => console.log(data));
 ```
 
 ### **curl**
 ```bash
 # Get system status
-curl http://192.168.1.129/status
+curl http://localhost:8080/api/status
 
 # Set temperature to 25°C
-curl -X POST "http://192.168.1.129/set?token=your-token" \
+curl -X POST "http://localhost:8080/api/set_setpoint" \
   -H "Content-Type: application/json" \
-  -d '{"sp": 250, "db": 10}'
+  -d '{"setpoint_tenths": 250, "deadband_tenths": 10}'
 
-# Get telemetry for last hour
-curl "http://192.168.1.129/telemetry?duration_ms=3600000"
+# Get system configuration
+curl http://localhost:8080/api/config
+
+# Get telemetry data
+curl "http://localhost:8080/api/telemetry?limit=50"
+
+# Health check
+curl http://localhost:8080/api/health
 ```
 
 ---
 
-This API reference provides complete documentation for all BAS system endpoints, including authentication, control, telemetry, and real-time updates.
+This API reference provides complete documentation for all BAS system endpoints, including status monitoring, control, telemetry, and configuration.

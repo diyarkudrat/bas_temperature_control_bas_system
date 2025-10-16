@@ -190,10 +190,34 @@ BAS System Project/
 |----------|--------|-------------|
 | `/` | GET | Web dashboard |
 | `/api/status` | GET | System status |
-| `/api/sensor_data` | POST | Receive sensor data |
+| `/api/sensor_data` | POST | Receive sensor data from Pico W |
 | `/api/set_setpoint` | POST | Update setpoint/deadband |
-| `/api/telemetry` | GET | Historical data |
+| `/api/telemetry` | GET | Historical telemetry data |
+| `/api/config` | GET | System configuration |
 | `/api/health` | GET | Health check |
+
+### Quick API Examples
+
+```bash
+# Check system health
+curl http://localhost:8080/api/health
+
+# Get current status
+curl http://localhost:8080/api/status
+
+# Update setpoint to 25.0°C
+curl -X POST http://localhost:8080/api/set_setpoint \
+  -H "Content-Type: application/json" \
+  -d '{"setpoint_tenths": 250}'
+
+# Get system configuration
+curl http://localhost:8080/api/config
+
+# Get last 20 telemetry points
+curl "http://localhost:8080/api/telemetry?limit=20"
+```
+
+📚 **Complete API Documentation**: See [API_REFERENCE.md](docs/API_REFERENCE.md) for detailed endpoint documentation, request/response formats, error codes, and client examples.
 
 ## 🐛 Troubleshooting
 
