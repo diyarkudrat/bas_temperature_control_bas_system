@@ -384,7 +384,7 @@ This project includes a lightweight feature-capture workflow using GitHub Issues
 - **CLI Scripts**: Quick issue creation from terminal
 - **Optional Automation**: TODO→Issue conversion (configurable)
 
-📚 **Complete Workflow Documentation**: See [GitHub Workflow Documentation](.github/README.md) for detailed setup instructions, usage examples, and automation configuration.
+📚 **Complete Workflow Documentation**: See [GitHub Workflow Documentation](.github/README-workflow.md) for detailed setup instructions, usage examples, and automation configuration.
 
 ## 📝 License
 
