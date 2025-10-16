@@ -185,6 +185,7 @@ class SessionManager:
         self.db_path = db_path
         self.config = config
         self.sessions = {}  # In-memory session cache
+        self._cache_lock = threading.RLock()  # Thread-safe session cache
         logger.info(f"Initializing SessionManager with database: {db_path}")
         self._init_tables()
         self._start_cleanup_thread()
@@ -255,7 +256,8 @@ class SessionManager:
         
         # Store session
         self._store_session(session)
-        self.sessions[session_id] = session
+        with self._cache_lock:
+            self.sessions[session_id] = session
         
         logger.info(f"Session created for user {username}: {session_id[:12]}...")
         return session
@@ -275,12 +277,20 @@ class SessionManager:
             self.invalidate_session(session_id)
             return None
         
-        # Check fingerprint
+        # Check fingerprint with input validation
+        user_agent = request.headers.get('User-Agent', '')
+        accept_language = request.headers.get('Accept-Language', '')
+        accept_encoding = request.headers.get('Accept-Encoding', '')
+        remote_addr = request.remote_addr or ''
+        
+        # Validate required fingerprint components
+        if not user_agent or not remote_addr:
+            logger.warning(f"Insufficient fingerprint data for session: {session_id[:12]}...")
+            self.invalidate_session(session_id)
+            return None
+        
         current_fingerprint = create_session_fingerprint(
-            request.headers.get('User-Agent', ''),
-            request.headers.get('Accept-Language', ''),
-            request.headers.get('Accept-Encoding', ''),
-            request.remote_addr
+            user_agent, accept_language, accept_encoding, remote_addr
         )
         
         if session.fingerprint != current_fingerprint:
@@ -294,13 +304,14 @@ class SessionManager:
     def get_session(self, session_id: str) -> Optional[Session]:
         """Get session by ID."""
         # Check cache first
-        if session_id in self.sessions:
-            session = self.sessions[session_id]
-            if session.is_expired():
-                logger.debug(f"Session expired in cache: {session_id[:12]}...")
-                del self.sessions[session_id]
-                return None
-            return session
+        with self._cache_lock:
+            if session_id in self.sessions:
+                session = self.sessions[session_id]
+                if session.is_expired():
+                    logger.debug(f"Session expired in cache: {session_id[:12]}...")
+                    del self.sessions[session_id]
+                    return None
+                return session
         
         # Load from database
         logger.debug(f"Loading session from database: {session_id[:12]}...")
@@ -317,7 +328,8 @@ class SessionManager:
             session = Session.from_dict(data)
             
             if not session.is_expired():
-                self.sessions[session_id] = session
+                with self._cache_lock:
+                    self.sessions[session_id] = session
                 logger.debug(f"Session loaded from database: {session_id[:12]}...")
                 return session
         
@@ -329,7 +341,8 @@ class SessionManager:
         logger.info(f"Invalidating session: {session_id[:12]}...")
         
         # Remove from cache
-        self.sessions.pop(session_id, None)
+        with self._cache_lock:
+            self.sessions.pop(session_id, None)
         
         # Remove from database
         conn = sqlite3.connect(self.db_path)
@@ -345,8 +358,9 @@ class SessionManager:
         """Update session last access time."""
         logger.debug(f"Updating last access for session: {session_id[:12]}...")
         
-        if session_id in self.sessions:
-            self.sessions[session_id].last_access = time.time()
+        with self._cache_lock:
+            if session_id in self.sessions:
+                self.sessions[session_id].last_access = time.time()
         
         # Update in database
         conn = sqlite3.connect(self.db_path)
@@ -421,9 +435,10 @@ class SessionManager:
                     deleted_count = cursor.rowcount
                     
                     # Remove expired sessions from cache
-                    expired_sessions = [sid for sid, session in self.sessions.items() if session.is_expired()]
-                    for sid in expired_sessions:
-                        del self.sessions[sid]
+                    with self._cache_lock:
+                        expired_sessions = [sid for sid, session in self.sessions.items() if session.is_expired()]
+                        for sid in expired_sessions:
+                            del self.sessions[sid]
                     
                     conn.commit()
                     conn.close()

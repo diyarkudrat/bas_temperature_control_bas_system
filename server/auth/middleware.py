@@ -14,15 +14,20 @@ def require_auth(required_role="operator"):
         def decorated_function(*args, **kwargs):
             logger.debug(f"Checking authentication for endpoint: {request.endpoint}")
             
+            # Validate required_role parameter
+            if required_role not in ['operator', 'admin', 'read-only']:
+                logger.error(f"Invalid required_role: {required_role}")
+                return jsonify({"error": "Invalid role configuration", "code": "CONFIG_ERROR"}), 500
+            
             # Skip auth if disabled
-            if not hasattr(request, 'auth_config') or not request.auth_config.auth_enabled:
+            if not hasattr(request, 'auth_config') or not request.auth_config or not request.auth_config.auth_enabled:
                 logger.debug("Authentication disabled, allowing access")
                 return f(*args, **kwargs)
             
             # Shadow mode - log but don't block
             if request.auth_config.auth_mode == "shadow":
                 logger.info(f"Shadow mode: logging access to {request.endpoint}")
-                session_id = request.headers.get('X-Session-ID')
+                session_id = request.cookies.get('bas_session_id') or request.headers.get('X-Session-ID')
                 session = getattr(request, 'session', None)
                 if hasattr(request, 'audit_logger'):
                     request.audit_logger.log_session_access(session_id, request.endpoint)
@@ -30,13 +35,15 @@ def require_auth(required_role="operator"):
             
             # Enforced mode - require valid session
             logger.debug("Authentication enforced, checking session")
-            session_id = request.headers.get('X-Session-ID')
-            if not session_id:
-                logger.warning(f"Authentication required but no session ID provided for {request.endpoint}")
+            session_id = request.cookies.get('bas_session_id') or request.headers.get('X-Session-ID')
+            
+            # Validate session ID format
+            if not session_id or not isinstance(session_id, str) or len(session_id) < 10:
+                logger.warning(f"Invalid session ID format for {request.endpoint}")
                 return jsonify({
-                    "error": "Authentication required",
-                    "message": "Please login with username/password and MFA",
-                    "code": "AUTH_REQUIRED"
+                    "error": "Invalid session ID",
+                    "message": "Please login again",
+                    "code": "INVALID_SESSION_ID"
                 }), 401
             
             session_manager = getattr(request, 'session_manager', None)

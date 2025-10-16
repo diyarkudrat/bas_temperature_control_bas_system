@@ -49,6 +49,7 @@ server.pid
 server/logs/
 
 # Database files (keep structure but ignore data)
+bas_telemetry.db
 server/bas_telemetry.db
 server/*.db
 

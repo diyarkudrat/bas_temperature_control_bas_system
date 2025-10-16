@@ -353,7 +353,7 @@
 
         let isConnected = false;
         let lastUpdateTime = 0;
-        let sessionId = localStorage.getItem('bas_session_id');
+        let sessionId = null; // Will be handled by httpOnly cookies
         let currentUser = null;
 
         // Update connection status
@@ -436,6 +436,7 @@
         async function fetchStatus() {
             try {
                 const response = await fetch('/api/status', {
+                    credentials: 'include',  // Include cookies
                     headers: getAuthHeaders()
                 });
                 if (response.ok) {
@@ -470,6 +471,7 @@
             try {
                 const response = await fetch('/api/set_setpoint', {
                     method: 'POST',
+                    credentials: 'include',  // Include cookies
                     headers: getAuthHeaders(),
                     body: JSON.stringify({
                         setpoint_tenths: Math.round(value * 10)
@@ -505,6 +507,7 @@
             try {
                 const response = await fetch('/api/set_setpoint', {
                     method: 'POST',
+                    credentials: 'include',  // Include cookies
                     headers: getAuthHeaders(),
                     body: JSON.stringify({
                         deadband_tenths: Math.round(value * 10)
@@ -536,16 +539,9 @@
 
         // Authentication functions
         async function checkAuthStatus() {
-            if (!sessionId) {
-                showLoginButton();
-                return false;
-            }
-            
             try {
                 const response = await fetch('/auth/status', {
-                    headers: {
-                        'X-Session-ID': sessionId
-                    }
+                    credentials: 'include'  // Include cookies
                 });
                 
                 if (response.ok) {
@@ -555,8 +551,7 @@
                     return true;
                 } else {
                     // Session invalid
-                    sessionId = null;
-                    localStorage.removeItem('bas_session_id');
+                    currentUser = null;
                     showLoginButton();
                     return false;
                 }
@@ -587,39 +582,27 @@
         }
         
         async function logout() {
-            if (sessionId) {
-                try {
-                    await fetch('/auth/logout', {
-                        method: 'POST',
-                        headers: {
-                            'Content-Type': 'application/json'
-                        },
-                        body: JSON.stringify({
-                            session_id: sessionId
-                        })
-                    });
-                } catch (error) {
-                    console.error('Logout error:', error);
-                }
+            try {
+                await fetch('/auth/logout', {
+                    method: 'POST',
+                    credentials: 'include',  // Include cookies
+                    headers: {
+                        'Content-Type': 'application/json'
+                    }
+                });
+            } catch (error) {
+                console.error('Logout error:', error);
             }
             
-            sessionId = null;
             currentUser = null;
-            localStorage.removeItem('bas_session_id');
             showLoginButton();
         }
         
         // Add authentication headers to requests
         function getAuthHeaders() {
-            const headers = {
+            return {
                 'Content-Type': 'application/json'
             };
-            
-            if (sessionId) {
-                headers['X-Session-ID'] = sessionId;
-            }
-            
-            return headers;
         }
 
         // Initialize
@@ -646,6 +629,7 @@
         async function loadTelemetryData() {
             try {
                 const response = await fetch('/api/telemetry?limit=50', {
+                    credentials: 'include',  // Include cookies
                     headers: getAuthHeaders()
                 });
                 if (response.ok) {

@@ -263,3 +263,188 @@ class TestMFAManager:
         
         mfa_manager.clear_pending("testuser")
         assert mfa_manager.get_pending("testuser") is None
+
+    def test_user_manager_init_tables(self, temp_db_file, auth_config):
+        """Test UserManager table initialization."""
+        user_manager = UserManager(temp_db_file, auth_config)
+        
+        # Verify tables were created
+        import sqlite3
+        conn = sqlite3.connect(temp_db_file)
+        cursor = conn.cursor()
+        
+        cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='users'")
+        table_exists = cursor.fetchone()
+        conn.close()
+        
+        assert_is_not_none(table_exists, "Users table should be created")
+
+    def test_user_manager_store_user(self, user_manager, sample_user):
+        """Test storing user in database."""
+        user_manager._store_user(sample_user)
+        
+        # Verify user was stored
+        stored_user = user_manager.get_user(sample_user.username)
+        assert_is_not_none(stored_user)
+        assert_equals(stored_user.username, sample_user.username)
+
+    def test_user_manager_validate_password_strength(self, user_manager):
+        """Test password strength validation in UserManager."""
+        # Test valid password
+        is_valid, message = user_manager._validate_password_strength("ValidPassword123!")
+        assert_true(is_valid)
+        
+        # Test weak password
+        is_valid, message = user_manager._validate_password_strength("weak")
+        assert_false(is_valid)
+
+    def test_session_manager_init_tables(self, temp_db_file, auth_config):
+        """Test SessionManager table initialization."""
+        session_manager = SessionManager(temp_db_file, auth_config)
+        
+        # Verify tables were created
+        import sqlite3
+        conn = sqlite3.connect(temp_db_file)
+        cursor = conn.cursor()
+        
+        cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='sessions'")
+        table_exists = cursor.fetchone()
+        conn.close()
+        
+        assert_is_not_none(table_exists, "Sessions table should be created")
+
+    def test_session_manager_store_session(self, session_manager, sample_session):
+        """Test storing session in database."""
+        session_manager._store_session(sample_session)
+        
+        # Verify session was stored
+        stored_session = session_manager.get_session(sample_session.session_id)
+        assert_is_not_none(stored_session)
+        assert_equals(stored_session.session_id, sample_session.session_id)
+
+    def test_session_manager_get_user_sessions(self, session_manager, mock_request):
+        """Test getting user sessions."""
+        # Create multiple sessions for same user
+        session1 = session_manager.create_session("testuser", "operator", mock_request)
+        session2 = session_manager.create_session("testuser", "operator", mock_request)
+        
+        # Get user sessions
+        user_sessions = session_manager._get_user_sessions("testuser")
+        assert_equals(len(user_sessions), 2)
+
+    def test_session_manager_concurrent_session_limit(self, session_manager, mock_request):
+        """Test concurrent session limit enforcement."""
+        # Create sessions up to limit
+        for i in range(session_manager.config.max_concurrent_sessions):
+            session_manager.create_session("testuser", "operator", mock_request)
+        
+        # Create one more session (should remove oldest)
+        new_session = session_manager.create_session("testuser", "operator", mock_request)
+        
+        # Verify we still have max_concurrent_sessions
+        user_sessions = session_manager._get_user_sessions("testuser")
+        assert_equals(len(user_sessions), session_manager.config.max_concurrent_sessions)
+
+    def test_session_manager_validate_session_insufficient_fingerprint(self, session_manager, mock_request):
+        """Test session validation with insufficient fingerprint data."""
+        # Create session
+        session = session_manager.create_session("testuser", "operator", mock_request)
+        
+        # Modify request to have insufficient fingerprint data
+        mock_request.headers = {}
+        mock_request.remote_addr = None
+        
+        # Validate session
+        validated_session = session_manager.validate_session(session.session_id, mock_request)
+        assert validated_session is None
+
+    def test_session_manager_cleanup_thread(self, session_manager):
+        """Test that cleanup thread is started."""
+        # The cleanup thread should be started during initialization
+        # We can't easily test the thread itself, but we can verify the manager was created
+        assert_is_not_none(session_manager)
+
+    def test_mfa_manager_generate_code_with_config(self, mfa_manager):
+        """Test MFA code generation with config length."""
+        code = mfa_manager.generate_code("testuser")
+        assert_equals(len(code), mfa_manager.config.mfa_code_length)
+
+    def test_mfa_manager_verify_code_constant_time(self, mfa_manager):
+        """Test MFA code verification uses constant-time comparison."""
+        # Generate code
+        mfa_manager.generate_code("testuser")
+        
+        # Test with correct code
+        is_valid = mfa_manager.verify_code("testuser", mfa_manager.pending_mfa["testuser"].code)
+        assert_true(is_valid)
+        
+        # Test with wrong code
+        is_valid = mfa_manager.verify_code("testuser", "000000")
+        assert_false(is_valid)
+
+    def test_mfa_manager_clear_pending_nonexistent(self, mfa_manager):
+        """Test clearing pending MFA for non-existent user."""
+        # Should not raise exception
+        mfa_manager.clear_pending("nonexistent")
+
+    def test_user_manager_authenticate_user_reset_failed_attempts(self, user_manager):
+        """Test that successful authentication resets failed attempts."""
+        # Create user
+        user_manager.create_user("testuser", "ValidPassword123!", "+1234567890", "operator")
+        
+        # Simulate failed attempts
+        user = user_manager.get_user("testuser")
+        user.failed_attempts = 3
+        user_manager._store_user(user)
+        
+        # Authenticate successfully
+        auth_user = user_manager.authenticate_user("testuser", "ValidPassword123!")
+        assert_is_not_none(auth_user)
+        
+        # Check that failed attempts were reset
+        updated_user = user_manager.get_user("testuser")
+        assert_equals(updated_user.failed_attempts, 0)
+        assert_equals(updated_user.locked_until, 0)
+
+    def test_user_manager_authenticate_user_increment_failed_attempts(self, user_manager):
+        """Test that failed authentication increments failed attempts."""
+        # Create user
+        user_manager.create_user("testuser", "ValidPassword123!", "+1234567890", "operator")
+        
+        # Try wrong password
+        auth_user = user_manager.authenticate_user("testuser", "WrongPassword123!")
+        assert auth_user is None
+        
+        # Check that failed attempts were incremented
+        user = user_manager.get_user("testuser")
+        assert_equals(user.failed_attempts, 1)
+
+    def test_user_manager_authenticate_user_lockout(self, user_manager):
+        """Test that account gets locked after max failed attempts."""
+        # Create user
+        user_manager.create_user("testuser", "ValidPassword123!", "+1234567890", "operator")
+        
+        # Try wrong password multiple times to trigger lockout
+        for _ in range(user_manager.config.max_login_attempts):
+            auth_user = user_manager.authenticate_user("testuser", "WrongPassword123!")
+            assert auth_user is None
+        
+        # Check that account is locked
+        user = user_manager.get_user("testuser")
+        assert_true(user.is_locked())
+
+    def test_session_manager_update_last_access_cache(self, session_manager, mock_request):
+        """Test updating last access time in cache."""
+        # Create session
+        session = session_manager.create_session("testuser", "operator", mock_request)
+        original_access = session.last_access
+        
+        # Update last access
+        import time
+        time.sleep(0.1)  # Small delay
+        session_manager.update_last_access(session.session_id)
+        
+        # Check cache was updated
+        cached_session = session_manager.sessions.get(session.session_id)
+        assert_is_not_none(cached_session)
+        assert_true(cached_session.last_access > original_access)

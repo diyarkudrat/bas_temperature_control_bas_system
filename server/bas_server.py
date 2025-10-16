@@ -435,12 +435,25 @@ def auth_login():
         audit_logger.log_auth_success(username, request.remote_addr, session.session_id)
         
         logger.info(f"Authentication successful for {username} (SMS bypassed)")
-        return jsonify({
+        
+        # Create response with httpOnly cookie
+        response = jsonify({
             "status": "success",
-            "session_id": session.session_id,
             "expires_in": auth_config.session_timeout,
             "user": {"username": username, "role": user.role}
         })
+        
+        # Set httpOnly cookie for session
+        response.set_cookie(
+            'bas_session_id', 
+            session.session_id, 
+            max_age=auth_config.session_timeout,
+            httponly=True,
+            secure=True,  # Only over HTTPS in production
+            samesite='Strict'
+        )
+        
+        return response
         
     except Exception as e:
         logger.error(f"Error in auth login: {e}")
@@ -481,12 +494,25 @@ def auth_verify():
         audit_logger.log_auth_success(username, request.remote_addr, session.session_id)
         
         logger.info(f"Authentication successful for {username}")
-        return jsonify({
+        
+        # Create response with httpOnly cookie
+        response = jsonify({
             "status": "success",
-            "session_id": session.session_id,
             "expires_in": auth_config.session_timeout,
             "user": {"username": username, "role": user.role}
         })
+        
+        # Set httpOnly cookie for session
+        response.set_cookie(
+            'bas_session_id', 
+            session.session_id, 
+            max_age=auth_config.session_timeout,
+            httponly=True,
+            secure=True,  # Only over HTTPS in production
+            samesite='Strict'
+        )
+        
+        return response
         
     except Exception as e:
         logger.error(f"Error in auth verify: {e}")
@@ -497,15 +523,23 @@ def auth_logout():
     """Terminate user session."""
     try:
         logger.info("Logout request")
-        data = request.get_json()
-        session_id = data.get('session_id')
+        
+        # Get session ID from cookie or request body
+        session_id = request.cookies.get('bas_session_id')
+        if not session_id:
+            data = request.get_json() or {}
+            session_id = data.get('session_id')
         
         if session_id:
             session_manager.invalidate_session(session_id)
             audit_logger.log_session_destruction(session_id)
             logger.info(f"Session invalidated: {session_id[:12]}...")
         
-        return jsonify({"status": "success", "message": "Logged out successfully"})
+        # Create response and clear cookie
+        response = jsonify({"status": "success", "message": "Logged out successfully"})
+        response.set_cookie('bas_session_id', '', max_age=0, httponly=True, secure=True, samesite='Strict')
+        
+        return response
         
     except Exception as e:
         logger.error(f"Error in auth logout: {e}")
@@ -514,7 +548,7 @@ def auth_logout():
 @app.route('/auth/status')
 def auth_status():
     """Check session validity and get user info."""
-    session_id = request.headers.get('X-Session-ID')
+    session_id = request.cookies.get('bas_session_id') or request.headers.get('X-Session-ID')
     
     if not session_id:
         logger.warning("Auth status check without session ID")
