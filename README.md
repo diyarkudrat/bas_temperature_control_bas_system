@@ -86,10 +86,18 @@ GND ──────────── Relay GND
 This single command handles everything:
 - ✅ Checks system requirements (Python 3, pip3, mpremote)
 - ✅ Sets up server environment with virtual environment
-- ✅ Installs Python dependencies (Flask, Flask-CORS)
+- ✅ Installs Python dependencies (Flask, Flask-CORS, Twilio)
+- ✅ Configures authentication system with default admin user
 - ✅ Auto-detects your computer's IP address
 - ✅ Updates the Pico client configuration
 - ✅ Makes all scripts executable
+
+### Authentication Setup
+The system includes a complete authentication system:
+- **Default admin user**: `admin` / `Admin123!@#X` (change immediately!)
+- **User management**: `python scripts/auth_admin.py --help`
+- **Login page**: http://localhost:8080/auth/login
+- **Configuration**: JSON files in `config/` or environment variables
 
 ## 🔄 Setup & Daily Operations
 
@@ -98,18 +106,68 @@ This single command handles everything:
 2. **Connect Hardware** to your Pico W (see Hardware Connections)
 3. **Connect Pico W** to your computer via USB
 4. **Run Setup**: `./setup.sh` (handles everything automatically)
-5. **Start System**: `./scripts/start_bas.sh`
+5. **Configure WiFi** in `pico_client.py` (WIFI_SSID and WIFI_PASSWORD)
+6. **Change Admin Password**: `python scripts/auth_admin.py reset-password admin <new_password>`
+7. **Start System**: `./scripts/start_bas.sh`
 
 ### Daily Operations
+
+#### Complete System Control
 ```bash
-# Start the complete system
+# Start the complete system (server + hardware)
 ./scripts/start_bas.sh
 
-# Check status anytime
+# Start only the server
+./scripts/start_bas.sh --server-only
+
+# Start only the hardware (Pico W client)
+./scripts/start_bas.sh --hardware-only
+
+# Check system status
 ./scripts/status_bas.sh
 
-# Stop when done
+# Stop the complete system
 ./scripts/stop_bas.sh
+```
+
+#### Hardware-Only Operations
+For dedicated hardware management, use the specialized hardware scripts:
+
+```bash
+# Start hardware (Pico W client)
+./scripts/start_hardware.sh
+
+# Check hardware status
+./scripts/status_hardware.sh
+
+# Stop hardware
+./scripts/stop_hardware.sh
+
+# Advanced hardware options
+./scripts/start_hardware.sh --deploy-only    # Deploy but don't start
+./scripts/start_hardware.sh --monitor       # Start with REPL access
+./scripts/stop_hardware.sh --reset          # Stop and reset device
+```
+
+### Authentication & User Management
+The system includes comprehensive authentication with user management:
+
+```bash
+# User management commands
+python3 scripts/auth_admin.py create-user john password123 +1234567890 --role operator
+python3 scripts/auth_admin.py list-users
+python3 scripts/auth_admin.py reset-password admin newpassword
+python3 scripts/auth_admin.py unlock-user john
+python3 scripts/auth_admin.py delete-user john
+
+# Configuration options
+# Method 1: JSON files (default)
+cp config/templates/secrets.json.template config/secrets.json
+# Edit config/secrets.json with Twilio credentials
+
+# Method 2: Environment variables
+cp config/auth.example.env .env
+# Edit .env with your settings
 ```
 
 ### Troubleshooting Workflow
@@ -120,8 +178,19 @@ This single command handles everything:
 # Check current status
 ./scripts/status_bas.sh
 
+# Check hardware specifically
+./scripts/status_hardware.sh --verbose
+
 # View server logs
 tail -f server/logs/server.log
+
+# Authentication troubleshooting
+python scripts/auth_admin.py list-users
+curl http://localhost:8080/api/health
+
+# Hardware troubleshooting
+./scripts/start_hardware.sh --deploy-only
+./scripts/status_hardware.sh --device /dev/ttyACM0
 
 # Restart everything
 ./scripts/stop_bas.sh && ./scripts/start_bas.sh
@@ -131,20 +200,40 @@ tail -f server/logs/server.log
 
 ### Complete System Control
 ```bash
-# Start everything (server + Pico W client)
+# Start everything (server + hardware)
 ./scripts/start_bas.sh
 
 # Start only the server
 ./scripts/start_bas.sh --server-only
 
-# Start only the Pico W client
-./scripts/start_bas.sh --pico-only
+# Start only the hardware (Pico W client)
+./scripts/start_bas.sh --hardware-only
 
 # Check system status
 ./scripts/status_bas.sh
 
 # Stop everything
 ./scripts/stop_bas.sh
+```
+
+### Dedicated Hardware Management
+For advanced hardware control and troubleshooting:
+
+```bash
+# Hardware startup with options
+./scripts/start_hardware.sh                    # Auto-detect and start
+./scripts/start_hardware.sh --device /dev/ttyACM0  # Use specific device
+./scripts/start_hardware.sh --deploy-only     # Deploy but don't start
+./scripts/start_hardware.sh --monitor         # Start with REPL access
+
+# Hardware status and diagnostics
+./scripts/status_hardware.sh                   # Basic status check
+./scripts/status_hardware.sh --verbose         # Detailed information
+./scripts/status_hardware.sh --device /dev/ttyACM0  # Check specific device
+
+# Hardware shutdown
+./scripts/stop_hardware.sh                     # Graceful stop
+./scripts/stop_hardware.sh --reset            # Stop and reset device
 ```
 
 ## 📊 Control Logic
@@ -174,9 +263,13 @@ BAS System Project/
 │   ├── requirements.txt    # Python dependencies
 │   └── setup_server.sh     # Server setup script
 ├── scripts/                # System control scripts
-│   ├── start_bas.sh        # 🚀 One-command system startup
+│   ├── start_bas.sh        # 🚀 Complete system startup
 │   ├── status_bas.sh       # 📊 System status checker
-│   └── stop_bas.sh         # 🛑 System shutdown
+│   ├── stop_bas.sh         # 🛑 System shutdown
+│   ├── start_hardware.sh   # 🔧 Hardware startup (Pico W)
+│   ├── status_hardware.sh  # 📊 Hardware status checker
+│   ├── stop_hardware.sh    # 🛑 Hardware shutdown
+│   └── auth_admin.py       # 👤 User management tool
 ├── setup.sh               # Complete system setup
 ├── deploy_pico.sh         # Deploy Pico client
 ├── start_server.sh        # Start server only

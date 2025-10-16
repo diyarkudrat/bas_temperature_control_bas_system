@@ -133,10 +133,12 @@ if [ -f "scripts/setup_auth.py" ]; then
     cd server
     source venv/bin/activate
     
-    # Run authentication setup
+    # Run authentication setup from server directory
     python ../scripts/setup_auth.py
     AUTH_SETUP_RESULT=$?
     
+    # Deactivate virtual environment
+    deactivate
     cd ..
     
     if [ $AUTH_SETUP_RESULT -eq 0 ]; then

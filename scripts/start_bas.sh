@@ -51,7 +51,7 @@ while [[ $# -gt 0 ]]; do
             START_PICO=false
             shift
             ;;
-        --pico-only)
+        --hardware-only)
             START_SERVER=false
             shift
             ;;
@@ -64,14 +64,19 @@ while [[ $# -gt 0 ]]; do
             echo ""
             echo "Options:"
             echo "  --server-only    Start only the server"
-            echo "  --pico-only      Start only the Pico W client"
+            echo "  --hardware-only Start only the hardware (Pico W client)"
             echo "  --device DEVICE  Specify Pico W device path"
             echo "  --help          Show this help message"
             echo ""
             echo "Examples:"
-            echo "  $0                                    # Start both server and Pico"
+            echo "  $0                                    # Start both server and hardware"
             echo "  $0 --server-only                     # Start only server"
-            echo "  $0 --pico-only --device /dev/ttyACM0 # Start only Pico with specific device"
+            echo "  $0 --hardware-only --device /dev/ttyACM0 # Start only hardware with specific device"
+            echo ""
+            echo "Note: For hardware-only operations, consider using:"
+            echo "  ./scripts/start_hardware.sh          # Dedicated hardware startup script"
+            echo "  ./scripts/stop_hardware.sh            # Stop hardware"
+            echo "  ./scripts/status_hardware.sh          # Check hardware status"
             exit 0
             ;;
         *)
@@ -237,7 +242,9 @@ if [ "$START_PICO" = true ]; then
         echo ""
     fi
     
-    start_pico
+    # Use dedicated hardware script for better control
+    print_info "Using dedicated hardware startup script..."
+    ./scripts/start_hardware.sh --device "$DEVICE"
 else
     # If only starting server, keep it running
     if [ "$START_SERVER" = true ]; then

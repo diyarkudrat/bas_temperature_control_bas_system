@@ -19,7 +19,13 @@ def setup_auth_config():
     """Setup authentication configuration."""
     logger.info("Setting up authentication configuration")
     
-    config_path = 'config/auth_config.json'
+    # Check if we're in the server directory or project root
+    if os.path.exists('config/auth_config.json'):
+        config_path = 'config/auth_config.json'
+    elif os.path.exists('../config/auth_config.json'):
+        config_path = '../config/auth_config.json'
+    else:
+        config_path = 'config/auth_config.json'  # Default
     
     # Check if config already exists
     if os.path.exists(config_path):
@@ -62,7 +68,13 @@ def setup_database():
     """Setup authentication database tables."""
     logger.info("Setting up authentication database")
     
-    db_path = 'server/bas_telemetry.db'
+    # Check if we're in the server directory or project root
+    if os.path.exists('bas_telemetry.db'):
+        db_path = 'bas_telemetry.db'
+    elif os.path.exists('server/bas_telemetry.db'):
+        db_path = 'server/bas_telemetry.db'
+    else:
+        db_path = 'bas_telemetry.db'  # Default to current directory
     
     try:
         config = AuthConfig()
@@ -78,7 +90,13 @@ def create_admin_user():
     """Create initial admin user."""
     logger.info("Creating initial admin user")
     
-    db_path = 'server/bas_telemetry.db'
+    # Check if we're in the server directory or project root
+    if os.path.exists('bas_telemetry.db'):
+        db_path = 'bas_telemetry.db'
+    elif os.path.exists('server/bas_telemetry.db'):
+        db_path = 'server/bas_telemetry.db'
+    else:
+        db_path = 'bas_telemetry.db'  # Default to current directory
     
     try:
         config = AuthConfig()
@@ -113,7 +131,13 @@ def check_twilio_config():
     """Check Twilio configuration."""
     logger.info("Checking Twilio configuration")
     
-    config_path = 'config/secrets.json'
+    # Check if we're in the server directory or project root
+    if os.path.exists('config/secrets.json'):
+        config_path = 'config/secrets.json'
+    elif os.path.exists('../config/secrets.json'):
+        config_path = '../config/secrets.json'
+    else:
+        config_path = 'config/secrets.json'  # Default
     
     if not os.path.exists(config_path):
         logger.warning("Secrets file not found. Please create config/secrets.json with Twilio credentials")
