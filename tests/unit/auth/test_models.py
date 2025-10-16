@@ -6,7 +6,7 @@ import time
 import pytest
 
 from auth.models import User, Session
-from tests.utils.assertions import assert_equals, assert_true, assert_false
+from tests.utils.assertions import assert_equals, assert_true, assert_false, assert_is_not_none
 
 
 @pytest.mark.auth

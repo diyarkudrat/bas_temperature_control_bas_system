@@ -309,7 +309,9 @@ class TestBASServerEndpoints:
         from bas_server import app
         
         with app.test_client() as client:
-            response = client.post('/api/sensor_data')
+            response = client.post('/api/sensor_data', 
+                                 json={},
+                                 content_type='application/json')
             assert_equals(response.status_code, 400)
             
             data = response.get_json()
@@ -350,16 +352,20 @@ class TestBASServerEndpoints:
         """Test auth login endpoint when auth is disabled."""
         from bas_server import app
         
-        with app.test_client() as client:
-            data = {
-                'username': 'testuser',
-                'password': 'testpass',
-            }
-            response = client.post('/auth/login',
-                                 json=data,
-                                 content_type='application/json')
-            # Should return 503 when auth is disabled
-            assert_equals(response.status_code, 503)
+        # Mock the auth_config to be disabled
+        with patch('bas_server.auth_config') as mock_auth_config:
+            mock_auth_config.auth_enabled = False
+            
+            with app.test_client() as client:
+                data = {
+                    'username': 'testuser',
+                    'password': 'testpass',
+                }
+                response = client.post('/auth/login',
+                                         json=data,
+                                         content_type='application/json')
+                # Should return 503 when auth is disabled
+                assert_equals(response.status_code, 503)
 
     def test_auth_logout_endpoint(self):
         """Test auth logout endpoint."""

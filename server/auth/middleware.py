@@ -27,7 +27,7 @@ def require_auth(required_role="operator"):
             # Shadow mode - log but don't block
             if request.auth_config.auth_mode == "shadow":
                 logger.info(f"Shadow mode: logging access to {request.endpoint}")
-                session_id = request.cookies.get('bas_session_id') or request.headers.get('X-Session-ID')
+                session_id = request.headers.get('X-Session-ID') or request.cookies.get('bas_session_id')
                 session = getattr(request, 'session', None)
                 if hasattr(request, 'audit_logger'):
                     request.audit_logger.log_session_access(session_id, request.endpoint)
@@ -35,7 +35,7 @@ def require_auth(required_role="operator"):
             
             # Enforced mode - require valid session
             logger.debug("Authentication enforced, checking session")
-            session_id = request.cookies.get('bas_session_id') or request.headers.get('X-Session-ID')
+            session_id = request.headers.get('X-Session-ID') or request.cookies.get('bas_session_id')
             
             # Validate session ID format
             if not session_id or not isinstance(session_id, str) or len(session_id) < 10:

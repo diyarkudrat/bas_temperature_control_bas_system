@@ -234,11 +234,10 @@ class TestAuthMiddleware:
             return "success"
         
         # Act & Assert - Test that function executes in shadow mode
-        with app.test_request_context('/test_endpoint') as ctx:
+        with app.test_request_context('/test_endpoint', headers={'X-Session-ID': 'test_session'}) as ctx:
             ctx.request.auth_config = Mock()
             ctx.request.auth_config.auth_enabled = True
             ctx.request.auth_config.auth_mode = "shadow"
-            ctx.request.headers = {'X-Session-ID': 'test_session'}
             ctx.request.session = None
             ctx.request.audit_logger = Mock()
             
@@ -260,7 +259,6 @@ class TestAuthMiddleware:
             ctx.request.auth_config = Mock()
             ctx.request.auth_config.auth_enabled = True
             ctx.request.auth_config.auth_mode = "enforced"
-            ctx.request.headers = {}
             
             response, status_code = test_endpoint()
             assert_equals(status_code, 401, "Should return 401 when no session ID provided")
@@ -276,11 +274,10 @@ class TestAuthMiddleware:
             return "success"
         
         # Act & Assert - Test that function returns system error
-        with app.test_request_context('/test_endpoint') as ctx:
+        with app.test_request_context('/test_endpoint', headers={'X-Session-ID': 'test_session'}) as ctx:
             ctx.request.auth_config = Mock()
             ctx.request.auth_config.auth_enabled = True
             ctx.request.auth_config.auth_mode = "enforced"
-            ctx.request.headers = {'X-Session-ID': 'test_session'}
             ctx.request.session_manager = None
             
             response, status_code = test_endpoint()
@@ -297,11 +294,10 @@ class TestAuthMiddleware:
             return "success"
         
         # Act & Assert - Test that function returns session error
-        with app.test_request_context('/test_endpoint') as ctx:
+        with app.test_request_context('/test_endpoint', headers={'X-Session-ID': 'test_session'}) as ctx:
             ctx.request.auth_config = Mock()
             ctx.request.auth_config.auth_enabled = True
             ctx.request.auth_config.auth_mode = "enforced"
-            ctx.request.headers = {'X-Session-ID': 'test_session'}
             
             mock_session_manager = Mock()
             mock_session_manager.validate_session.return_value = None
@@ -321,11 +317,10 @@ class TestAuthMiddleware:
             return "success"
         
         # Act & Assert - Test that function returns permission error
-        with app.test_request_context('/test_endpoint') as ctx:
+        with app.test_request_context('/test_endpoint', headers={'X-Session-ID': 'test_session'}) as ctx:
             ctx.request.auth_config = Mock()
             ctx.request.auth_config.auth_enabled = True
             ctx.request.auth_config.auth_mode = "enforced"
-            ctx.request.headers = {'X-Session-ID': 'test_session'}
             
             mock_session = Mock()
             mock_session.role = "operator"
@@ -349,11 +344,10 @@ class TestAuthMiddleware:
             return "success"
         
         # Act & Assert - Test that function executes successfully
-        with app.test_request_context('/test_endpoint') as ctx:
+        with app.test_request_context('/test_endpoint', headers={'X-Session-ID': 'test_session'}) as ctx:
             ctx.request.auth_config = Mock()
             ctx.request.auth_config.auth_enabled = True
             ctx.request.auth_config.auth_mode = "enforced"
-            ctx.request.headers = {'X-Session-ID': 'test_session'}
             
             mock_session = Mock()
             mock_session.role = "operator"
@@ -396,11 +390,10 @@ class TestAuthMiddleware:
             return "success"
         
         # Act & Assert - Test that function returns invalid session error
-        with app.test_request_context('/test_endpoint') as ctx:
+        with app.test_request_context('/test_endpoint', headers={'X-Session-ID': 'short'}) as ctx:  # Too short
             ctx.request.auth_config = Mock()
             ctx.request.auth_config.auth_enabled = True
             ctx.request.auth_config.auth_mode = "enforced"
-            ctx.request.headers = {'X-Session-ID': 'short'}  # Too short
             
             response, status_code = test_endpoint()
             assert_equals(status_code, 401, "Should return 401 for invalid session ID format")
@@ -420,7 +413,7 @@ class TestAuthMiddleware:
             ctx.request.auth_config = Mock()
             ctx.request.auth_config.auth_enabled = True
             ctx.request.auth_config.auth_mode = "enforced"
-            ctx.request.headers = {}  # No session ID
+            # No session ID in headers
             
             response, status_code = test_endpoint()
             assert_equals(status_code, 401, "Should return 401 when no session ID provided")
@@ -437,11 +430,12 @@ class TestAuthMiddleware:
         
         # Act & Assert - Test that function gets session ID from cookie
         with app.test_request_context('/test_endpoint') as ctx:
+            # Manually set cookies on the request
+            ctx.request.cookies = {'bas_session_id': 'test_session'}
             ctx.request.auth_config = Mock()
             ctx.request.auth_config.auth_enabled = True
             ctx.request.auth_config.auth_mode = "enforced"
-            ctx.request.headers = {}  # No session ID in headers
-            ctx.request.cookies = {'bas_session_id': 'test_session'}
+            # No session ID in headers
             
             mock_session = Mock()
             mock_session.role = "operator"
@@ -466,12 +460,12 @@ class TestAuthMiddleware:
             return "success"
         
         # Act & Assert - Test that function uses header session ID
-        with app.test_request_context('/test_endpoint') as ctx:
+        with app.test_request_context('/test_endpoint', headers={'X-Session-ID': 'header_session'}) as ctx:
+            # Manually set cookies on the request
+            ctx.request.cookies = {'bas_session_id': 'cookie_session'}
             ctx.request.auth_config = Mock()
             ctx.request.auth_config.auth_enabled = True
             ctx.request.auth_config.auth_mode = "enforced"
-            ctx.request.headers = {'X-Session-ID': 'header_session'}
-            ctx.request.cookies = {'bas_session_id': 'cookie_session'}
             
             mock_session = Mock()
             mock_session.role = "operator"
@@ -493,16 +487,16 @@ class TestAuthMiddleware:
         from flask import Flask
         app = Flask(__name__)
         
+        @app.route('/test_endpoint')
         @require_auth("admin")
         def test_endpoint():
             return "success"
         
         # Act & Assert - Test that function logs access in shadow mode
-        with app.test_request_context('/test_endpoint') as ctx:
+        with app.test_request_context('/test_endpoint', headers={'X-Session-ID': 'test_session'}) as ctx:
             ctx.request.auth_config = Mock()
             ctx.request.auth_config.auth_enabled = True
             ctx.request.auth_config.auth_mode = "shadow"
-            ctx.request.headers = {'X-Session-ID': 'test_session'}
             ctx.request.session = None
             ctx.request.audit_logger = Mock()
             
@@ -522,11 +516,10 @@ class TestAuthMiddleware:
             return "success"
         
         # Act & Assert - Test that function doesn't crash without audit logger
-        with app.test_request_context('/test_endpoint') as ctx:
+        with app.test_request_context('/test_endpoint', headers={'X-Session-ID': 'test_session'}) as ctx:
             ctx.request.auth_config = Mock()
             ctx.request.auth_config.auth_enabled = True
             ctx.request.auth_config.auth_mode = "shadow"
-            ctx.request.headers = {'X-Session-ID': 'test_session'}
             ctx.request.session = None
             # No audit_logger attribute
             
@@ -544,11 +537,10 @@ class TestAuthMiddleware:
             return "success"
         
         # Act & Assert - Test that function updates last access
-        with app.test_request_context('/test_endpoint') as ctx:
+        with app.test_request_context('/test_endpoint', headers={'X-Session-ID': 'test_session'}) as ctx:
             ctx.request.auth_config = Mock()
             ctx.request.auth_config.auth_enabled = True
             ctx.request.auth_config.auth_mode = "enforced"
-            ctx.request.headers = {'X-Session-ID': 'test_session'}
             
             mock_session = Mock()
             mock_session.role = "operator"
@@ -575,11 +567,10 @@ class TestAuthMiddleware:
             return "success"
         
         # Act & Assert - Test that function adds session to request
-        with app.test_request_context('/test_endpoint') as ctx:
+        with app.test_request_context('/test_endpoint', headers={'X-Session-ID': 'test_session'}) as ctx:
             ctx.request.auth_config = Mock()
             ctx.request.auth_config.auth_enabled = True
             ctx.request.auth_config.auth_mode = "enforced"
-            ctx.request.headers = {'X-Session-ID': 'test_session'}
             
             mock_session = Mock()
             mock_session.role = "operator"
@@ -601,16 +592,16 @@ class TestAuthMiddleware:
         from flask import Flask
         app = Flask(__name__)
         
+        @app.route('/test_endpoint')
         @require_auth("operator")
         def test_endpoint():
             return "success"
         
         # Act & Assert - Test that function logs access
-        with app.test_request_context('/test_endpoint') as ctx:
+        with app.test_request_context('/test_endpoint', headers={'X-Session-ID': 'test_session'}) as ctx:
             ctx.request.auth_config = Mock()
             ctx.request.auth_config.auth_enabled = True
             ctx.request.auth_config.auth_mode = "enforced"
-            ctx.request.headers = {'X-Session-ID': 'test_session'}
             
             mock_session = Mock()
             mock_session.role = "operator"

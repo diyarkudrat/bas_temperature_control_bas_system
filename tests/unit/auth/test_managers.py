@@ -48,7 +48,7 @@ class TestUserManager:
         """Test successful user authentication."""
         # Create user first
         user_manager.create_user(
-            "testuser", "ValidPassword123!", "+1234567890", "operator"
+            "testuser", "ValidPassword123!", "operator"
         )
         
         # Authenticate
@@ -60,7 +60,7 @@ class TestUserManager:
         """Test authentication with wrong password."""
         # Create user first
         user_manager.create_user(
-            "testuser", "ValidPassword123!", "+1234567890", "operator"
+            "testuser", "ValidPassword123!", "operator"
         )
         
         # Try wrong password
@@ -76,7 +76,7 @@ class TestUserManager:
         """Test authentication for locked user."""
         # Create user first
         user_manager.create_user(
-            "testuser", "ValidPassword123!", "+1234567890", "operator"
+            "testuser", "ValidPassword123!", "operator"
         )
         
         # Lock the user
@@ -92,7 +92,7 @@ class TestUserManager:
         """Test getting existing user."""
         # Create user first
         user_manager.create_user(
-            "testuser", "ValidPassword123!", "+1234567890", "operator"
+            "testuser", "ValidPassword123!", "operator"
         )
         
         user = user_manager.get_user("testuser")
@@ -108,7 +108,7 @@ class TestUserManager:
         """Test updating user's last login time."""
         # Create user first
         user_manager.create_user(
-            "testuser", "ValidPassword123!", "+1234567890", "operator"
+            "testuser", "ValidPassword123!", "operator"
         )
         
         # Update last login
