@@ -292,6 +292,14 @@ Pagination and timezone
 - **Secrets**: Store credentials in Secret Manager; fetch at runtime; never commit keys.
 - **Data Isolation**: Enforce `tenant_id` checks in Flask middleware; audit privileged actions.
 
+Sessions and authentication
+- Prefer opaque, database-backed sessions with Secure, HttpOnly cookies and SameSite=Lax. Avoid JWTs to enable immediate revocation, straightforward rotation on privilege change, and simpler key management in this single-service architecture.
+- Bind tenant to the session at login; require a `TENANT_ID_HEADER` on every request and validate it equals the session tenant; validate device ownership before telemetry access.
+- Session lifetimes: idle timeout 30 minutes, absolute TTL 12 hours; rotate session ID on privilege elevation and sensitive actions.
+
+Password policy
+- Use Argon2id with per-user random salt for `users.password_hash`. Suggested parameters: memory 64–128MB, timeCost 3, parallelism 1. Store algorithm parameters; re-hash legacy or weak hashes on first successful login.
+
 **Why**: Least privilege reduces risk; central secret management prevents leakage; middleware enforcement protects multi-tenant boundaries.
 
 Multi-tenant enforcement
@@ -359,7 +367,9 @@ Data export/analytics (future)
 - Init: create Firestore client on startup; inject into DAL modules (telemetry/users/sessions/audit).
 - Index/TTL: apply `firestore.indexes.json`; enable TTLs before enabling flags.
 - Middleware: enforce `tenant_id`; audit 403s and privileged actions.
-- Observability: structured logs; monitor read/write counts, latency, error rate, and quotas.
+- Sessions: opaque DB-backed cookies (Secure, HttpOnly, SameSite=Lax), idle 30m, absolute 12h, rotate on privilege changes; bind tenant to session; require and validate `TENANT_ID_HEADER`.
+- Passwords: Argon2id with per-user random salt; store algorithm params; re-hash legacy on first login.
+- Observability: structured logs; monitor read/write counts, latency, error rate, and quotas; enforce PII logging policy.
 - Testing: use Firestore Emulator; unit/integration/E2E as outlined; add cutover/rollback tests.
 - Firestore collections, composite index, and TTLs (telemetry: 90d; audit: 180d) configured.
 - Flask app reads/writes telemetry with `timestamp_ms` and `utc_timestamp`.
