@@ -23,23 +23,44 @@ python3 test_auth_complete.py
 
 ## Configuration
 
-### SMS Configuration (Optional)
-For production SMS MFA, configure Twilio credentials:
+The authentication system supports two configuration methods:
 
-1. Copy the template:
+### Method 1: JSON Configuration (Default)
+The system uses `config/auth_config.json` for main settings and `config/secrets.json` for sensitive data.
+
+### Method 2: Environment Variables (Alternative)
+You can use environment variables instead of JSON files:
+
+1. Copy the environment template:
 ```bash
-cp config/templates/secrets.json.template config/secrets.json
+cp config/auth.example.env .env
 ```
 
-2. Edit `config/secrets.json` with your Twilio credentials:
-```json
-{
-  "twilio": {
-    "account_sid": "ACxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
-    "auth_token": "your_twilio_auth_token",
-    "from_number": "+1234567890"
-  }
-}
+2. Edit `.env` with your settings:
+```bash
+# Authentication settings
+BAS_AUTH_ENABLED=true
+BAS_AUTH_MODE=user_password_mfa
+
+# Twilio SMS Configuration (for MFA)
+TWILIO_ACCOUNT_SID=ACxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+TWILIO_AUTH_TOKEN=your_twilio_auth_token_here
+TWILIO_FROM_NUMBER=+1234567890
+```
+
+### SMS Configuration (Optional)
+For production SMS MFA, configure Twilio credentials using either method:
+
+**JSON Method:**
+```bash
+cp config/templates/secrets.json.template config/secrets.json
+# Edit config/secrets.json with your Twilio credentials
+```
+
+**Environment Method:**
+```bash
+cp config/auth.example.env .env
+# Edit .env with your Twilio credentials
 ```
 
 ### Default Users

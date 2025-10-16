@@ -118,11 +118,28 @@ fi
 echo ""
 print_info "Setting up authentication system..."
 
-# Setup authentication
-if [ -f "setup_auth.sh" ]; then
-    chmod +x setup_auth.sh
-    ./setup_auth.sh
-    if [ $? -eq 0 ]; then
+# Setup authentication directly
+if [ -f "scripts/setup_auth.py" ]; then
+    print_info "Configuring authentication system..."
+    
+    # Check if virtual environment exists
+    if [ ! -d "server/venv" ]; then
+        print_error "Server virtual environment not found"
+        print_info "Please run server setup first"
+        exit 1
+    fi
+    
+    # Activate virtual environment and run auth setup
+    cd server
+    source venv/bin/activate
+    
+    # Run authentication setup
+    python ../scripts/setup_auth.py
+    AUTH_SETUP_RESULT=$?
+    
+    cd ..
+    
+    if [ $AUTH_SETUP_RESULT -eq 0 ]; then
         print_status "Authentication setup completed"
     else
         print_error "Authentication setup failed"
