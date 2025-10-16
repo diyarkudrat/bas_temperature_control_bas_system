@@ -15,6 +15,16 @@ class AuthConfig:
     auth_enabled: bool = True
     auth_mode: str = "user_password"  # "disabled" | "shadow" | "enforced"
     
+    # Firestore feature flags
+    use_firestore_telemetry: bool = False
+    use_firestore_auth: bool = False
+    use_firestore_audit: bool = False
+    
+    # Firestore configuration
+    gcp_project_id: Optional[str] = None
+    firestore_emulator_host: Optional[str] = None
+    tenant_id_header: str = "X-BAS-Tenant"
+    
     # Session settings
     session_timeout: int = 1800           # 30 minutes
     max_concurrent_sessions: int = 3
@@ -40,6 +50,12 @@ class AuthConfig:
         return cls(
             auth_enabled=os.getenv('BAS_AUTH_ENABLED', 'true').lower() == 'true',
             auth_mode=os.getenv('BAS_AUTH_MODE', 'user_password'),
+            use_firestore_telemetry=os.getenv('USE_FIRESTORE_TELEMETRY', '0') == '1',
+            use_firestore_auth=os.getenv('USE_FIRESTORE_AUTH', '0') == '1',
+            use_firestore_audit=os.getenv('USE_FIRESTORE_AUDIT', '0') == '1',
+            gcp_project_id=os.getenv('GOOGLE_CLOUD_PROJECT'),
+            firestore_emulator_host=os.getenv('FIRESTORE_EMULATOR_HOST'),
+            tenant_id_header=os.getenv('TENANT_ID_HEADER', 'X-BAS-Tenant'),
             session_timeout=int(os.getenv('BAS_SESSION_TIMEOUT', '1800')),
             max_concurrent_sessions=int(os.getenv('BAS_MAX_CONCURRENT_SESSIONS', '3')),
             max_login_attempts=int(os.getenv('BAS_MAX_LOGIN_ATTEMPTS', '5')),
