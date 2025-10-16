@@ -24,6 +24,7 @@ A distributed temperature control system that solves Pico W storage limitations 
 
 ### **Advanced Topics**
 - [📚 Detailed Documentation](#-detailed-documentation)
+- [🔧 GitHub Workflow](#-github-workflow)
 - [📝 License](#-license)
 
 ## 🏗️ Architecture Overview
@@ -372,6 +373,18 @@ The BAS system includes comprehensive documentation for developers, system admin
 | **API Integration** | [API Documentation](docs/api/README.md) | Complete REST API documentation with examples and error codes |
 | **Authentication & Security** | [Authentication Documentation](docs/auth/README.md) | Complete authentication system design, implementation, and security features |
 | **Development** | [README.md](docs/README.md) | Alternative project documentation with focus on core system features |
+
+## 🔧 GitHub Workflow
+
+This project includes a lightweight feature-capture workflow using GitHub Issues for tracking ideas, features, and technical tasks.
+
+### Features
+- **Issue Templates**: Structured forms for feature requests
+- **Standardized Labels**: idea, in-progress, done, spike, tech-debt, perf, security, blocked
+- **CLI Scripts**: Quick issue creation from terminal
+- **Optional Automation**: TODO→Issue conversion (configurable)
+
+📚 **Complete Workflow Documentation**: See [GitHub Workflow Documentation](.github/README.md) for detailed setup instructions, usage examples, and automation configuration.
 
 ## 📝 License
 
