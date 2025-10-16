@@ -93,43 +93,57 @@
 
 ### 2) Task Breakdown (checklist)
 
-| Theme | Purpose | Acceptance Criteria | Effort | Dependencies |
-|---|---|---|---|---|
-| Infra | Prepare GCP services, IAM, indexes, TTL, emulator | APIs enabled; SAs + roles; emulator runs; indexes deployed; TTLs enabled | M | GCP project access |
-| Backend config/init | Add flags, env, client factory, inject DAL | App runs with emulator/ADC; flags togglable; Firestore ops succeed | M | Infra |
-| TelemetryStore | Telemetry R/W, window and recent queries, pagination, tenant checks | Writes succeed; recent/window queries correct; `startAfter` works; tenant enforced | M | Index, client init |
-| Users/Sessions | Auth/session persistence; re-login at cutover | Login/logout ops; sessions create/read/delete; re-login enforced | M | Client init |
-| AuditLogStore | Append security events; TTL 180d | Events stored; 403s audited; query by `user_id`/`action` | S | Client init, middleware |
-| Security middleware | Enforce multi-tenant isolation | Cross-tenant 403 + audit; happy path OK | M | Auth path |
-| Migration | Users import; optional audit/telemetry backfill | Users present; optional backfills correct; rate limits respected | M | Stores, infra |
-| Testing | Unit (emulator), integration, e2e | Tests green; P50 ≤ 300ms (last 100 pts) | M | Backend |
- | Observability | Monitoring dashboards and alerts; logs | Alerts exist; logs include counters; budgets observed; SLOs wired to alerts and dashboards | S | Infra, backend |
-| Cutover/rollback | Phased enablement and verification | Phases executed; rollback tested | S | All above |
+| Theme | Purpose | Acceptance Criteria | Effort | Dependencies | Status |
+|---|---|---|---|---|---|
+| Infra | Prepare GCP services, IAM, indexes, TTL, emulator | APIs enabled; SAs + roles; emulator runs; indexes deployed; TTLs enabled | M | GCP project access | ✅ **COMPLETED** |
+| Backend config/init | Add flags, env, client factory, inject DAL | App runs with emulator/ADC; flags togglable; Firestore ops succeed | M | Infra | ✅ **COMPLETED** |
+| TelemetryStore | Telemetry R/W, window and recent queries, pagination, tenant checks | Writes succeed; recent/window queries correct; `startAfter` works; tenant enforced | M | Index, client init | ✅ **COMPLETED** |
+| Users/Sessions | Auth/session persistence; re-login at cutover | Login/logout ops; sessions create/read/delete; re-login enforced | M | Client init | ✅ **COMPLETED** |
+| AuditLogStore | Append security events; TTL 180d | Events stored; 403s audited; query by `user_id`/`action` | S | Client init, middleware | ✅ **COMPLETED** |
+| Security middleware | Enforce multi-tenant isolation | Cross-tenant 403 + audit; happy path OK | M | Auth path | ✅ **COMPLETED** |
+| Migration | Users import; optional audit/telemetry backfill | Users present; optional backfills correct; rate limits respected | M | Stores, infra | 🔄 **IN PROGRESS** |
+| Testing | Unit (emulator), integration, e2e | Tests green; P50 ≤ 300ms (last 100 pts) | M | Backend | ⏳ **PENDING** |
+| Observability | Monitoring dashboards and alerts; logs | Alerts exist; logs include counters; budgets observed; SLOs wired to alerts and dashboards | S | Infra, backend | ⏳ **PENDING** |
+| Cutover/rollback | Phased enablement and verification | Phases executed; rollback tested | S | All above | ⏳ **PENDING** |
+
+**Progress Summary:**
+- ✅ **Completed (6/10)**: Infrastructure, Backend Config, TelemetryStore, Users/Sessions, AuditLogStore, Security Middleware
+- 🔄 **In Progress (1/10)**: Migration
+- ⏳ **Pending (3/10)**: Testing, Observability, Cutover/Rollback
 
 ---
 
 ### 3) File-by-file edit plan (no code)
 
-| File | Changes |
-|---|---|
-| `server/bas_server.py` | Read flags/env; init Firestore client factory (emulator vs ADC); wire DALs; register tenant middleware; gate endpoints. |
-| `server/auth/config.py` | Add config keys: flags, project id, emulator host, secret names. |
-| `server/auth/middleware.py` | Tenant enforcement; 403 + AuditLogStore call. |
-| `server/auth/models.py` | Ensure `user_id`, `username`, `role`, `expires_at`, `tenant_id` fields. |
-| `server/auth/services.py` | Branch to Firestore-backed Users/Sessions on flags; enforce re-login at cutover. |
-| `server/auth/managers.py` | Integrate stores for login/logout; structured audit hooks. |
-| `server/auth/utils.py` | UUID helpers; UTC timestamp normalization. |
-| `server/auth/exceptions.py` | Map permission errors to 403. |
-| `server/services/telemetry.py` or `server/services/firestore/telemetry_store.py` | TelemetryStore: add, query_recent, query_window, paginate. |
-| `server/services/audit.py` or `server/services/firestore/audit_store.py` | AuditLogStore: append and query. |
-| `server/services/users.py` or `server/services/firestore/users_store.py` | UsersStore: get_by_username/id, create/update. |
-| `server/services/sessions.py` or `server/services/firestore/sessions_store.py` | SessionsStore: create, get, delete, expiry handling. |
-| `server/services/logging.py` | Structured logs with `tenant_id`, `device_id`, `action`, counts. |
-| `server/config/auth_config.json` | Add flags and project id defaults (non-secret). |
-| `config/config.py` | Centralize flags; emulator detection. |
-| `infra/firestore.indexes.json` (new) | Composite index source of truth. |
-| `scripts/setup_auth.py`, `scripts/auth_admin.py` | Ensure compatibility with Firestore paths/flags. |
-| Tests | Unit: `tests/unit/auth/*`, new `tests/unit/firestore/test_telemetry_store.py`, `.../test_audit_store.py`; Integration: `tests/integration/test_auth_flow_firestore.py`, `.../test_telemetry_queries.py`; E2E: `tests/e2e/test_feature_flag_cutover.py`. |
+| File | Changes | Status |
+|---|---|---|
+| `server/bas_server.py` | Read flags/env; init Firestore client factory (emulator vs ADC); wire DALs; register tenant middleware; gate endpoints. | ⏳ **PENDING** |
+| `server/auth/config.py` | Add config keys: flags, project id, emulator host, secret names. | ✅ **COMPLETED** |
+| `server/auth/middleware.py` | Tenant enforcement; 403 + AuditLogStore call. | ⏳ **PENDING** |
+| `server/auth/models.py` | Ensure `user_id`, `username`, `role`, `expires_at`, `tenant_id` fields. | ⏳ **PENDING** |
+| `server/auth/services.py` | Branch to Firestore-backed Users/Sessions on flags; enforce re-login at cutover. | ⏳ **PENDING** |
+| `server/auth/managers.py` | Integrate stores for login/logout; structured audit hooks. | ⏳ **PENDING** |
+| `server/auth/utils.py` | UUID helpers; UTC timestamp normalization. | ⏳ **PENDING** |
+| `server/auth/exceptions.py` | Map permission errors to 403. | ⏳ **PENDING** |
+| `server/services/firestore/telemetry_store.py` | TelemetryStore: add, query_recent, query_window, paginate. | ✅ **COMPLETED** |
+| `server/services/firestore/audit_store.py` | AuditLogStore: append and query. | ✅ **COMPLETED** |
+| `server/services/firestore/users_store.py` | UsersStore: get_by_username/id, create/update. | ✅ **COMPLETED** |
+| `server/services/firestore/sessions_store.py` | SessionsStore: create, get, delete, expiry handling. | ✅ **COMPLETED** |
+| `server/services/firestore/devices_store.py` | DevicesStore: device management and metadata. | ✅ **COMPLETED** |
+| `server/services/firestore/base.py` | Base repository classes and patterns. | ✅ **COMPLETED** |
+| `server/services/firestore/models.py` | Domain models with dataclasses and validation. | ✅ **COMPLETED** |
+| `server/services/firestore/service_factory.py` | Service factory for dependency injection. | ✅ **COMPLETED** |
+| `server/auth/firestore_client.py` | Firestore client factory with emulator support. | ✅ **COMPLETED** |
+| `server/auth/tenant_middleware.py` | Multi-tenant middleware with isolation enforcement. | ✅ **COMPLETED** |
+| `server/services/logging.py` | Structured logs with `tenant_id`, `device_id`, `action`, counts. | ⏳ **PENDING** |
+| `server/config/auth_config.json` | Add flags and project id defaults (non-secret). | ⏳ **PENDING** |
+| `config/config.py` | Centralize flags; emulator detection. | ⏳ **PENDING** |
+| `infra/firestore.indexes.json` | Composite index source of truth. | ✅ **COMPLETED** |
+| `scripts/setup_auth.py`, `scripts/auth_admin.py` | Ensure compatibility with Firestore paths/flags. | ⏳ **PENDING** |
+| Tests | Unit: `tests/unit/auth/*`, new `tests/unit/firestore/test_telemetry_store.py`, `.../test_audit_store.py`; Integration: `tests/integration/test_auth_flow_firestore.py`, `.../test_telemetry_queries.py`; E2E: `tests/e2e/test_feature_flag_cutover.py`. | ⏳ **PENDING** |
+
+**Files Completed: 10/22**
+**Files Remaining: 12/22**
 
 ---
 
