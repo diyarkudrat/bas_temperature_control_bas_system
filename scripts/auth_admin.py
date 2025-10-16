@@ -17,7 +17,7 @@ from auth.utils import validate_password_strength
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
-def create_user(db_path: str, username: str, password: str, phone_number: str, role: str = "operator"):
+def create_user(db_path: str, username: str, password: str, role: str = "operator"):
     """Create new user account."""
     logger.info(f"Creating user: {username} with role: {role}")
     
@@ -31,7 +31,7 @@ def create_user(db_path: str, username: str, password: str, phone_number: str, r
         return False
     
     try:
-        user = user_manager.create_user(username, password, phone_number, role)
+        user = user_manager.create_user(username, password, role)
         logger.info(f"User {username} created successfully")
         return True
     except Exception as e:
@@ -184,7 +184,6 @@ def main():
     create_parser = subparsers.add_parser('create-user', help='Create new user')
     create_parser.add_argument('username', help='Username')
     create_parser.add_argument('password', help='Password')
-    create_parser.add_argument('phone_number', help='Phone number (E.164 format)')
     create_parser.add_argument('--role', default='operator', choices=['operator', 'admin', 'read-only'], help='User role')
     
     # List users command
@@ -212,7 +211,7 @@ def main():
     success = False
     
     if args.command == 'create-user':
-        success = create_user(args.db, args.username, args.password, args.phone_number, args.role)
+        success = create_user(args.db, args.username, args.password, args.role)
     elif args.command == 'list-users':
         list_users(args.db)
         success = True

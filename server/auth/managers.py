@@ -37,7 +37,7 @@ class UserManager:
                 last_login REAL DEFAULT 0,
                 failed_attempts INTEGER DEFAULT 0,
                 locked_until REAL DEFAULT 0,
-                password_history TEXT DEFAULT '[]',
+                password_history TEXT DEFAULT '[]'
             )
         ''')
         
