@@ -10,50 +10,6 @@ from .exceptions import AuthError
 
 logger = logging.getLogger(__name__)
 
-class SMSService:
-    """SMS service for MFA delivery."""
-    
-    def __init__(self, config):
-        self.config = config
-        self.client = None
-        logger.info("Initializing SMS service")
-        
-        if config.twilio_account_sid and config.twilio_auth_token:
-            try:
-                from twilio.rest import Client
-                self.client = Client(config.twilio_account_sid, config.twilio_auth_token)
-                logger.info("SMS service initialized with Twilio")
-            except ImportError:
-                logger.error("Twilio library not installed")
-            except Exception as e:
-                logger.error(f"Failed to initialize Twilio client: {e}")
-        else:
-            logger.warning("SMS service not configured - Twilio credentials missing")
-    
-    def send_mfa_code(self, phone_number: str, code: str) -> bool:
-        """Send MFA code via SMS."""
-        logger.info(f"Sending MFA code to {phone_number[:3]}***{phone_number[-4:]}")
-        
-        # Test mode: if no Twilio client, simulate successful SMS
-        if not self.client:
-            logger.warning("SMS service not configured - running in test mode")
-            logger.info(f"TEST MODE: MFA code for {phone_number} is: {code}")
-            logger.info("In production, configure Twilio credentials in config/secrets.json")
-            return True
-        
-        try:
-            message = self.client.messages.create(
-                body=f"Your BAS authentication code is: {code}. This code expires in {self.config.mfa_code_expiry // 60} minutes.",
-                from_=self.config.twilio_from_number,
-                to=phone_number
-            )
-            
-            logger.info(f"SMS sent successfully: {message.sid}")
-            return True
-            
-        except Exception as e:
-            logger.error(f"Failed to send SMS to {phone_number[:3]}***{phone_number[-4:]}: {e}")
-            return False
 
 class AuditLogger:
     """Audit logging for authentication events."""
@@ -130,30 +86,7 @@ class AuditLogger:
             endpoint=endpoint,
             success=True
         )
-    
-    def log_mfa_success(self, username: str, ip_address: str):
-        """Log successful MFA verification."""
-        logger.info(f"Logging MFA success for user: {username}")
-        self._log_event(
-            username=username,
-            ip_address=ip_address,
-            action="MFA_SUCCESS",
-            endpoint="auth/verify",
-            success=True
-        )
-    
-    def log_mfa_failure(self, username: str, ip_address: str, reason: str):
-        """Log failed MFA verification."""
-        logger.warning(f"Logging MFA failure for user: {username}, reason: {reason}")
-        self._log_event(
-            username=username,
-            ip_address=ip_address,
-            action="MFA_FAILURE",
-            endpoint="auth/verify",
-            success=False,
-            details={"reason": reason}
-        )
-    
+        
     def log_session_creation(self, username: str, ip_address: str, session_id: str):
         """Log session creation."""
         logger.info(f"Logging session creation for user: {username}")

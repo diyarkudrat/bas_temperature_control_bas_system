@@ -19,18 +19,14 @@ class TestAuthConfig:
         """Test default configuration values."""
         config = AuthConfig()
         assert_true(config.auth_enabled)
-        assert_equals(config.auth_mode, "user_password_mfa")
+        assert_equals(config.auth_mode, "user_password")
         assert_equals(config.session_timeout, 1800)
         assert_equals(config.max_concurrent_sessions, 3)
-        assert_equals(config.mfa_code_expiry, 300)
         assert_equals(config.max_login_attempts, 5)
         assert_equals(config.password_min_length, 12)
         assert_equals(config.rate_limit_per_ip, 100)
         assert_equals(config.rate_limit_per_user, 50)
         assert_equals(config.auth_attempts_per_15min, 5)
-        assert config.twilio_account_sid is None
-        assert config.twilio_auth_token is None
-        assert config.twilio_from_number is None
 
     def test_from_env(self):
         """Test loading configuration from environment variables."""
@@ -40,10 +36,7 @@ class TestAuthConfig:
             'BAS_SESSION_TIMEOUT': '3600',
             'BAS_MAX_CONCURRENT_SESSIONS': '5',
             'BAS_MAX_LOGIN_ATTEMPTS': '3',
-            'BAS_LOCKOUT_DURATION': '1800',
-            'TWILIO_ACCOUNT_SID': 'test_sid',
-            'TWILIO_AUTH_TOKEN': 'test_token',
-            'TWILIO_FROM_NUMBER': '+1234567890'
+            'BAS_LOCKOUT_DURATION': '1800'
         }):
             config = AuthConfig.from_env()
             assert_false(config.auth_enabled)
@@ -52,9 +45,6 @@ class TestAuthConfig:
             assert_equals(config.max_concurrent_sessions, 5)
             assert_equals(config.max_login_attempts, 3)
             assert_equals(config.lockout_duration, 1800)
-            assert_equals(config.twilio_account_sid, 'test_sid')
-            assert_equals(config.twilio_auth_token, 'test_token')
-            assert_equals(config.twilio_from_number, '+1234567890')
 
     def test_from_file_success(self, temp_config_file):
         """Test loading configuration from file successfully."""
@@ -62,10 +52,7 @@ class TestAuthConfig:
             'auth_enabled': False,
             'auth_mode': 'enforced',
             'session_timeout': 3600,
-            'max_concurrent_sessions': 5,
-            'twilio_account_sid': 'test_sid',
-            'twilio_auth_token': 'test_token',
-            'twilio_from_number': '+1234567890'
+            'max_concurrent_sessions': 5
         }
         
         with open(temp_config_file, 'w') as f:
@@ -76,14 +63,13 @@ class TestAuthConfig:
         assert_equals(config.auth_mode, 'enforced')
         assert_equals(config.session_timeout, 3600)
         assert_equals(config.max_concurrent_sessions, 5)
-        assert_equals(config.twilio_account_sid, 'test_sid')
 
     def test_from_file_not_found(self):
         """Test loading configuration from non-existent file."""
         config = AuthConfig.from_file('nonexistent.json')
         # Should return default config
         assert_true(config.auth_enabled)
-        assert_equals(config.auth_mode, "user_password_mfa")
+        assert_equals(config.auth_mode, "user_password")
 
     def test_from_file_invalid_json(self, temp_config_file):
         """Test loading configuration from invalid JSON file."""
@@ -104,15 +90,6 @@ class TestAuthConfig:
         config = AuthConfig(auth_mode="disabled")
         assert_true(config.validate())
 
-    def test_validate_twilio_incomplete(self):
-        """Test validation with incomplete Twilio configuration."""
-        config = AuthConfig(
-            auth_mode="enforced",
-            twilio_account_sid="test",
-            twilio_auth_token=None,
-            twilio_from_number="+1234567890"
-        )
-        assert_false(config.validate())
 
     def test_validate_session_timeout_too_short(self):
         """Test validation with session timeout too short."""

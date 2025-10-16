@@ -8,9 +8,6 @@ class SessionError(AuthError):
     """Session-related error."""
     pass
 
-class MFAError(AuthError):
-    """MFA-related error."""
-    pass
 
 class UserError(AuthError):
     """User-related error."""

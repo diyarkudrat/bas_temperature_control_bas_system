@@ -18,38 +18,17 @@
         <input type="password" id="password" name="password" required>
     </div>
     
-    <div class="form-group">
-        <label for="phone_number">Phone Number (E.164 format):</label>
-        <input type="tel" id="phone_number" name="phone_number" placeholder="+1234567890" required>
-    </div>
     
     <button type="submit" class="btn" id="loginBtn" data-original-text="Login">Login</button>
 </form>
 
-<div id="mfa-section" style="display: none;">
-    <h3>MFA Verification</h3>
-    <p>Please enter the 6-digit code sent to your phone:</p>
-    
-    <form id="mfaForm">
-        <div class="form-group">
-            <label for="mfa_code">MFA Code:</label>
-            <input type="text" id="mfa_code" name="mfa_code" maxlength="6" required>
-        </div>
-        
-        <button type="submit" class="btn" id="mfaBtn" data-original-text="Verify">Verify</button>
-    </form>
-</div>
 
 <script>
-let currentUsername = '';
-let currentPhoneNumber = '';
-
 document.getElementById('loginForm').addEventListener('submit', async function(e) {
     e.preventDefault();
     
     const username = document.getElementById('username').value;
     const password = document.getElementById('password').value;
-    const phone_number = document.getElementById('phone_number').value;
     
     const loginBtn = document.getElementById('loginBtn');
     setLoading(loginBtn, true);
@@ -62,48 +41,7 @@ document.getElementById('loginForm').addEventListener('submit', async function(e
             },
             body: JSON.stringify({
                 username: username,
-                password: password,
-                phone_number: phone_number
-            })
-        });
-        
-        const data = await response.json();
-        
-        if (response.ok && data.status === 'mfa_required') {
-            currentUsername = username;
-            currentPhoneNumber = phone_number;
-            
-            document.getElementById('loginForm').style.display = 'none';
-            document.getElementById('mfa-section').style.display = 'block';
-            showSuccess('MFA code sent to your phone');
-        } else {
-            showError(data.error || 'Login failed');
-        }
-    } catch (error) {
-        console.error('Login error:', error);
-        showError('Network error occurred');
-    } finally {
-        setLoading(loginBtn, false);
-    }
-});
-
-document.getElementById('mfaForm').addEventListener('submit', async function(e) {
-    e.preventDefault();
-    
-    const code = document.getElementById('mfa_code').value;
-    
-    const mfaBtn = document.getElementById('mfaBtn');
-    setLoading(mfaBtn, true);
-    
-    try {
-        const response = await fetch('/auth/verify', {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json'
-            },
-            body: JSON.stringify({
-                username: currentUsername,
-                code: code
+                password: password
             })
         });
         
@@ -119,13 +57,13 @@ document.getElementById('mfaForm').addEventListener('submit', async function(e) 
                 window.location.href = '/';
             }, 1000);
         } else {
-            showError(data.error || 'MFA verification failed');
+            showError(data.error || 'Login failed');
         }
     } catch (error) {
-        console.error('MFA error:', error);
+        console.error('Login error:', error);
         showError('Network error occurred');
     } finally {
-        setLoading(mfaBtn, false);
+        setLoading(loginBtn, false);
     }
 });
 

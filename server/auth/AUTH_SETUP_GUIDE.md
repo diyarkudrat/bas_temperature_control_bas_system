@@ -1,7 +1,7 @@
 # Authentication System Setup Guide
 
 ## Overview
-This guide covers setting up the authentication system for the BAS (Building Automation System) with user/password authentication and SMS MFA.
+This guide covers setting up the authentication system for the BAS (Building Automation System) with user/password authentication.
 
 ## Quick Start
 
@@ -40,28 +40,9 @@ cp config/auth.example.env .env
 ```bash
 # Authentication settings
 BAS_AUTH_ENABLED=true
-BAS_AUTH_MODE=user_password_mfa
-
-# Twilio SMS Configuration (for MFA)
-TWILIO_ACCOUNT_SID=ACxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
-TWILIO_AUTH_TOKEN=your_twilio_auth_token_here
-TWILIO_FROM_NUMBER=+1234567890
+BAS_AUTH_MODE=user_password
 ```
 
-### SMS Configuration (Optional)
-For production SMS MFA, configure Twilio credentials using either method:
-
-**JSON Method:**
-```bash
-cp config/templates/secrets.json.template config/secrets.json
-# Edit config/secrets.json with your Twilio credentials
-```
-
-**Environment Method:**
-```bash
-cp config/auth.example.env .env
-# Edit .env with your Twilio credentials
-```
 
 ### Default Users
 The system comes with a default admin user:
@@ -73,7 +54,6 @@ The system comes with a default admin user:
 
 ### Authentication Endpoints
 - `POST /auth/login` - User login
-- `POST /auth/verify` - MFA verification
 - `POST /auth/logout` - User logout
 - `GET /auth/status` - Session status
 
@@ -97,9 +77,6 @@ The system comes with a default admin user:
    - **Fixed**: Updated session access in telemetry endpoints
    - **Status**: ✅ Resolved
 
-2. **SMS not configured**
-   - **Solution**: Configure Twilio credentials in `config/secrets.json`
-   - **Workaround**: System works without SMS (bypasses MFA for testing)
 
 3. **Authentication required errors**
    - **Solution**: Include `X-Session-ID` header in requests
@@ -117,10 +94,9 @@ python3 test_auth_flow.py
 
 ## Production Deployment
 
-1. **Configure Twilio**: Add SMS credentials for MFA
-2. **Update Passwords**: Change default admin password
-3. **Enable HTTPS**: Use SSL certificates for production
-4. **Monitor Logs**: Check `server.log` for authentication events
+1. **Update Passwords**: Change default admin password
+2. **Enable HTTPS**: Use SSL certificates for production
+3. **Monitor Logs**: Check `server.log` for authentication events
 
 ## Admin Tools
 
@@ -134,4 +110,4 @@ python3 scripts/auth_admin.py --help
 - ✅ Session management working
 - ✅ Protected endpoints secured
 - ✅ Test suite passing
-- ⚠️ SMS MFA requires Twilio configuration
+- ✅ Simple username/password authentication

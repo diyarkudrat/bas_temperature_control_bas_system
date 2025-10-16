@@ -4,7 +4,7 @@ Unit tests for authentication exceptions using pytest.
 
 import pytest
 
-from auth.exceptions import AuthError, SessionError, MFAError, UserError, ConfigurationError
+from auth.exceptions import AuthError, SessionError, UserError, ConfigurationError
 from tests.utils.assertions import assert_equals, assert_is_instance
 
 
@@ -25,11 +25,6 @@ class TestAuthExceptions:
         assert_equals(str(error), "Session error")
         assert_is_instance(error, AuthError)
 
-    def test_mfa_error(self):
-        """Test MFAError exception."""
-        error = MFAError("MFA error")
-        assert_equals(str(error), "MFA error")
-        assert_is_instance(error, AuthError)
 
     def test_user_error(self):
         """Test UserError exception."""

@@ -77,9 +77,9 @@ tests/
     └── auth/                   # Authentication unit tests
         ├── __init__.py
         ├── test_config.py      # AuthConfig tests
-        ├── test_models.py      # User, Session, PendingMFA tests
-        ├── test_managers.py    # UserManager, SessionManager, MFAManager tests
-        ├── test_services.py    # SMSService, AuditLogger, RateLimiter tests
+        ├── test_models.py      # User, Session tests
+        ├── test_managers.py    # UserManager, SessionManager tests
+        ├── test_services.py    # AuditLogger, RateLimiter tests
         ├── test_utils.py       # Utility function tests
         ├── test_middleware.py  # Middleware function tests
         └── test_exceptions.py  # Exception class tests

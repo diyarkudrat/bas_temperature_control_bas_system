@@ -6,7 +6,7 @@ import pytest
 
 from auth.utils import (
     hash_password, verify_password, create_session_fingerprint,
-    generate_session_id, generate_mfa_code, validate_password_strength
+    generate_session_id, validate_password_strength
 )
 from tests.utils.assertions import (
     assert_equals, assert_not_equals, assert_true, assert_false, 
@@ -85,19 +85,6 @@ class TestAuthUtils:
         assert_true(session_id.startswith("sess_"))
         assert_true(len(session_id) > 10)
 
-    def test_generate_mfa_code(self):
-        """Test MFA code generation."""
-        code = generate_mfa_code(6)
-        
-        assert_equals(len(code), 6)
-        assert_true(code.isdigit())
-
-    def test_generate_mfa_code_different_length(self):
-        """Test MFA code generation with different length."""
-        code = generate_mfa_code(8)
-        
-        assert_equals(len(code), 8)
-        assert_true(code.isdigit())
 
     def test_validate_password_strength_valid(self):
         """Test password strength validation with valid password."""

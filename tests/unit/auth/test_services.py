@@ -1,5 +1,5 @@
 """
-Unit tests for authentication services (SMSService, AuditLogger, RateLimiter) using pytest.
+Unit tests for authentication services (AuditLogger, RateLimiter) using pytest.
 """
 
 import sqlite3
@@ -7,41 +7,8 @@ import pytest
 from unittest.mock import Mock
 
 from auth.config import AuthConfig
-from auth.services import SMSService, AuditLogger, RateLimiter
+from auth.services import AuditLogger, RateLimiter
 from tests.utils.assertions import assert_equals, assert_true, assert_false, assert_is_not_none
-
-
-@pytest.mark.auth
-@pytest.mark.unit
-class TestSMSService:
-    """Test SMSService with 100% coverage."""
-
-    def test_send_mfa_code_no_client(self, auth_config):
-        """Test sending MFA code without Twilio client (test mode)."""
-        sms_service = SMSService(auth_config)
-        result = sms_service.send_mfa_code("+1234567890", "123456")
-        assert_true(result)
-
-    def test_send_mfa_code_with_client_success(self, auth_config_with_twilio, mock_twilio_client):
-        """Test successful SMS sending with Twilio client."""
-        sms_service = SMSService(auth_config_with_twilio)
-        sms_service.client = mock_twilio_client
-        
-        result = sms_service.send_mfa_code("+1234567890", "123456")
-        assert_true(result)
-        mock_twilio_client.messages.create.assert_called_once()
-
-    def test_send_mfa_code_with_client_failure(self, auth_config_with_twilio):
-        """Test SMS sending failure with Twilio client."""
-        sms_service = SMSService(auth_config_with_twilio)
-        
-        # Setup mock client to raise exception
-        mock_client = Mock()
-        mock_client.messages.create.side_effect = Exception("Twilio error")
-        sms_service.client = mock_client
-        
-        result = sms_service.send_mfa_code("+1234567890", "123456")
-        assert_false(result)
 
 
 @pytest.mark.auth
@@ -100,39 +67,6 @@ class TestAuditLogger:
         assert_equals(row[4], "SESSION_ACCESS")
         assert_equals(row[5], "api/telemetry")  # endpoint
 
-    def test_log_mfa_success(self, temp_db_file):
-        """Test logging successful MFA verification."""
-        audit_logger = AuditLogger(temp_db_file)
-        audit_logger.log_mfa_success("testuser", "192.168.1.1")
-        
-        # Verify log entry
-        conn = sqlite3.connect(temp_db_file)
-        cursor = conn.cursor()
-        cursor.execute("SELECT * FROM audit_log WHERE action = 'MFA_SUCCESS'")
-        row = cursor.fetchone()
-        conn.close()
-        
-        assert_is_not_none(row)
-        assert_equals(row[2], "testuser")
-        assert_equals(row[4], "MFA_SUCCESS")
-        assert_equals(row[6], 1)  # success
-
-    def test_log_mfa_failure(self, temp_db_file):
-        """Test logging failed MFA verification."""
-        audit_logger = AuditLogger(temp_db_file)
-        audit_logger.log_mfa_failure("testuser", "192.168.1.1", "INVALID_MFA")
-        
-        # Verify log entry
-        conn = sqlite3.connect(temp_db_file)
-        cursor = conn.cursor()
-        cursor.execute("SELECT * FROM audit_log WHERE action = 'MFA_FAILURE'")
-        row = cursor.fetchone()
-        conn.close()
-        
-        assert_is_not_none(row)
-        assert_equals(row[2], "testuser")
-        assert_equals(row[4], "MFA_FAILURE")
-        assert_equals(row[6], 0)  # success
 
     def test_log_session_creation(self, temp_db_file):
         """Test logging session creation."""

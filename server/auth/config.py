@@ -13,17 +13,13 @@ class AuthConfig:
     
     # Feature flags
     auth_enabled: bool = True
-    auth_mode: str = "user_password_mfa"  # "disabled" | "shadow" | "enforced"
+    auth_mode: str = "user_password"  # "disabled" | "shadow" | "enforced"
     
     # Session settings
     session_timeout: int = 1800           # 30 minutes
     max_concurrent_sessions: int = 3
     session_rotation: bool = True
     
-    # MFA settings
-    mfa_code_expiry: int = 300            # 5 minutes
-    mfa_code_length: int = 6
-    sms_provider: str = "twilio"
     
     # Security settings
     max_login_attempts: int = 5
@@ -36,10 +32,6 @@ class AuthConfig:
     rate_limit_per_user: int = 50         # requests per hour
     auth_attempts_per_15min: int = 5
     
-    # Twilio settings
-    twilio_account_sid: Optional[str] = None
-    twilio_auth_token: Optional[str] = None
-    twilio_from_number: Optional[str] = None
     
     @classmethod
     def from_env(cls) -> 'AuthConfig':
@@ -47,14 +39,11 @@ class AuthConfig:
         logger.info("Loading auth configuration from environment variables")
         return cls(
             auth_enabled=os.getenv('BAS_AUTH_ENABLED', 'true').lower() == 'true',
-            auth_mode=os.getenv('BAS_AUTH_MODE', 'user_password_mfa'),
+            auth_mode=os.getenv('BAS_AUTH_MODE', 'user_password'),
             session_timeout=int(os.getenv('BAS_SESSION_TIMEOUT', '1800')),
             max_concurrent_sessions=int(os.getenv('BAS_MAX_CONCURRENT_SESSIONS', '3')),
             max_login_attempts=int(os.getenv('BAS_MAX_LOGIN_ATTEMPTS', '5')),
-            lockout_duration=int(os.getenv('BAS_LOCKOUT_DURATION', '900')),
-            twilio_account_sid=os.getenv('TWILIO_ACCOUNT_SID'),
-            twilio_auth_token=os.getenv('TWILIO_AUTH_TOKEN'),
-            twilio_from_number=os.getenv('TWILIO_FROM_NUMBER')
+            lockout_duration=int(os.getenv('BAS_LOCKOUT_DURATION', '900'))
         )
     
     @classmethod
@@ -88,10 +77,6 @@ class AuthConfig:
             return True
             
         # Validate required settings for enabled auth
-        if self.auth_mode in ["shadow", "enforced"]:
-            if not all([self.twilio_account_sid, self.twilio_auth_token, self.twilio_from_number]):
-                logger.error("Twilio configuration incomplete for SMS MFA")
-                return False
                 
         # Validate numeric ranges
         if self.session_timeout < 300:  # Minimum 5 minutes

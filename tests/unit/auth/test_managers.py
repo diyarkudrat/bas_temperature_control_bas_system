@@ -1,12 +1,12 @@
 """
-Unit tests for authentication managers (UserManager, SessionManager, MFAManager) using pytest.
+Unit tests for authentication managers (UserManager, SessionManager) using pytest.
 """
 
 import time
 import pytest
 
 from auth.config import AuthConfig
-from auth.managers import UserManager, SessionManager, MFAManager
+from auth.managers import UserManager, SessionManager
 from auth.exceptions import AuthError
 from tests.utils.assertions import assert_equals, assert_true, assert_false, assert_is_not_none, assert_raises
 
@@ -19,30 +19,29 @@ class TestUserManager:
     def test_create_user_success(self, user_manager):
         """Test successful user creation."""
         user = user_manager.create_user(
-            "newuser", "ValidPassword123!", "+1234567890", "operator"
+            "newuser", "ValidPassword123!", "operator"
         )
         assert_equals(user.username, "newuser")
-        assert_equals(user.phone_number, "+1234567890")
         assert_equals(user.role, "operator")
 
     def test_create_user_weak_password(self, user_manager):
         """Test user creation with weak password."""
         with assert_raises(AuthError):
             user_manager.create_user(
-                "newuser", "weak", "+1234567890", "operator"
+                "newuser", "weak", "operator"
             )
 
     def test_create_user_already_exists(self, user_manager):
         """Test creating user that already exists."""
         # Create first user
         user_manager.create_user(
-            "existinguser", "ValidPassword123!", "+1234567890", "operator"
+            "existinguser", "ValidPassword123!", "operator"
         )
         
         # Try to create same user again
         with assert_raises(AuthError):
             user_manager.create_user(
-                "existinguser", "AnotherPassword123!", "+9876543210", "admin"
+                "existinguser", "AnotherPassword123!", "admin"
             )
 
     def test_authenticate_user_success(self, user_manager):
@@ -202,67 +201,6 @@ class TestSessionManager:
         assert_true(updated_session.last_access > original_access)
 
 
-@pytest.mark.auth
-@pytest.mark.unit
-class TestMFAManager:
-    """Test MFAManager with 100% coverage."""
-
-    def test_generate_code(self, mfa_manager):
-        """Test MFA code generation."""
-        code = mfa_manager.generate_code("testuser")
-        assert_equals(len(code), mfa_manager.config.mfa_code_length)
-        assert_true(code.isdigit())
-
-    def test_verify_code_success(self, mfa_manager):
-        """Test successful MFA code verification."""
-        code = mfa_manager.generate_code("testuser")
-        is_valid = mfa_manager.verify_code("testuser", code)
-        assert_true(is_valid)
-
-    def test_verify_code_wrong_code(self, mfa_manager):
-        """Test MFA code verification with wrong code."""
-        mfa_manager.generate_code("testuser")
-        is_valid = mfa_manager.verify_code("testuser", "000000")
-        assert_false(is_valid)
-
-    def test_verify_code_no_pending(self, mfa_manager):
-        """Test MFA code verification with no pending MFA."""
-        is_valid = mfa_manager.verify_code("nonexistent", "123456")
-        assert_false(is_valid)
-
-    def test_verify_code_expired(self, mfa_manager):
-        """Test MFA code verification with expired code."""
-        # Generate code
-        mfa_manager.generate_code("testuser")
-        
-        # Manually expire the code
-        pending = mfa_manager.pending_mfa["testuser"]
-        pending.expires_at = time.time() - 1
-        mfa_manager.pending_mfa["testuser"] = pending
-        
-        # Try to verify expired code
-        is_valid = mfa_manager.verify_code("testuser", pending.code)
-        assert_false(is_valid)
-
-    def test_get_pending(self, mfa_manager):
-        """Test getting pending MFA."""
-        mfa_manager.generate_code("testuser")
-        pending = mfa_manager.get_pending("testuser")
-        assert_is_not_none(pending)
-        assert_equals(pending.username, "testuser")
-
-    def test_get_pending_none(self, mfa_manager):
-        """Test getting pending MFA for non-existent user."""
-        pending = mfa_manager.get_pending("nonexistent")
-        assert pending is None
-
-    def test_clear_pending(self, mfa_manager):
-        """Test clearing pending MFA."""
-        mfa_manager.generate_code("testuser")
-        assert_is_not_none(mfa_manager.get_pending("testuser"))
-        
-        mfa_manager.clear_pending("testuser")
-        assert mfa_manager.get_pending("testuser") is None
 
     def test_user_manager_init_tables(self, temp_db_file, auth_config):
         """Test UserManager table initialization."""
@@ -364,33 +302,11 @@ class TestMFAManager:
         # We can't easily test the thread itself, but we can verify the manager was created
         assert_is_not_none(session_manager)
 
-    def test_mfa_manager_generate_code_with_config(self, mfa_manager):
-        """Test MFA code generation with config length."""
-        code = mfa_manager.generate_code("testuser")
-        assert_equals(len(code), mfa_manager.config.mfa_code_length)
-
-    def test_mfa_manager_verify_code_constant_time(self, mfa_manager):
-        """Test MFA code verification uses constant-time comparison."""
-        # Generate code
-        mfa_manager.generate_code("testuser")
-        
-        # Test with correct code
-        is_valid = mfa_manager.verify_code("testuser", mfa_manager.pending_mfa["testuser"].code)
-        assert_true(is_valid)
-        
-        # Test with wrong code
-        is_valid = mfa_manager.verify_code("testuser", "000000")
-        assert_false(is_valid)
-
-    def test_mfa_manager_clear_pending_nonexistent(self, mfa_manager):
-        """Test clearing pending MFA for non-existent user."""
-        # Should not raise exception
-        mfa_manager.clear_pending("nonexistent")
 
     def test_user_manager_authenticate_user_reset_failed_attempts(self, user_manager):
         """Test that successful authentication resets failed attempts."""
         # Create user
-        user_manager.create_user("testuser", "ValidPassword123!", "+1234567890", "operator")
+        user_manager.create_user("testuser", "ValidPassword123!", "operator")
         
         # Simulate failed attempts
         user = user_manager.get_user("testuser")
@@ -409,7 +325,7 @@ class TestMFAManager:
     def test_user_manager_authenticate_user_increment_failed_attempts(self, user_manager):
         """Test that failed authentication increments failed attempts."""
         # Create user
-        user_manager.create_user("testuser", "ValidPassword123!", "+1234567890", "operator")
+        user_manager.create_user("testuser", "ValidPassword123!", "operator")
         
         # Try wrong password
         auth_user = user_manager.authenticate_user("testuser", "WrongPassword123!")
@@ -422,7 +338,7 @@ class TestMFAManager:
     def test_user_manager_authenticate_user_lockout(self, user_manager):
         """Test that account gets locked after max failed attempts."""
         # Create user
-        user_manager.create_user("testuser", "ValidPassword123!", "+1234567890", "operator")
+        user_manager.create_user("testuser", "ValidPassword123!", "operator")
         
         # Try wrong password multiple times to trigger lockout
         for _ in range(user_manager.config.max_login_attempts):

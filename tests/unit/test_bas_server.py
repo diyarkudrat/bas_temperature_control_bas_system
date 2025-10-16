@@ -16,11 +16,11 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '../../server'))
 from bas_server import (
     BASController, BASDatabase, init_auth, 
     controller, database, auth_config, user_manager, 
-    session_manager, mfa_manager, sms_service, audit_logger, rate_limiter
+    session_manager, audit_logger, rate_limiter
 )
 from auth.config import AuthConfig
-from auth.managers import UserManager, SessionManager, MFAManager
-from auth.services import SMSService, AuditLogger, RateLimiter
+from auth.managers import UserManager, SessionManager
+from auth.services import AuditLogger, RateLimiter
 from tests.utils.assertions import assert_equals, assert_true, assert_false, assert_is_not_none
 
 
@@ -202,8 +202,7 @@ class TestBASServerAuthIntegration:
         with patch('bas_server.AuthConfig.from_file') as mock_from_file, \
              patch('bas_server.UserManager') as mock_user_manager, \
              patch('bas_server.SessionManager') as mock_session_manager, \
-             patch('bas_server.MFAManager') as mock_mfa_manager, \
-             patch('bas_server.SMSService') as mock_sms_service, \
+             \
              patch('bas_server.AuditLogger') as mock_audit_logger, \
              patch('bas_server.RateLimiter') as mock_rate_limiter:
             
@@ -355,7 +354,6 @@ class TestBASServerEndpoints:
             data = {
                 'username': 'testuser',
                 'password': 'testpass',
-                'phone_number': '+1234567890'
             }
             response = client.post('/auth/login',
                                  json=data,

@@ -57,14 +57,6 @@ def mock_request():
     return request
 
 
-@pytest.fixture
-def mock_twilio_client():
-    """Provide a mock Twilio client for SMS testing."""
-    client = Mock()
-    message = Mock()
-    message.sid = "test_message_sid"
-    client.messages.create.return_value = message
-    return client
 
 
 # Test markers for categorization

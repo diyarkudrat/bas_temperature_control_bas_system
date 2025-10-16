@@ -15,8 +15,8 @@ import logging
 
 # Authentication imports
 from auth import (
-    AuthConfig, UserManager, SessionManager, MFAManager,
-    SMSService, AuditLogger, RateLimiter,
+    AuthConfig, UserManager, SessionManager,
+    AuditLogger, RateLimiter,
     require_auth, add_security_headers
 )
 
@@ -213,15 +213,13 @@ database = BASDatabase()
 auth_config = None
 user_manager = None
 session_manager = None
-mfa_manager = None
-sms_service = None
 audit_logger = None
 rate_limiter = None
 
 def init_auth():
     """Initialize authentication system."""
-    global auth_config, user_manager, session_manager, mfa_manager
-    global sms_service, audit_logger, rate_limiter
+    global auth_config, user_manager, session_manager
+    global audit_logger, rate_limiter
     
     try:
         logger.info("Initializing authentication system")
@@ -235,10 +233,8 @@ def init_auth():
         # Initialize managers
         user_manager = UserManager(database.db_path, auth_config)
         session_manager = SessionManager(database.db_path, auth_config)
-        mfa_manager = MFAManager(auth_config)
         
         # Initialize services
-        sms_service = SMSService(auth_config)
         audit_logger = AuditLogger(database.db_path)
         rate_limiter = RateLimiter(auth_config)
         
@@ -259,10 +255,6 @@ def auth_login_page():
     """Login page."""
     return render_template('auth/login.html')
 
-@app.route('/auth/verify')
-def auth_verify_page():
-    """MFA verification page."""
-    return render_template('auth/verify.html')
 
 @app.route('/api/health')
 def health():
@@ -382,7 +374,7 @@ def get_config():
 # Authentication endpoints
 @app.route('/auth/login', methods=['POST'])
 def auth_login():
-    """Authenticate user with username/password and initiate MFA."""
+    """Authenticate user with username/password."""
     if not auth_config or not auth_config.auth_enabled:
         logger.warning("Authentication attempt while auth disabled")
         return jsonify({"error": "Authentication disabled"}), 503
@@ -392,9 +384,8 @@ def auth_login():
         data = request.get_json()
         username = data.get('username')
         password = data.get('password')
-        phone_number = data.get('phone_number')
         
-        if not all([username, password, phone_number]):
+        if not all([username, password]):
             logger.warning("Missing required fields in login request")
             return jsonify({"error": "Missing required fields", "code": "MISSING_FIELDS"}), 400
         
@@ -419,67 +410,10 @@ def auth_login():
             audit_logger.log_auth_failure(username, request.remote_addr, "ACCOUNT_LOCKED")
             return jsonify({"error": "Account locked", "code": "USER_LOCKED"}), 423
         
-        # Bypass SMS for now - create session directly
-        logger.info(f"Bypassing SMS MFA for {username} - creating session directly")
-        
         # Create session directly
-        session = session_manager.create_session(username, user.role, request)
-        
-        # Update user login time
-        user_manager.update_last_login(username)
-        
-        # Clear rate limiting for successful auth
-        rate_limiter.clear_attempts(request.remote_addr, username)
-        
-        # Audit log
-        audit_logger.log_auth_success(username, request.remote_addr, session.session_id)
-        
-        logger.info(f"Authentication successful for {username} (SMS bypassed)")
-        
-        # Create response with httpOnly cookie
-        response = jsonify({
-            "status": "success",
-            "expires_in": auth_config.session_timeout,
-            "user": {"username": username, "role": user.role}
-        })
-        
-        # Set httpOnly cookie for session
-        response.set_cookie(
-            'bas_session_id', 
-            session.session_id, 
-            max_age=auth_config.session_timeout,
-            httponly=True,
-            secure=True,  # Only over HTTPS in production
-            samesite='Strict'
-        )
-        
-        return response
-        
-    except Exception as e:
-        logger.error(f"Error in auth login: {e}")
-        return jsonify({"error": "Internal server error"}), 500
-
-@app.route('/auth/verify', methods=['POST'])
-def auth_verify():
-    """Verify MFA code and create authenticated session."""
-    try:
-        logger.info("MFA verification attempt")
-        data = request.get_json()
-        username = data.get('username')
-        code = data.get('code')
-        
-        if not all([username, code]):
-            logger.warning("Missing required fields in MFA verification")
-            return jsonify({"error": "Missing required fields", "code": "MISSING_FIELDS"}), 400
-        
-        # Validate MFA code
-        if not mfa_manager.verify_code(username, code):
-            logger.warning(f"MFA verification failed for {username}")
-            audit_logger.log_mfa_failure(username, request.remote_addr, "INVALID_MFA")
-            return jsonify({"error": "Invalid MFA code", "code": "MFA_FAILED"}), 401
+        logger.info(f"Creating session for {username}")
         
         # Create session
-        user = user_manager.get_user(username)
         session = session_manager.create_session(username, user.role, request)
         
         # Update user login time
@@ -489,8 +423,6 @@ def auth_verify():
         rate_limiter.clear_attempts(request.remote_addr, username)
         
         # Audit log
-        audit_logger.log_mfa_success(username, request.remote_addr)
-        audit_logger.log_session_creation(username, request.remote_addr, session.session_id)
         audit_logger.log_auth_success(username, request.remote_addr, session.session_id)
         
         logger.info(f"Authentication successful for {username}")
@@ -515,8 +447,9 @@ def auth_verify():
         return response
         
     except Exception as e:
-        logger.error(f"Error in auth verify: {e}")
+        logger.error(f"Error in auth login: {e}")
         return jsonify({"error": "Internal server error"}), 500
+
 
 @app.route('/auth/logout', methods=['POST'])
 def auth_logout():

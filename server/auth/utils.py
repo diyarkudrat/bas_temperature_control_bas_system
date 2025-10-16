@@ -67,12 +67,6 @@ def generate_session_id() -> str:
     logger.debug(f"Generated session ID: {session_id[:12]}...")
     return session_id
 
-def generate_mfa_code(length: int = 6) -> str:
-    """Generate random MFA code."""
-    code = ''.join([str(secrets.randbelow(10)) for _ in range(length)])
-    logger.debug(f"Generated MFA code: {code[:2]}****")
-    return code
-
 def validate_password_strength(password: str) -> Tuple[bool, str]:
     """Validate password against security policy."""
     logger.debug("Validating password strength")

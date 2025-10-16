@@ -14,14 +14,12 @@ class User:
     username: str
     password_hash: str
     salt: str
-    phone_number: str
     role: str = "operator"  # "operator" | "admin" | "read-only"
     created_at: float = field(default_factory=time.time)
     last_login: float = 0
     failed_attempts: int = 0
     locked_until: float = 0
     password_history: List[str] = field(default_factory=list)
-    mfa_enabled: bool = True
     
     def is_locked(self) -> bool:
         """Check if account is locked."""
@@ -37,14 +35,12 @@ class User:
             'username': self.username,
             'password_hash': self.password_hash,
             'salt': self.salt,
-            'phone_number': self.phone_number,
             'role': self.role,
             'created_at': self.created_at,
             'last_login': self.last_login,
             'failed_attempts': self.failed_attempts,
             'locked_until': self.locked_until,
             'password_history': json.dumps(self.password_history),
-            'mfa_enabled': self.mfa_enabled
         }
     
     @classmethod
@@ -86,14 +82,12 @@ class User:
             username=data['username'],
             password_hash=data['password_hash'],
             salt=data['salt'],
-            phone_number=data['phone_number'],
             role=role,
             created_at=created_at,
             last_login=last_login,
             failed_attempts=failed_attempts,
             locked_until=locked_until,
             password_history=password_history,
-            mfa_enabled=data.get('mfa_enabled', True)
         )
 
 @dataclass
@@ -108,7 +102,6 @@ class Session:
     fingerprint: str
     ip_address: str
     user_agent: str
-    mfa_verified: bool = True
     
     def is_expired(self) -> bool:
         """Check if session has expired."""
@@ -130,7 +123,6 @@ class Session:
             'fingerprint': self.fingerprint,
             'ip_address': self.ip_address,
             'user_agent': self.user_agent,
-            'mfa_verified': self.mfa_verified
         }
     
     @classmethod
@@ -166,21 +158,5 @@ class Session:
             fingerprint=data['fingerprint'],
             ip_address=data['ip_address'],
             user_agent=data['user_agent'],
-            mfa_verified=data.get('mfa_verified', True)
         )
 
-@dataclass
-class PendingMFA:
-    """Pending MFA verification model."""
-    username: str
-    code: str
-    phone_number: str
-    created_at: float
-    expires_at: float
-    
-    def is_expired(self) -> bool:
-        """Check if MFA code has expired."""
-        is_expired = time.time() > self.expires_at
-        if is_expired:
-            logger.debug(f"MFA code for user {self.username} has expired")
-        return is_expired

@@ -6,9 +6,9 @@ import threading
 import logging
 import json
 from typing import Optional, List
-from .models import User, Session, PendingMFA
-from .utils import hash_password, verify_password, generate_session_id, generate_mfa_code, create_session_fingerprint
-from .exceptions import AuthError, SessionError, MFAError
+from .models import User, Session
+from .utils import hash_password, verify_password, generate_session_id, create_session_fingerprint
+from .exceptions import AuthError, SessionError
 
 logger = logging.getLogger(__name__)
 
@@ -32,14 +32,12 @@ class UserManager:
                 username TEXT PRIMARY KEY,
                 password_hash TEXT NOT NULL,
                 salt TEXT NOT NULL,
-                phone_number TEXT NOT NULL,
                 role TEXT NOT NULL DEFAULT 'operator',
                 created_at REAL NOT NULL,
                 last_login REAL DEFAULT 0,
                 failed_attempts INTEGER DEFAULT 0,
                 locked_until REAL DEFAULT 0,
                 password_history TEXT DEFAULT '[]',
-                mfa_enabled BOOLEAN DEFAULT 1
             )
         ''')
         
@@ -47,7 +45,7 @@ class UserManager:
         conn.close()
         logger.info("User tables initialized successfully")
     
-    def create_user(self, username: str, password: str, phone_number: str, 
+    def create_user(self, username: str, password: str, 
                    role: str = "operator") -> User:
         """Create new user account."""
         logger.info(f"Creating user: {username} with role: {role}")
@@ -72,7 +70,6 @@ class UserManager:
             username=username,
             password_hash=password_hash,
             salt=salt,
-            phone_number=phone_number,
             role=role
         )
         
@@ -165,13 +162,13 @@ class UserManager:
         
         cursor.execute('''
             INSERT OR REPLACE INTO users 
-            (username, password_hash, salt, phone_number, role, created_at, 
-             last_login, failed_attempts, locked_until, password_history, mfa_enabled)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            (username, password_hash, salt, role, created_at, 
+             last_login, failed_attempts, locked_until, password_history)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
         ''', (
-            user.username, user.password_hash, user.salt, user.phone_number,
+            user.username, user.password_hash, user.salt,
             user.role, user.created_at, user.last_login, user.failed_attempts,
-            user.locked_until, json.dumps(user.password_history), user.mfa_enabled
+            user.locked_until, json.dumps(user.password_history)
         ))
         
         conn.commit()
@@ -207,7 +204,6 @@ class SessionManager:
                 fingerprint TEXT NOT NULL,
                 ip_address TEXT NOT NULL,
                 user_agent TEXT NOT NULL,
-                mfa_verified BOOLEAN DEFAULT 1,
                 FOREIGN KEY (username) REFERENCES users (username)
             )
         ''')
@@ -251,7 +247,6 @@ class SessionManager:
             fingerprint=fingerprint,
             ip_address=request.remote_addr,
             user_agent=request.headers.get('User-Agent', ''),
-            mfa_verified=True
         )
         
         # Store session
@@ -409,12 +404,12 @@ class SessionManager:
         cursor.execute('''
             INSERT OR REPLACE INTO sessions 
             (session_id, username, role, created_at, expires_at, last_access, 
-             fingerprint, ip_address, user_agent, mfa_verified)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             fingerprint, ip_address, user_agent)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
         ''', (
             session.session_id, session.username, session.role, session.created_at,
             session.expires_at, session.last_access, session.fingerprint,
-            session.ip_address, session.user_agent, session.mfa_verified
+            session.ip_address, session.user_agent
         ))
         
         conn.commit()
@@ -456,68 +451,3 @@ class SessionManager:
         cleanup_thread.start()
         logger.info("Session cleanup thread started")
 
-class MFAManager:
-    """Manages MFA codes and verification."""
-    
-    def __init__(self, config):
-        self.config = config
-        self.pending_mfa = {}  # In-memory storage
-        logger.info("Initializing MFAManager")
-    
-    def generate_code(self, username: str) -> str:
-        """Generate MFA code for user."""
-        logger.info(f"Generating MFA code for user: {username}")
-        
-        code = generate_mfa_code(self.config.mfa_code_length)
-        
-        # Store pending MFA
-        now = time.time()
-        pending = PendingMFA(
-            username=username,
-            code=code,
-            phone_number="",  # Will be set by SMS service
-            created_at=now,
-            expires_at=now + self.config.mfa_code_expiry
-        )
-        
-        self.pending_mfa[username] = pending
-        logger.info(f"MFA code generated for user {username}, expires in {self.config.mfa_code_expiry}s")
-        return code
-    
-    def verify_code(self, username: str, code: str) -> bool:
-        """Verify MFA code."""
-        logger.info(f"Verifying MFA code for user: {username}")
-        
-        if username not in self.pending_mfa:
-            logger.warning(f"No pending MFA found for user: {username}")
-            return False
-        
-        pending = self.pending_mfa[username]
-        
-        # Check expiration
-        if pending.is_expired():
-            logger.warning(f"MFA code expired for user: {username}")
-            del self.pending_mfa[username]
-            return False
-        
-        # Verify code (constant-time comparison)
-        import secrets
-        is_valid = secrets.compare_digest(pending.code, code)
-        
-        if is_valid:
-            logger.info(f"MFA code verified successfully for user: {username}")
-            del self.pending_mfa[username]
-        else:
-            logger.warning(f"MFA code verification failed for user: {username}")
-        
-        return is_valid
-    
-    def get_pending(self, username: str) -> Optional[PendingMFA]:
-        """Get pending MFA for user."""
-        logger.debug(f"Getting pending MFA for user: {username}")
-        return self.pending_mfa.get(username)
-    
-    def clear_pending(self, username: str):
-        """Clear pending MFA for user."""
-        logger.debug(f"Clearing pending MFA for user: {username}")
-        self.pending_mfa.pop(username, None)

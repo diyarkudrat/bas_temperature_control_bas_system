@@ -1,12 +1,9 @@
 {
   "auth_enabled": true,
-  "auth_mode": "user_password_mfa",
+  "auth_mode": "user_password",
   "session_timeout": 1800,
   "max_concurrent_sessions": 3,
   "session_rotation": true,
-  "mfa_code_expiry": 300,
-  "mfa_code_length": 6,
-  "sms_provider": "twilio",
   "max_login_attempts": 5,
   "lockout_duration": 900,
   "password_min_length": 12,
