@@ -15,9 +15,20 @@ logger = logging.getLogger(__name__)
 class UserManager:
     """Manages user accounts and authentication."""
     
-    def __init__(self, db_path: str, config):
+    def __init__(self, db_path: str, config, firestore_factory=None):
         self.db_path = db_path
         self.config = config
+        self.firestore_factory = firestore_factory
+        self.firestore_users = None
+        
+        # Initialize Firestore users service if available
+        if firestore_factory and firestore_factory.is_auth_enabled():
+            try:
+                self.firestore_users = firestore_factory.get_users_service()
+                logger.info("Initialized Firestore users service")
+            except Exception as e:
+                logger.warning(f"Failed to initialize Firestore users service: {e}")
+        
         logger.info(f"Initializing UserManager with database: {db_path}")
         self._init_tables()
     
@@ -82,10 +93,28 @@ class UserManager:
         """Authenticate user with username/password."""
         logger.info(f"Authenticating user: {username}")
         
-        user = self.get_user(username)
-        if not user:
-            logger.warning(f"User {username} not found")
-            return None
+        # Try Firestore first if available
+        if self.firestore_users:
+            try:
+                result = self.firestore_users.get_by_username(username)
+                if result.success and result.data:
+                    user = result.data
+                    logger.debug(f"User {username} found in Firestore")
+                else:
+                    logger.warning(f"User {username} not found in Firestore")
+                    return None
+            except Exception as e:
+                logger.warning(f"Failed to authenticate via Firestore: {e}, falling back to SQLite")
+                user = self.get_user(username)
+                if not user:
+                    logger.warning(f"User {username} not found")
+                    return None
+        else:
+            # Use SQLite
+            user = self.get_user(username)
+            if not user:
+                logger.warning(f"User {username} not found")
+                return None
         
         # Check if account is locked
         if user.is_locked():
@@ -98,7 +127,18 @@ class UserManager:
             # Reset failed attempts on successful login
             user.failed_attempts = 0
             user.locked_until = 0
-            self._store_user(user)
+            
+            # Store updated user (Firestore or SQLite)
+            if self.firestore_users:
+                try:
+                    self.firestore_users.update_user(user)
+                    logger.debug(f"User {username} updated in Firestore")
+                except Exception as e:
+                    logger.warning(f"Failed to update user in Firestore: {e}")
+                    self._store_user(user)  # Fallback to SQLite
+            else:
+                self._store_user(user)
+            
             return user
         else:
             logger.warning(f"Authentication failed for user {username}")
@@ -108,7 +148,17 @@ class UserManager:
                 user.locked_until = time.time() + self.config.lockout_duration
                 logger.warning(f"Account {username} locked due to failed attempts")
             
-            self._store_user(user)
+            # Store updated user (Firestore or SQLite)
+            if self.firestore_users:
+                try:
+                    self.firestore_users.update_user(user)
+                    logger.debug(f"User {username} updated in Firestore")
+                except Exception as e:
+                    logger.warning(f"Failed to update user in Firestore: {e}")
+                    self._store_user(user)  # Fallback to SQLite
+            else:
+                self._store_user(user)
+            
             return None
     
     def get_user(self, username: str) -> Optional[User]:
@@ -178,11 +228,22 @@ class UserManager:
 class SessionManager:
     """Manages user sessions."""
     
-    def __init__(self, db_path: str, config):
+    def __init__(self, db_path: str, config, firestore_factory=None):
         self.db_path = db_path
         self.config = config
+        self.firestore_factory = firestore_factory
+        self.firestore_sessions = None
         self.sessions = {}  # In-memory session cache
         self._cache_lock = threading.RLock()  # Thread-safe session cache
+        
+        # Initialize Firestore sessions service if available
+        if firestore_factory and firestore_factory.is_auth_enabled():
+            try:
+                self.firestore_sessions = firestore_factory.get_sessions_service()
+                logger.info("Initialized Firestore sessions service")
+            except Exception as e:
+                logger.warning(f"Failed to initialize Firestore sessions service: {e}")
+        
         logger.info(f"Initializing SessionManager with database: {db_path}")
         self._init_tables()
         self._start_cleanup_thread()
@@ -204,6 +265,8 @@ class SessionManager:
                 fingerprint TEXT NOT NULL,
                 ip_address TEXT NOT NULL,
                 user_agent TEXT NOT NULL,
+                user_id TEXT DEFAULT 'unknown',
+                tenant_id TEXT,
                 FOREIGN KEY (username) REFERENCES users (username)
             )
         ''')
@@ -237,10 +300,21 @@ class SessionManager:
         
         # Create session
         now = time.time()
+        
+        # Extract user_id and tenant_id safely (handle Mock objects in tests)
+        user_id = 'unknown'
+        tenant_id = None
+        if hasattr(request, 'user_id') and not hasattr(request.user_id, '_mock_name'):
+            user_id = request.user_id
+        if hasattr(request, 'tenant_id') and not hasattr(request.tenant_id, '_mock_name'):
+            tenant_id = request.tenant_id
+        
         session = Session(
             session_id=session_id,
             username=username,
             role=user_role,
+            user_id=user_id,
+            tenant_id=tenant_id,
             created_at=now,
             expires_at=now + self.config.session_timeout,
             last_access=now,
@@ -249,8 +323,34 @@ class SessionManager:
             user_agent=request.headers.get('User-Agent', ''),
         )
         
-        # Store session
-        self._store_session(session)
+        # Store session (Firestore or SQLite)
+        if self.firestore_sessions:
+            try:
+                # Create session in Firestore
+                result = self.firestore_sessions.create_session(
+                    user_id=session.user_id,
+                    username=username,
+                    role=user_role,
+                    expires_in_seconds=self.config.session_timeout,
+                    request_info={
+                        'ip_address': request.remote_addr,
+                        'user_agent': request.headers.get('User-Agent', ''),
+                        'tenant_id': session.tenant_id
+                    }
+                )
+                if result:
+                    logger.debug(f"Session created in Firestore for user {username}")
+                else:
+                    logger.warning(f"Failed to create session in Firestore, falling back to SQLite")
+                    self._store_session(session)
+            except Exception as e:
+                logger.warning(f"Failed to create session in Firestore: {e}, falling back to SQLite")
+                self._store_session(session)
+        else:
+            # Use SQLite
+            self._store_session(session)
+        
+        # Update cache
         with self._cache_lock:
             self.sessions[session_id] = session
         
@@ -308,8 +408,28 @@ class SessionManager:
                     return None
                 return session
         
-        # Load from database
-        logger.debug(f"Loading session from database: {session_id[:12]}...")
+        # Try Firestore first if available
+        if self.firestore_sessions:
+            try:
+                result = self.firestore_sessions.get_session(session_id)
+                if result.success and result.data:
+                    session = result.data
+                    if not session.is_expired():
+                        with self._cache_lock:
+                            self.sessions[session_id] = session
+                        logger.debug(f"Session loaded from Firestore: {session_id[:12]}...")
+                        return session
+                    else:
+                        logger.debug(f"Session expired in Firestore: {session_id[:12]}...")
+                        return None
+                else:
+                    logger.debug(f"Session not found in Firestore: {session_id[:12]}...")
+                    return None
+            except Exception as e:
+                logger.warning(f"Failed to get session from Firestore: {e}, falling back to SQLite")
+        
+        # Fallback to SQLite
+        logger.debug(f"Loading session from SQLite database: {session_id[:12]}...")
         conn = sqlite3.connect(self.db_path)
         cursor = conn.cursor()
         
@@ -325,10 +445,10 @@ class SessionManager:
             if not session.is_expired():
                 with self._cache_lock:
                     self.sessions[session_id] = session
-                logger.debug(f"Session loaded from database: {session_id[:12]}...")
+                logger.debug(f"Session loaded from SQLite: {session_id[:12]}...")
                 return session
         
-        logger.debug(f"Session not found in database: {session_id[:12]}...")
+        logger.debug(f"Session not found: {session_id[:12]}...")
         return None
     
     def invalidate_session(self, session_id: str):
@@ -339,7 +459,18 @@ class SessionManager:
         with self._cache_lock:
             self.sessions.pop(session_id, None)
         
-        # Remove from database
+        # Remove from Firestore if available
+        if self.firestore_sessions:
+            try:
+                result = self.firestore_sessions.delete_session(session_id)
+                if result.success:
+                    logger.debug(f"Session invalidated in Firestore: {session_id[:12]}...")
+                else:
+                    logger.warning(f"Failed to invalidate session in Firestore: {result.error}")
+            except Exception as e:
+                logger.warning(f"Failed to invalidate session in Firestore: {e}")
+        
+        # Remove from SQLite (always do this as fallback)
         conn = sqlite3.connect(self.db_path)
         cursor = conn.cursor()
         
@@ -404,12 +535,12 @@ class SessionManager:
         cursor.execute('''
             INSERT OR REPLACE INTO sessions 
             (session_id, username, role, created_at, expires_at, last_access, 
-             fingerprint, ip_address, user_agent)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+             fingerprint, ip_address, user_agent, user_id, tenant_id)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ''', (
             session.session_id, session.username, session.role, session.created_at,
             session.expires_at, session.last_access, session.fingerprint,
-            session.ip_address, session.user_agent
+            session.ip_address, session.user_agent, session.user_id, session.tenant_id
         ))
         
         conn.commit()

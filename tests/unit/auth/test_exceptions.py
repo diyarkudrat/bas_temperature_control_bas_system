@@ -4,7 +4,7 @@ Unit tests for authentication exceptions using pytest.
 
 import pytest
 
-from auth.exceptions import AuthError, SessionError, UserError, ConfigurationError
+from auth.exceptions import AuthError, SessionError, UserError, ConfigurationError, PermissionError
 from tests.utils.assertions import assert_equals, assert_is_instance
 
 
@@ -36,4 +36,10 @@ class TestAuthExceptions:
         """Test ConfigurationError exception."""
         error = ConfigurationError("Config error")
         assert_equals(str(error), "Config error")
+        assert_is_instance(error, AuthError)
+
+    def test_permission_error(self):
+        """Test PermissionError exception."""
+        error = PermissionError("Permission denied")
+        assert_equals(str(error), "Permission denied")
         assert_is_instance(error, AuthError)

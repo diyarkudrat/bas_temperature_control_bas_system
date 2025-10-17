@@ -14,8 +14,19 @@ logger = logging.getLogger(__name__)
 class AuditLogger:
     """Audit logging for authentication events."""
     
-    def __init__(self, db_path: str):
+    def __init__(self, db_path: str, firestore_factory=None):
         self.db_path = db_path
+        self.firestore_factory = firestore_factory
+        self.firestore_audit = None
+        
+        # Initialize Firestore audit if available
+        if firestore_factory and firestore_factory.is_audit_enabled():
+            try:
+                self.firestore_audit = firestore_factory.get_audit_service()
+                logger.info("Initialized Firestore audit logger")
+            except Exception as e:
+                logger.warning(f"Failed to initialize Firestore audit: {e}")
+        
         logger.info(f"Initializing audit logger with database: {db_path}")
         self._init_tables()
     
@@ -56,6 +67,21 @@ class AuditLogger:
     def log_auth_success(self, username: str, ip_address: str, session_id: str):
         """Log successful authentication."""
         logger.info(f"Logging auth success for user: {username}")
+        
+        # Try Firestore first if available
+        if self.firestore_audit:
+            try:
+                self.firestore_audit.log_event(
+                    event_type="LOGIN_SUCCESS",
+                    username=username,
+                    ip_address=ip_address,
+                    details={"session_id": session_id, "endpoint": "auth/login"}
+                )
+                return
+            except Exception as e:
+                logger.warning(f"Failed to log to Firestore: {e}")
+        
+        # Fallback to SQLite
         self._log_event(
             username=username,
             ip_address=ip_address,
@@ -68,6 +94,21 @@ class AuditLogger:
     def log_auth_failure(self, username: str, ip_address: str, reason: str):
         """Log failed authentication."""
         logger.warning(f"Logging auth failure for user: {username}, reason: {reason}")
+        
+        # Try Firestore first if available
+        if self.firestore_audit:
+            try:
+                self.firestore_audit.log_event(
+                    event_type="LOGIN_FAILURE",
+                    username=username,
+                    ip_address=ip_address,
+                    details={"reason": reason, "endpoint": "auth/login"}
+                )
+                return
+            except Exception as e:
+                logger.warning(f"Failed to log to Firestore: {e}")
+        
+        # Fallback to SQLite
         self._log_event(
             username=username,
             ip_address=ip_address,
@@ -133,6 +174,68 @@ class AuditLogger:
         conn.commit()
         conn.close()
         logger.debug("Audit event logged successfully")
+    
+    def log_permission_denied(self, username: str, user_id: str, ip_address: str, endpoint: str, reason: str):
+        """Log permission denied event."""
+        logger.warning(f"Logging permission denied for user: {username}, reason: {reason}")
+        
+        # Try Firestore first if available
+        if self.firestore_audit:
+            try:
+                self.firestore_audit.log_event(
+                    event_type="PERMISSION_DENIED",
+                    user_id=user_id,
+                    username=username,
+                    ip_address=ip_address,
+                    details={"endpoint": endpoint, "reason": reason}
+                )
+                return
+            except Exception as e:
+                logger.warning(f"Failed to log to Firestore: {e}")
+        
+        # Fallback to SQLite
+        self._log_event(
+            username=username,
+            ip_address=ip_address,
+            action="PERMISSION_DENIED",
+            endpoint=endpoint,
+            success=False,
+            details={"reason": reason}
+        )
+    
+    def log_tenant_violation(self, user_id: str, username: str, ip_address: str, attempted_tenant: str, allowed_tenant: str):
+        """Log tenant access violation."""
+        logger.warning(f"Logging tenant violation for user: {username}")
+        
+        # Try Firestore first if available
+        if self.firestore_audit:
+            try:
+                self.firestore_audit.log_event(
+                    event_type="TENANT_VIOLATION",
+                    user_id=user_id,
+                    username=username,
+                    ip_address=ip_address,
+                    details={
+                        "attempted_tenant": attempted_tenant,
+                        "allowed_tenant": allowed_tenant
+                    }
+                )
+                return
+            except Exception as e:
+                logger.warning(f"Failed to log to Firestore: {e}")
+        
+        # Fallback to SQLite
+        self._log_event(
+            username=username,
+            ip_address=ip_address,
+            action="TENANT_VIOLATION",
+            endpoint="tenant_access",
+            success=False,
+            details={
+                "attempted_tenant": attempted_tenant,
+                "allowed_tenant": allowed_tenant
+            }
+        )
 
 class RateLimiter:
     """Rate limiting for authentication attempts."""
