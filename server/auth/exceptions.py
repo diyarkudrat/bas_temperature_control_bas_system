@@ -16,3 +16,7 @@ class UserError(AuthError):
 class ConfigurationError(AuthError):
     """Configuration-related error."""
     pass
+
+class PermissionError(AuthError):
+    """Permission-related error."""
+    pass

@@ -102,6 +102,8 @@ class Session:
     fingerprint: str
     ip_address: str
     user_agent: str
+    user_id: str = "unknown"  # For Firestore compatibility
+    tenant_id: Optional[str] = None  # For multi-tenant support
     
     def is_expired(self) -> bool:
         """Check if session has expired."""
@@ -123,6 +125,8 @@ class Session:
             'fingerprint': self.fingerprint,
             'ip_address': self.ip_address,
             'user_agent': self.user_agent,
+            'user_id': self.user_id,
+            'tenant_id': self.tenant_id,
         }
     
     @classmethod
@@ -158,5 +162,7 @@ class Session:
             fingerprint=data['fingerprint'],
             ip_address=data['ip_address'],
             user_agent=data['user_agent'],
+            user_id=data.get('user_id', 'unknown'),
+            tenant_id=data.get('tenant_id'),
         )
 

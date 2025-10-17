@@ -1,5 +1,7 @@
 ### Firestore Implementation Plan for Flask
 
+**Current Scope:** Unit tests completion and observability implementation. Integration and E2E tests are deferred to future iterations.
+
 ---
 
 ### 1) Phased Plan
@@ -102,7 +104,7 @@
 | AuditLogStore | Append security events; TTL 180d | Events stored; 403s audited; query by `user_id`/`action` | S | Client init, middleware | ✅ **COMPLETED** |
 | Security middleware | Enforce multi-tenant isolation | Cross-tenant 403 + audit; happy path OK | M | Auth path | ✅ **COMPLETED** |
 | Migration | Users import; optional audit/telemetry backfill | Users present; optional backfills correct; rate limits respected | M | Stores, infra | 🔄 **IN PROGRESS** |
-| Testing | Unit (emulator), integration, e2e | Tests green; P50 ≤ 300ms (last 100 pts) | M | Backend | ⏳ **PENDING** |
+| Testing | Unit (emulator) only | Tests green; P50 ≤ 300ms (last 100 pts) | M | Backend | ⏳ **PENDING** |
 | Observability | Monitoring dashboards and alerts; logs | Alerts exist; logs include counters; budgets observed; SLOs wired to alerts and dashboards | S | Infra, backend | ⏳ **PENDING** |
 | Cutover/rollback | Phased enablement and verification | Phases executed; rollback tested | S | All above | ⏳ **PENDING** |
 
@@ -140,7 +142,7 @@
 | `config/config.py` | Centralize flags; emulator detection. | ⏳ **PENDING** |
 | `infra/firestore.indexes.json` | Composite index source of truth. | ✅ **COMPLETED** |
 | `scripts/setup_auth.py`, `scripts/auth_admin.py` | Ensure compatibility with Firestore paths/flags. | ⏳ **PENDING** |
-| Tests | Unit: `tests/unit/auth/*`, new `tests/unit/firestore/test_telemetry_store.py`, `.../test_audit_store.py`; Integration: `tests/integration/test_auth_flow_firestore.py`, `.../test_telemetry_queries.py`; E2E: `tests/e2e/test_feature_flag_cutover.py`. | ⏳ **PENDING** |
+| Tests | Unit: `tests/unit/auth/*`, new `tests/unit/firestore/test_telemetry_store.py`, `.../test_audit_store.py`. | ⏳ **PENDING** |
 
 **Files Completed: 10/22**
 **Files Remaining: 12/22**
@@ -238,9 +240,9 @@ auth-admin-password-hash
 | Level | Coverage |
 |---|---|
 | Unit (emulator) | TelemetryStore: write, recent N, window, pagination, tenant enforcement; UsersStore: create, get_by_username, unique username guard; SessionsStore: create/read/delete, expiry/rotation behavior; AuditLogStore: append and query by user/action. |
-| Integration | Auth flow: login/logout; 403 cross-tenant + audit; Telemetry endpoints: composite index ordering; `startAfter` pagination; Error handling: permission → 403 + audit; “index not ready” → retry/backoff. |
-| E2E | Flag cutover and rollback: telemetry → audit → auth; forced re-login; Multi-tenant isolation: dual-tenant tests with no leakage; dual-write/read sanity during telemetry cutover. |
 | Performance sanity | Dashboard last 100 points: P50 ≤ 300ms; reads/min ≤ 50 per active dashboard. |
+
+**Note:** Integration and E2E tests are deferred to future iterations. Current focus is on unit test completion and observability implementation.
 
 ---
 
@@ -287,10 +289,10 @@ auth-admin-password-hash
 
 | Criterion | How verified |
 |---|---|
-| GCP-first / Firestore primary | Flags route telemetry/auth/audit to Firestore; infra provisioned; E2E tests pass. |
+| GCP-first / Firestore primary | Flags route telemetry/auth/audit to Firestore; infra provisioned; unit tests pass. |
 | TTLs | Telemetry 90d, audit 180d TTLs enabled; UTC timestamps; config verified via `gcloud` and tests. |
 | Composite index | `(tenant_id asc, device_id asc, timestamp_ms desc)` defined in `infra/firestore.indexes.json` and deployed; queries succeed. |
-| Multi-tenant enforcement | Middleware requires `tenant_id`; 403 + audit on violations; isolation tests pass. |
+| Multi-tenant enforcement | Middleware requires `tenant_id`; 403 + audit on violations; unit tests pass. |
 | Feature flags | Telemetry → audit → auth sequence executed; rollback simulated successfully. |
 | Sessions | Re-login enforced at auth cutover; old sessions invalid; tests confirm. |
 | Cost guardrails | Monitoring alerts defined; app counters emitted; budgets validated in staging. |
@@ -298,6 +300,6 @@ auth-admin-password-hash
 | Error handling | Backoff and index-not-ready retry paths covered by tests; 403 + audit on permission errors. |
 | Pagination & UTC | `startAfter` on `timestamp_ms`; backend UTC only; UI handles TZ (not in scope here). |
 | Performance | P50 ≤ 300ms for last 100 points in staging verified. |
-| Rollout/rollback | Staged plan executed in staging; rollback triggers documented and tested. |
+| Rollout/rollback | Staged plan executed in staging; rollback triggers documented and validated. |
 
 

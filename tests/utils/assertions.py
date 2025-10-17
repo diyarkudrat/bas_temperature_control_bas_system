@@ -93,6 +93,7 @@ def assert_raises(expected_exception: type, message: str = ""):
             self.exception_type = exception_type
             self.message = msg
             self.exception = None
+            self.value = None  # Add value property for compatibility
             
         def __enter__(self):
             return self
@@ -111,6 +112,7 @@ def assert_raises(expected_exception: type, message: str = ""):
                 raise AssertionError(error_msg)
             
             self.exception = exc_val
+            self.value = exc_val  # Set value property for compatibility
             return True  # Suppress the exception
     
     return ExceptionAssertion(expected_exception, message)

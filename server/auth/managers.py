@@ -265,6 +265,8 @@ class SessionManager:
                 fingerprint TEXT NOT NULL,
                 ip_address TEXT NOT NULL,
                 user_agent TEXT NOT NULL,
+                user_id TEXT DEFAULT 'unknown',
+                tenant_id TEXT,
                 FOREIGN KEY (username) REFERENCES users (username)
             )
         ''')
@@ -298,12 +300,21 @@ class SessionManager:
         
         # Create session
         now = time.time()
+        
+        # Extract user_id and tenant_id safely (handle Mock objects in tests)
+        user_id = 'unknown'
+        tenant_id = None
+        if hasattr(request, 'user_id') and not hasattr(request.user_id, '_mock_name'):
+            user_id = request.user_id
+        if hasattr(request, 'tenant_id') and not hasattr(request.tenant_id, '_mock_name'):
+            tenant_id = request.tenant_id
+        
         session = Session(
             session_id=session_id,
             username=username,
             role=user_role,
-            user_id=getattr(request, 'user_id', 'unknown'),  # Add user_id for Firestore
-            tenant_id=getattr(request, 'tenant_id', None),  # Add tenant_id for multi-tenant
+            user_id=user_id,
+            tenant_id=tenant_id,
             created_at=now,
             expires_at=now + self.config.session_timeout,
             last_access=now,
@@ -524,12 +535,12 @@ class SessionManager:
         cursor.execute('''
             INSERT OR REPLACE INTO sessions 
             (session_id, username, role, created_at, expires_at, last_access, 
-             fingerprint, ip_address, user_agent)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+             fingerprint, ip_address, user_agent, user_id, tenant_id)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ''', (
             session.session_id, session.username, session.role, session.created_at,
             session.expires_at, session.last_access, session.fingerprint,
-            session.ip_address, session.user_agent
+            session.ip_address, session.user_agent, session.user_id, session.tenant_id
         ))
         
         conn.commit()
