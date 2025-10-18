@@ -379,5 +379,3 @@ Data export/analytics (future)
 - Dashboard P50 latency ≤ 300ms for last 100 points query; error rate < 2%.
 - Projected Firestore spend ≤ $20/month at test traffic; guardrail alerts configured.
 - Feature-flag cutover executed with validated rollback.
-
-

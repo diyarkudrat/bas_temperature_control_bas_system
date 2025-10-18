@@ -28,5 +28,3 @@ python3 -m pytest tests/ -m "not no_contract_validation" -v
 - Apply domain markers at class level
 - Apply `contract` when behavior/data must match protocols
 - Use `no_contract_validation` to bypass runtime checks when needed
-
-

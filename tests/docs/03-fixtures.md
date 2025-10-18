@@ -54,5 +54,3 @@ def user_manager(auth_config):
 - Prefer domain-specific fixtures per directory
 - Avoid hidden global state; return explicit objects
 - Use parametrization when exploring variants
-
-
