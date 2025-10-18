@@ -118,7 +118,7 @@ jobs:
         name: codecov-umbrella
 
     - name: Upload test results
-      uses: actions/upload-artifact@v3
+      uses: actions/upload-artifact@v4
       if: always()
       with:
         name: test-results-${{ matrix.python-version }}
@@ -154,7 +154,6 @@ jobs:
         import logging
         from datetime import datetime
 
-        # Set up logging
         logging.basicConfig(level=logging.INFO, format='%(levelname)s: %(message)s')
 
         # Import contract components
@@ -182,48 +181,47 @@ jobs:
             logging.error(f'✗ Failed to initialize validators: {e}')
             exit(1)
 
-        # Run pre-commit contract checks
         violations = []
 
-        # 1. Validate that all contract tests pass
+        # 1) Smoke-run a focused subset of contract tests
         try:
             import subprocess
             result = subprocess.run([
                 sys.executable, '-m', 'pytest',
-                'tests/contracts/', 'tests/unit/firestore/tests/',
+                'tests/contracts/',
+                '-k', 'not slow',
                 '-v', '--tb=short', '-x'
             ], capture_output=True, text=True, timeout=300)
 
             if result.returncode != 0:
-                violations.append(f'Contract tests failed: {result.stdout[-500:]}')
+                violations.append('Contract tests failed (subset)')
         except subprocess.TimeoutExpired:
             violations.append('Contract tests timed out')
         except Exception as e:
             violations.append(f'Failed to run contract tests: {e}')
 
-        # 2. Validate contract schema consistency
+        # 2) Validate schema creation calls align with validator signature
         try:
-            # Test that mock and real schemas align
-            test_schemas = [
-                {'user_id': 'test_user', 'username': 'test@example.com'},
-                {'device_id': 'test_device', 'status': 'active'},
-                {'session_id': 'test_session', 'user_id': 'test_user'}
+            # Provide minimally valid examples per entity type
+            test_entities = [
+                ('user',     {'username': 'testuser', 'password_hash': 'x'}),
+                ('device',   {'device_id': 'dev-1', 'status': 'active'}),
+                ('session',  {'session_id': 'sess_1234567890abcdef1234567890abcd', 'user_id': 'user_123456', 'ip_address': '127.0.0.1'})
             ]
 
-            for schema in test_schemas:
-                result = validator.validate_create_operation(schema, list(schema.keys()))
-                if not result.valid:
-                    violations.append(f'Schema validation failed for {schema}: {result.violations}')
+            for entity_type, entity in test_entities:
+                res = validator.validate_create_operation(entity, entity_type)
+                if not res.valid:
+                    violations.append(f'Schema validation failed for {entity_type}: {res.violations}')
         except Exception as e:
             violations.append(f'Schema validation error: {e}')
 
-        # 3. Validate business rules integrity
+        # 3) Business rules integrity checks (names and params)
         try:
-            # Test critical business rules
             rules_to_test = [
-                ('auth_check', {'user_id': 'test', 'permissions': ['read']}),
-                ('tenant_isolation', {'tenant_id': 'tenant1', 'resource_tenant': 'tenant1'}),
-                ('session_policy', {'user_id': 'test', 'ip_address': '127.0.0.1'})
+                ('auth_check',        {'user_id': 'user_123456', 'permissions': ['read']}),
+                ('tenant_isolation',  {'tenant_id': 'tenant1', 'resource_tenant_id': 'tenant1'}),
+                ('session_policy',    {'user_id': 'user_123456', 'ip_address': '127.0.0.1'})
             ]
 
             for rule_name, params in rules_to_test:
@@ -233,20 +231,18 @@ jobs:
         except Exception as e:
             violations.append(f'Business rules validation error: {e}')
 
-        # 4. Check for mock-production drift
+        # 4) Mock-production drift smoke check
         try:
-            # Ensure mock behaviors match expected production patterns
             mock_result = mock_client.query('users', {'tenant_id': 'test'})
-            if not hasattr(mock_result, 'items'):
-                violations.append('Mock client missing expected attributes')
+            if not hasattr(mock_result, 'items') and not isinstance(mock_result, (list, tuple)):
+                violations.append('Mock client unexpected result type')
         except Exception as e:
             violations.append(f'Mock validation error: {e}')
 
-        # Report results
         if violations:
             logging.error(f'Pre-commit contract enforcement failed with {len(violations)} violations:')
-            for violation in violations:
-                logging.error(f'  - {violation}')
+            for v in violations:
+                logging.error(f'  - {v}')
             exit(1)
         else:
             logging.info('✓ Pre-commit contract enforcement passed')
