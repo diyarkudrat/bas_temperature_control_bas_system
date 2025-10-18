@@ -8,12 +8,12 @@ This checklist tracks the phased migration from legacy mocks to contract-based t
 
 ## Migration Phases
 
-### Phase 1: Foundation (Current - Completed ✅)
+### Phase 1: Foundation (Current - Completed ✅ except CI)
 - [x] Create contract protocol base classes (`tests/contracts/base.py`)
 - [x] Implement runtime validators (`tests/contracts/firestore.py`)
 - [x] Add centralized business rules (`tests/utils/business_rules.py`)
 - [x] Integrate pytest hooks for contract validation (`tests/conftest.py`)
-- [x] Set up CI/CD contract validation (`.github/workflows/ci.yml`)
+- [ ] Set up CI/CD contract validation (`.github/workflows/ci.yml`) — Deferred (future enhancement)
 
 ### Phase 2: Core Migration (Completed ✅)
 
@@ -86,7 +86,7 @@ This checklist tracks the phased migration from legacy mocks to contract-based t
 ### Performance Requirements
 - [ ] Test suite runtime increased by <15%
 - [ ] Memory usage within 20KB per test session
-- [ ] No performance regressions in CI/CD pipeline
+- [ ] No performance regressions in CI/CD pipeline (future)
 - [ ] Contract validation overhead <5% of total test time
 
 ### Quality Requirements
@@ -106,7 +106,7 @@ This checklist tracks the phased migration from legacy mocks to contract-based t
 - Contract validation failure rates
 - Test suite performance metrics
 - Code coverage changes
-- CI/CD pipeline stability
+- CI/CD pipeline stability (future)
 
 ## Rollback Plan
 
@@ -119,7 +119,7 @@ If critical issues arise during migration:
 
 ## Progress Tracking
 
-- **Phase 1**: 5/5 items completed (100%)
+- **Phase 1**: 4/5 items completed (80%)
 - **Phase 2**: 16/16 items completed (100%)
   - Audit Store Migration: 4/4 completed ✅
   - Contract Mocks Implementation: 4/4 completed ✅
@@ -131,7 +131,7 @@ If critical issues arise during migration:
   - Runtime Contract Enforcement: 4/4 completed ✅
   - Legacy Cleanup: 3/4 completed (75%)
 
-**Overall Progress**: 39/41 items completed (95%)
+**Overall Progress**: 38/41 items completed (92%)
 
 ## Next Steps
 

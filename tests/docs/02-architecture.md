@@ -18,9 +18,9 @@
   - Decision: Tests depend on interfaces, not concrete implementations.
   - Trade-off: Requires protocol upkeep; enables easier refactoring and mock replacement.
 
-- CI enforcement
-  - Decision: Fail CI on contract/business rule violations.
-  - Trade-off: Stricter gatekeeping improves quality; initial iterations may be slower.
+- Future CI enforcement (deferred)
+  - Decision: Plan to fail CI on contract/business rule violations.
+  - Trade-off: Improved gatekeeping when enabled; currently deferred.
 
 ## Design Decisions Summary
 
@@ -30,4 +30,4 @@
 | T2 | Centralized business rules | Single source of truth; consistency | Requires discipline to avoid duplication |
 | T3 | Optional runtime enforcement | Catch violations early | Overhead when enabled |
 | T4 | Protocol-oriented dependencies | Easier refactors; mock interchangeability | Protocol upkeep required |
-| T5 | CI fails on violations | Prevent regressions | Slower early iterations |
+| T5 | CI fails on violations (future) | Prevent regressions | Deferred initially |

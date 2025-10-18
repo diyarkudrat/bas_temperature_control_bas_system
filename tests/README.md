@@ -11,7 +11,7 @@ Welcome to the documentation for the BAS System testing framework. These docs mi
 - [05 — Plugins](./05-plugins.md)
 - [06 — Business Rules](./06-business-rules.md)
 - [07 — Contract Testing](./07-contract-testing.md)
-- [08 — Running & CI](./08-running-and-ci.md)
+- [08 — Running & Coverage](./08-running-and-coverage.md)
 - [09 — Troubleshooting](./09-troubleshooting.md)
 - [Framework Guide (Deep Dive)](./framework-guide.md)
 - [10 — Style & Conventions](./10-style-and-conventions.md)
