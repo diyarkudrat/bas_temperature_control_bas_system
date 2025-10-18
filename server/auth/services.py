@@ -39,13 +39,13 @@ class AuditLogger:
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS audit_log (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
-                timestamp REAL NOT NULL,
+                timestamp TEXT NOT NULL,
                 username TEXT,
                 ip_address TEXT,
                 action TEXT NOT NULL,
-                endpoint TEXT,
+                details TEXT DEFAULT '{}',
                 success BOOLEAN NOT NULL,
-                details TEXT DEFAULT '{}'
+                session_id TEXT
             )
         ''')
         
@@ -75,7 +75,7 @@ class AuditLogger:
                     event_type="LOGIN_SUCCESS",
                     username=username,
                     ip_address=ip_address,
-                    details={"session_id": session_id, "endpoint": "auth/login"}
+                    details={"session_id": session_id, "ip_address": ip_address, "endpoint": "auth/login"}
                 )
                 return
             except Exception as e:
@@ -86,9 +86,9 @@ class AuditLogger:
             username=username,
             ip_address=ip_address,
             action="LOGIN_SUCCESS",
-            endpoint="auth/login",
+            session_id=session_id,
             success=True,
-            details={"session_id": session_id}
+            details={"session_id": session_id, "ip_address": ip_address, "endpoint": "auth/login"}
         )
     
     def log_auth_failure(self, username: str, ip_address: str, reason: str):
@@ -102,7 +102,7 @@ class AuditLogger:
                     event_type="LOGIN_FAILURE",
                     username=username,
                     ip_address=ip_address,
-                    details={"reason": reason, "endpoint": "auth/login"}
+                    details={"failure_reason": reason, "attempted_at": __import__('datetime').datetime.utcnow().isoformat() + 'Z', "endpoint": "auth/login"}
                 )
                 return
             except Exception as e:
@@ -113,9 +113,8 @@ class AuditLogger:
             username=username,
             ip_address=ip_address,
             action="LOGIN_FAILURE",
-            endpoint="auth/login",
             success=False,
-            details={"reason": reason}
+            details={"failure_reason": reason, "attempted_at": __import__('datetime').datetime.utcnow().isoformat() + 'Z', "endpoint": "auth/login"}
         )
     
     def log_session_access(self, session_id: str, endpoint: str):
@@ -124,8 +123,8 @@ class AuditLogger:
         self._log_event(
             session_id=session_id,
             action="SESSION_ACCESS",
-            endpoint=endpoint,
-            success=True
+            success=True,
+            details={"session_id": session_id, "endpoint": endpoint}
         )
         
     def log_session_creation(self, username: str, ip_address: str, session_id: str):
@@ -135,7 +134,7 @@ class AuditLogger:
             username=username,
             ip_address=ip_address,
             action="SESSION_CREATED",
-            endpoint="auth/verify",
+            session_id=session_id,
             success=True,
             details={"session_id": session_id}
         )
@@ -147,7 +146,6 @@ class AuditLogger:
             username=username,
             session_id=session_id,
             action="SESSION_DESTROYED",
-            endpoint="auth/logout",
             success=True
         )
     
@@ -158,17 +156,21 @@ class AuditLogger:
         conn = sqlite3.connect(self.db_path)
         cursor = conn.cursor()
         
+        from datetime import datetime
+        # Store ISO-8601 UTC timestamp string to satisfy tests expecting ISO format
+        now_iso = datetime.utcfromtimestamp(time.time()).isoformat() + 'Z'
+
         cursor.execute('''
-            INSERT INTO audit_log (timestamp, username, ip_address, action, endpoint, success, details)
+            INSERT INTO audit_log (timestamp, username, ip_address, action, details, success, session_id)
             VALUES (?, ?, ?, ?, ?, ?, ?)
         ''', (
-            time.time(),
+            now_iso,
             kwargs.get('username'),
             kwargs.get('ip_address'),
             kwargs['action'],
-            kwargs.get('endpoint'),
+            json.dumps(kwargs.get('details', {})),
             kwargs['success'],
-            json.dumps(kwargs.get('details', {}))
+            kwargs.get('session_id')
         ))
         
         conn.commit()
@@ -240,11 +242,16 @@ class AuditLogger:
 class RateLimiter:
     """Rate limiting for authentication attempts."""
     
-    def __init__(self, config):
+    def __init__(self, config, state_path: str | None = None):
         self.config = config
         self.attempts = {}  # {ip: {user: [timestamps]}}
         self.lockouts = {}  # {ip: lockout_until}
+        # Only persist if explicitly configured via argument or env var
+        import os
+        env_path = os.getenv('BAS_RATE_LIMIT_STATE_PATH')
+        self._state_path = state_path or env_path or None
         logger.info("Initializing rate limiter")
+        self._load_state()
     
     def is_allowed(self, ip: str, username: str = None) -> tuple[bool, str]:
         """Check if request is allowed."""
@@ -289,6 +296,7 @@ class RateLimiter:
         
         self.attempts[ip][username].append(now)
         logger.debug(f"Attempt recorded for IP: {ip}, user: {username}")
+        self._save_state()
     
     def clear_attempts(self, ip: str, username: str = None):
         """Clear attempt history for successful authentication."""
@@ -303,6 +311,7 @@ class RateLimiter:
             if not self.attempts[ip]:
                 del self.attempts[ip]
                 logger.debug(f"Cleared all attempts for IP {ip}")
+        self._save_state()
     
     def get_attempt_count(self, ip: str, username: str = None) -> int:
         """Get current attempt count for IP/user."""
@@ -313,3 +322,35 @@ class RateLimiter:
             return len(self.attempts[ip][username])
         
         return 0
+
+    def _load_state(self):
+        """Load attempts/lockouts from JSON if persistence enabled; ignore errors."""
+        if not self._state_path:
+            return
+        try:
+            with open(self._state_path, 'r') as f:
+                data = json.load(f)
+            self.attempts = data.get('attempts', {})
+            self.lockouts = data.get('lockouts', {})
+            logger.info("Rate limiter state loaded", extra={"path": self._state_path})
+        except Exception as e:
+            logger.debug(f"Rate limiter state not loaded: {e}")
+
+    def _save_state(self):
+        """Atomically persist attempts/lockouts to JSON if enabled; ignore errors."""
+        if not self._state_path:
+            return
+        try:
+            tmp_path = f"{self._state_path}.tmp"
+            data = {
+                'attempts': self.attempts,
+                'lockouts': self.lockouts,
+                'saved_at': time.time()
+            }
+            with open(tmp_path, 'w') as f:
+                json.dump(data, f)
+            # Atomic replace
+            import os
+            os.replace(tmp_path, self._state_path)
+        except Exception as e:
+            logger.debug(f"Rate limiter state not saved: {e}")

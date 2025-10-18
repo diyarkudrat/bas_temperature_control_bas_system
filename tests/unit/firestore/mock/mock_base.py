@@ -22,6 +22,9 @@ class MockQueryOptions:
     order_by: Optional[str] = None
     order_direction: str = "DESCENDING"
     filters: Optional[Dict[str, Any]] = None
+    # Cursor pagination parity with contracts
+    start_after: Optional[str] = None
+    start_at: Optional[str] = None
 
 
 @dataclass

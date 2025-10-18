@@ -345,6 +345,14 @@ cd server && source venv/bin/activate && python3 bas_server.py
 curl http://localhost:8080/api/health
 ```
 
+### Testing Framework Docs
+
+For details on writing and running tests, see:
+
+- `tests/docs/README.md` — Index for the testing framework documentation
+- `tests/docs/01-overview.md` — Overview and goals
+- `tests/docs/08-running-and-coverage.md` — Running unit tests and coverage locally; CI is a future enhancement
+
 ## 🎯 Use Cases
 
 ### Home Automation

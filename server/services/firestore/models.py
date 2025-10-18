@@ -9,9 +9,9 @@ import uuid
 @dataclass
 class BaseEntity:
     """Base entity with common fields."""
-    id: Optional[str] = None
-    created_at: Optional[int] = None
-    updated_at: Optional[int] = None
+    id: Optional[str] = field(default=None, kw_only=True)
+    created_at: Optional[int] = field(default=None, kw_only=True)
+    updated_at: Optional[int] = field(default=None, kw_only=True)
     
     def to_dict(self) -> Dict[str, Any]:
         """Convert entity to dictionary."""
@@ -232,14 +232,14 @@ def validate_username(username: str) -> bool:
     """Validate username format."""
     if not username or not isinstance(username, str):
         return False
-    # Username should be alphanumeric with underscores/hyphens
+    # Username should be alphanumeric with underscores/hyphens/dots, allowing unicode
     import re
-    return re.match(r'^[a-zA-Z0-9_-]+$', username) is not None and len(username) >= 3 and len(username) <= 50
+    return re.match(r'^[\w_.-]+$', username, re.UNICODE) is not None and len(username) >= 3 and len(username) <= 50
 
 
 def validate_role(role: str) -> bool:
     """Validate user role."""
-    valid_roles = {"admin", "operator", "read-only", "viewer"}
+    valid_roles = {"admin", "operator", "read-only", "viewer", "guest", "super_admin", "system_admin", "read_only"}
     return role.lower() in valid_roles
 
 

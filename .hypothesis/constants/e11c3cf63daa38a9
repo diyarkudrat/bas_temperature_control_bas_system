@@ -1,0 +1,4 @@
+# file: /Users/diyarkudrat/BAS System Project/server/auth/middleware.py
+# hypothesis_version: 6.142.1
+
+[400, 401, 403, 500, '1; mode=block', 'AUTH_ERROR', 'AUTH_FAILURE', 'AUTH_SYSTEM_ERROR', 'Authentication error', 'CONFIG_ERROR', 'DENY', 'INTERNAL_ERROR', 'INVALID_SESSION_ID', 'Invalid session ID', 'MISSING_TENANT_ID', 'NO_SESSION_TENANT', 'PERMISSION_DENIED', 'Permissions-Policy', 'Please login again', 'Referrer-Policy', 'SESSION_INVALID', 'TENANT_ACCESS_DENIED', 'TENANT_VIOLATION', 'Tenant ID required', 'User-Agent', 'X-BAS-Tenant', 'X-Frame-Options', 'X-Session-ID', 'X-XSS-Protection', 'admin', 'allowed_tenant', 'attempted_tenant', 'audit_logger', 'auth_config', 'bas_session_id', 'code', "default-src 'self'", 'endpoint', 'error', 'firestore_audit', 'message', 'nosniff', 'operator', 'read-only', 'reason', 'session', 'session_manager', 'shadow', 'tenant_id', 'tenant_id_header']

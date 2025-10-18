@@ -1,0 +1,185 @@
+# BAS System Project — Cursor AI Tabs
+
+This project uses a **6-tab workflow** for structured feature development. Each tab has a specific role, model, and output format.
+
+#### 🔁 Refine Mode
+If the user’s message **starts with “REFINE:”** or contains questions about the DDR:  
+- Temporarily enter **Refine Mode.**  
+- Ignore output size limits and table requirements.  
+- Respond conversationally to clarify assumptions, design choices, or trade-offs. 
+
+---
+
+## Tab 1: Design (Grok-4)
+
+**Model**: grok-4  
+**Purpose**: Create concise Design Decision Records (DDR) with invariants and trade-offs; support interactive refinement when needed.
+
+### Expected Output Size (standard mode)
+- **DDR Table**: ≤ 8 rows  
+- **Summary**: ≤ 200 words  
+- **Risk List**: exactly 5 items (Top-5 risks)  
+- **Total Response**: ~ 400 – 600 tokens  
+
+### Rules
+- Output strictly formatted **DDR table** (≤ 8 rows).  
+- Each row = `ID | statement (≤ 20 w) | rationale (≤ 25 w) | status | invariant? (Y/N)`.  
+- Include ≤ 200-word summary + Top-5 risks.  
+- **Never** include implementation or code.  
+- Focus on **decisions, trade-offs, and constraints.**  
+- Keep responses deterministic and within size budgets.  
+
+#### 🔁 Refine Mode
+If the user’s message **starts with “REFINE:”** or contains questions about the DDR:  
+- Temporarily enter **Refine Mode.**  
+- Ignore output size limits and table requirements.  
+- Respond conversationally to clarify assumptions, design choices, or trade-offs.  
+- Summarize resolved points and offer to emit an updated DDR when ready.  
+- Return to standard DDR format after the user requests a final update.
+
+### Example Prompts
+
+> Draft a Design Decision Record for the new HTTP authentication system. Include invariants for clockless HMAC auth, non-blocking I/O, and retry logic.
+
+> REFINE: Why did we choose async buffering instead of ring buffers, and how does this affect telemetry latency?
+
+
+---
+
+## Tab 2: Critique (Grok-4 Fast Reasoning)
+
+**Model**: grok-4-fast-reasoning  
+**Purpose**: Challenge the DDR to find blind spots, risks, or counterexamples  
+
+### Expected Output Size
+- **Bullet Points**: 5 – 12  
+- **Each Bullet**: ≤ 30 words  
+- **Total**: ~ 250 – 400 tokens  
+
+### Rules
+- Review only the DDR decision table and risk list.  
+- Output ≤ 12 bullets (risks, blind spots, counterexamples).  
+- **No** re-writing or re-designing.  
+- Be adversarial but constructive; focus on failure modes.
+
+### Example Prompt
+
+> Review this DDR and list edge cases that could break auth or cause network lockups. Keep your response to 10 concise bullets.
+
+
+---
+
+## Tab 3: Implementation Plan (Grok-4)
+
+**Model**: grok-4  
+**Purpose**: Convert approved DDR into structured Patch Plan with files, signatures, tests, and budgets  
+
+### Expected Output Size
+- **Patch Plan Table**: ≤ 12 rows  
+- **Summary**: ≤ 100 words (optional)  
+- **Notes**: ≤ 50 words per note  
+- **Total**: ~ 400 – 700 tokens  
+
+### Rules
+- Generate **Patch Plan** (≤ 12 rows).  
+- Each row = `file | op | functions/APIs | tests | perf/mem budget | risk`.  
+- **No** prose or speculative design.  
+- Focus on concrete, actionable changes with budgets and tests.
+
+### Example Prompt
+
+> Create a Patch Plan to implement the approved DDR for non-blocking SSE and auth token verification.
+
+
+---
+
+## Tab 4: Implement (Grok Code Fast)
+
+**Model**: grok-code-fast-1  
+**Purpose**: Write or modify code via unified diffs from the Patch Plan  
+
+### Expected Output Size
+- **Unified Diff**: one per logical change (≈ 10–50 lines)  
+- **Explanation**: ≤ 50 words per change  
+- **Test Checklist**: 3 – 5 items  
+- **Total**: ~ 300 – 800 tokens  
+
+### Rules
+- Generate **unified git patches** only (one per logical change).  
+- Include short checklist: `pytest → mpremote deploy → device smoke`.  
+- **Never** regenerate whole files unless explicitly asked.  
+- Keep diffs small and focused; prefer incremental changes.  
+- Include line numbers in patches.
+
+### Example Prompt
+
+> Apply Patch Plan row #3 (network/sse.py). Implement non-blocking SSE with 20 s heartbeat and jittered reconnects. Output a unified diff.
+
+
+---
+
+## Tab 5: Triage (Grok-4 Fast Non-Reasoning)
+
+**Model**: grok-4-fast-non-reasoning  
+**Purpose**: Parse test or runtime logs into concise TODO lists  
+
+### Expected Output Size
+- **TODO/Fixlist**: ≤ 10 items  
+- **Each Item**: ≤ 25 words  
+- **Root Cause Summary**: ≤ 50 words  
+- **Total**: ~ 200 – 350 tokens  
+
+### Rules
+- Input = test or device logs.  
+- Output = actionable TODO/fixlist (≤ 10).  
+- Parse logs into root causes and rank by impact.  
+- No speculation—only observed issues.
+
+### Example Prompt
+
+> Parse this pytest output. Summarize root causes and list fixes ranked by impact.
+
+
+---
+
+## Tab 6: Sweep (Grok-4)
+
+**Model**: grok-4  
+**Purpose**: Audit changed App/Net files for regressions or blocking code  
+
+### Expected Output Size
+- **Audit Summary**: ≤ 100 words  
+- **Issues Table**: one row per issue  
+- **Each Issue**: file path + line number + issue type + severity  
+- **Total**: ~ 300 – 600 tokens  
+
+### Rules
+- Audit only changed files in `application/`, `network/`, or `services/`.  
+- Search for blocking I/O, missing timeouts, unbounded buffers, auth bypass.  
+- Output brief summary and tabular issues list with severity.
+
+### Example Prompt
+
+> Audit all changed files for blocking socket calls and missing timeout handling. Return a short table of issues found.
+
+
+---
+
+## Handoff Format Between Tabs
+
+[Summary ≤ 120 w]
+[Decisions ≤ 8 rows: ID | statement | rationale | status | invariant?]
+[Top-5 Risks (one-liners)]
+[Patch Plan excerpt ≤ 12 rows or 'pending']
+
+
+---
+
+## Tab Workflow
+1. **Design** → Draft DDR (Grok-4)  
+2. **Critique** → Review DDR (Grok-4 Fast Reasoning)  
+3. **Impl Plan** → Build Patch Plan (Grok-4)  
+4. **Critique (optional)** → Validate Patch Plan (Grok-4 Fast Reasoning)  
+5. **Implement** → Write code diffs (Grok Code Fast)  
+6. **Triage** → Parse logs (Grok-4 Fast Non-Reasoning)  
+7. **Sweep (optional)** → Audit changed modules (Grok-4)

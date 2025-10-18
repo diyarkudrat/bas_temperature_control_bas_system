@@ -1,12 +1,13 @@
 """Base classes and interfaces for Firestore data access layer."""
 
 import logging
+import time
 from abc import ABC, abstractmethod
 from typing import Dict, Any, Optional, List, TypeVar, Generic
 from dataclasses import dataclass
 from datetime import datetime
 from google.cloud import firestore
-from google.cloud.exceptions import NotFound, PermissionDenied
+from google.api_core.exceptions import NotFound, PermissionDenied
 
 logger = logging.getLogger(__name__)
 
@@ -124,10 +125,10 @@ class BaseRepository(ABC, Generic[T, K]):
         """Normalize timestamp to both millis and UTC string."""
         if timestamp is None:
             timestamp = datetime.utcnow().timestamp()
-        
+
         timestamp_ms = int(timestamp * 1000)
-        utc_timestamp = datetime.utcfromtimestamp(timestamp).isoformat() + 'Z'
-        
+        utc_timestamp = datetime.fromtimestamp(timestamp).isoformat()
+
         return {
             'timestamp_ms': timestamp_ms,
             'utc_timestamp': utc_timestamp
@@ -181,8 +182,10 @@ class TenantAwareRepository(BaseRepository[T, K]):
         
         return data
     
-    def _validate_tenant_access(self, tenant_id: str, entity_tenant_id: str) -> None:
+    def _validate_tenant_access(self, tenant_id: Optional[str], entity_tenant_id: str) -> None:
         """Validate that user has access to the tenant."""
+        if tenant_id is None:
+            raise ValidationError("Tenant ID is required")
         if entity_tenant_id != tenant_id:
             raise PermissionError(f"Access denied to tenant {entity_tenant_id}")
 
@@ -238,5 +241,3 @@ class CacheableRepository(BaseRepository[T, K]):
             self._cache.clear()
 
 
-# Import time for caching
-import time

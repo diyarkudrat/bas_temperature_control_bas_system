@@ -30,20 +30,20 @@ A structured, multi-tab AI workflow in Cursor that separates **design**, **criti
 
 ## 🧩 Tabs and Models
 
-| Tab Name                           | Model                    | Purpose                                                                           | Typical Output                      |
-| ---------------------------------- | ------------------------ | --------------------------------------------------------------------------------- | ----------------------------------- |
-| **Design (Sonnet)**                | claude-4.5-sonnet        | Create a concise **Design Decision Record (DDR)** with invariants and tradeoffs.  | 8-row decision table + 200w summary |
-| **Critique (Grok)**                | grok-2                   | Challenge the DDR—find blind spots, risks, or counterexamples.                    | 5–12 bullet critique list           |
-| **Impl Plan (Sonnet)**             | claude-4.5-sonnet        | Convert DDR into a structured **Patch Plan** (files, signatures, tests, budgets). | Table of ≤12 rows                   |
-| **Implement (GPT-5)**              | gpt-5                    | Write or modify code via unified diffs from the Patch Plan.                       | Git-style patches + test checklist  |
-| **Triage (Haiku)**                 | claude-4.5-haiku         | Parse test or runtime logs into concise TODO lists.                               | Fixlist ≤10 items                   |
-| **Sweep (Supernova)** *(optional)* | code-supernova-1-million | Audit changed App/Net files for regressions or blocking code.                     | Targeted report                     |
+| Tab Name                               | Model                     | Purpose                                                                           | Typical Output                      |
+| -------------------------------------- | ------------------------- | --------------------------------------------------------------------------------- | ----------------------------------- |
+| **Design (Grok-4)**                    | grok-4                    | Create a concise **Design Decision Record (DDR)** with invariants and tradeoffs.  | 8-row decision table + 200w summary |
+| **Critique (Grok-4 Fast Reasoning)**   | grok-4-fast-reasoning     | Challenge the DDR—find blind spots, risks, or counterexamples.                    | 5–12 bullet critique list           |
+| **Impl Plan (Grok-4)**                 | grok-4                    | Convert DDR into a structured **Patch Plan** (files, signatures, tests, budgets). | Table of ≤12 rows                   |
+| **Implement (Grok Code Fast)**         | grok-code-fast-1          | Write or modify code via unified diffs from the Patch Plan.                       | Git-style patches + test checklist  |
+| **Triage (Grok-4 Fast Non-Reasoning)** | grok-4-fast-non-reasoning | Parse test or runtime logs into concise TODO lists.                               | Fixlist ≤10 items                   |
+| **Sweep (Grok-4)** *(optional)*        | grok-4                    | Audit changed App/Net files for regressions or blocking code.                     | Targeted report                     |
 
 ---
 
 ## 📋 Tab Rules and Prompts
 
-### **1. Design (claude-4.5-sonnet)**
+### **1. Design (grok-4)**
 
 **Rules:**
 
@@ -58,7 +58,7 @@ A structured, multi-tab AI workflow in Cursor that separates **design**, **criti
 
 ---
 
-### **2. Critique (grok-2)**
+### **2. Critique (grok-4-fast-reasoning)**
 
 **Rules:**
 
@@ -72,7 +72,7 @@ A structured, multi-tab AI workflow in Cursor that separates **design**, **criti
 
 ---
 
-### **3. Implementation Plan (claude-4.5-sonnet)**
+### **3. Implementation Plan (grok-4)**
 
 **Rules:**
 
@@ -86,7 +86,7 @@ A structured, multi-tab AI workflow in Cursor that separates **design**, **criti
 
 ---
 
-### **4. Implement (gpt-5)**
+### **4. Implement (grok-code-fast-1)**
 
 **Rules:**
 
@@ -100,7 +100,7 @@ A structured, multi-tab AI workflow in Cursor that separates **design**, **criti
 
 ---
 
-### **5. Triage (claude-4.5-haiku)**
+### **5. Triage (grok-4-fast-non-reasoning)**
 
 **Rules:**
 
@@ -113,7 +113,7 @@ A structured, multi-tab AI workflow in Cursor that separates **design**, **criti
 
 ---
 
-### **6. Sweep (code-supernova-1-million)** *(Optional)*
+### **6. Sweep (grok-4)** *(Optional)*
 
 **Rules:**
 

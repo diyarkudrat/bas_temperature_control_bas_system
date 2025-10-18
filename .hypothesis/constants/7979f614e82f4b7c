@@ -1,0 +1,4 @@
+# file: /Users/diyarkudrat/BAS System Project/server/auth/services.py
+# hypothesis_version: 6.142.1
+
+[900, 'Allowed', 'LOGIN_FAILURE', 'LOGIN_SUCCESS', 'PERMISSION_DENIED', 'SESSION_ACCESS', 'SESSION_CREATED', 'SESSION_DESTROYED', 'TENANT_VIOLATION', 'Z', 'action', 'allowed_tenant', 'attempted_tenant', 'auth/login', 'auth/logout', 'auth/verify', 'details', 'endpoint', 'ip_address', 'reason', 'session_id', 'success', 'tenant_access', 'username']

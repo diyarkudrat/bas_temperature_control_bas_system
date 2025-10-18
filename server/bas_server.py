@@ -290,15 +290,31 @@ def health():
         "status": "healthy", 
         "timestamp": time.time(),
         "services": {
-            "auth": auth_config is not None,
-            "firestore": firestore_factory is not None
+            "auth": bool(auth_config is not None),
+            "firestore": bool(firestore_factory is not None)
         }
     }
     
     # Add Firestore health if available
     if firestore_factory:
-        firestore_health = firestore_factory.health_check()
-        health_status["firestore"] = firestore_health
+        try:
+            firestore_health = firestore_factory.health_check()
+            # Ensure JSON-safe primitives
+            if isinstance(firestore_health, dict):
+                safe_health = {}
+                for k, v in firestore_health.items():
+                    try:
+                        json.dumps(v)
+                        safe_health[k] = v
+                    except Exception:
+                        safe_health[k] = str(v)
+                health_status["firestore"] = safe_health
+            else:
+                # Fallback to string representation
+                health_status["firestore"] = str(firestore_health)
+        except Exception as e:
+            logger.error(f"Error retrieving Firestore health: {e}")
+            health_status["firestore"] = {"status": "error", "detail": str(e)}
     
     return jsonify(health_status)
 
@@ -454,12 +470,13 @@ def get_telemetry():
 @app.route('/api/config')
 def get_config():
     """Get system configuration."""
-    return jsonify({
-        "setpoint_tenths": controller.setpoint_tenths,
-        "deadband_tenths": controller.deadband_tenths,
-        "min_on_time_ms": controller.min_on_time_ms,
-        "min_off_time_ms": controller.min_off_time_ms
-    })
+    config_payload = {
+        "setpoint_tenths": int(controller.setpoint_tenths),
+        "deadband_tenths": int(controller.deadband_tenths),
+        "min_on_time_ms": int(controller.min_on_time_ms),
+        "min_off_time_ms": int(controller.min_off_time_ms)
+    }
+    return jsonify(config_payload)
 
 # Authentication endpoints
 @app.route('/auth/login', methods=['POST'])
@@ -554,8 +571,10 @@ def auth_logout():
             session_id = data.get('session_id')
         
         if session_id:
-            session_manager.invalidate_session(session_id)
-            audit_logger.log_session_destruction(session_id)
+            if session_manager is not None:
+                session_manager.invalidate_session(session_id)
+            if audit_logger is not None:
+                audit_logger.log_session_destruction(session_id)
             logger.info(f"Session invalidated: {session_id[:12]}...")
         
         # Create response and clear cookie

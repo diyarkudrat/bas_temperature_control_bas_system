@@ -1,0 +1,4 @@
+# file: /Users/diyarkudrat/BAS System Project/server/auth/tenant_middleware.py
+# hypothesis_version: 6.142.1
+
+[400, 403, 500, 'Device ID required', 'MISSING_DEVICE_ID', 'MISSING_TENANT_ID', 'TENANT_ACCESS_DENIED', 'TENANT_ID_MISSING', 'Tenant ID required', 'args', 'code', 'device_id', 'error', 'is_json', 'json', 'session', 'tenant_id', 'tenant_middleware', 'user_id', 'username']

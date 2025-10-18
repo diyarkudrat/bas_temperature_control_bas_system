@@ -93,8 +93,10 @@ def validate_password_strength(password: str) -> Tuple[bool, str]:
         return False, "Password must contain special characters"
     
     # Check against common passwords (simplified)
+    # Normalize by lowercasing and stripping non-alphanumeric to catch variants
     common_passwords = {'password', '123456', 'admin', 'qwerty', 'password123', 'admin123'}
-    if password.lower() in common_passwords:
+    normalized_password = ''.join(c for c in password.lower() if c.isalnum())
+    if normalized_password in common_passwords:
         logger.warning("Password is too common")
         return False, "Password is too common"
     

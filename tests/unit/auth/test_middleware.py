@@ -5,7 +5,17 @@ Unit tests for authentication middleware using pytest.
 import pytest
 from unittest.mock import Mock, patch
 
-from auth.middleware import require_auth, add_security_headers, _has_permission, log_request_info, handle_auth_error
+from auth.middleware import (
+    require_auth,
+    add_security_headers,
+    _has_permission,
+    log_request_info,
+    handle_auth_error,
+    _enforce_tenant_isolation,
+    _audit_auth_failure,
+    _audit_permission_denied,
+    _audit_tenant_violation,
+)
 from auth.exceptions import AuthError
 from tests.utils.assertions import assert_equals, assert_true, assert_false
 
@@ -504,6 +514,325 @@ class TestAuthMiddleware:
             assert_equals(result, "success", "Should allow access in shadow mode")
             # Verify audit logging was called
             ctx.request.audit_logger.log_session_access.assert_called_once_with('test_session', 'test_endpoint')
+
+    def test_require_auth_with_tenant_success(self):
+        """require_auth with tenant enforcement: success path sets g.tenant_id."""
+        from flask import Flask, g
+        app = Flask(__name__)
+
+        @require_auth("operator", require_tenant=True)
+        def test_endpoint():
+            return "success"
+
+        with app.test_request_context(
+            '/test_endpoint',
+            headers={'X-Session-ID': 'test_session_123', 'X-BAS-Tenant': 'tenant-1'}
+        ) as ctx:
+            ctx.request.auth_config = Mock()
+            ctx.request.auth_config.auth_enabled = True
+            ctx.request.auth_config.auth_mode = "enforced"
+            ctx.request.auth_config.tenant_id_header = 'X-BAS-Tenant'
+
+            mock_session = Mock()
+            mock_session.role = "operator"
+            mock_session.username = "testuser"
+            mock_session.user_id = "uid-1"
+            mock_session.tenant_id = "tenant-1"
+
+            mock_session_manager = Mock()
+            mock_session_manager.validate_session.return_value = mock_session
+            ctx.request.session_manager = mock_session_manager
+            ctx.request.audit_logger = Mock()
+
+            result = test_endpoint()
+            assert_equals(result, "success", "Should allow access with valid tenant")
+            assert g.tenant_id == "tenant-1"
+            mock_session_manager.update_last_access.assert_called_once_with('test_session_123')
+
+    def test_require_auth_with_tenant_missing_header(self):
+        """require_auth with tenant enforcement: missing tenant header => 400."""
+        from flask import Flask
+        app = Flask(__name__)
+
+        @require_auth("operator", require_tenant=True)
+        def test_endpoint():
+            return "success"
+
+        with app.test_request_context('/test_endpoint', headers={'X-Session-ID': 'test_session_123'}) as ctx:
+            ctx.request.auth_config = Mock()
+            ctx.request.auth_config.auth_enabled = True
+            ctx.request.auth_config.auth_mode = "enforced"
+            ctx.request.auth_config.tenant_id_header = 'X-BAS-Tenant'
+
+            mock_session = Mock()
+            mock_session.role = "operator"
+            mock_session.username = "testuser"
+            mock_session.user_id = "uid-1"
+            mock_session.tenant_id = "tenant-1"
+
+            mock_session_manager = Mock()
+            mock_session_manager.validate_session.return_value = mock_session
+            ctx.request.session_manager = mock_session_manager
+
+            response, status_code = test_endpoint()
+            assert_equals(status_code, 400, "Should return 400 when tenant header missing")
+
+    def test_require_auth_with_tenant_no_session_tenant(self):
+        """require_auth with tenant enforcement: session has no tenant => 400."""
+        from flask import Flask
+        app = Flask(__name__)
+
+        @require_auth("operator", require_tenant=True)
+        def test_endpoint():
+            return "success"
+
+        with app.test_request_context('/test_endpoint', headers={'X-Session-ID': 'test_session_123', 'X-BAS-Tenant': 'tenant-1'}) as ctx:
+            ctx.request.auth_config = Mock()
+            ctx.request.auth_config.auth_enabled = True
+            ctx.request.auth_config.auth_mode = "enforced"
+            ctx.request.auth_config.tenant_id_header = 'X-BAS-Tenant'
+
+            mock_session = Mock()
+            mock_session.role = "operator"
+            mock_session.username = "testuser"
+            mock_session.user_id = "uid-1"
+            mock_session.tenant_id = None
+
+            mock_session_manager = Mock()
+            mock_session_manager.validate_session.return_value = mock_session
+            ctx.request.session_manager = mock_session_manager
+
+            response, status_code = test_endpoint()
+            assert_equals(status_code, 400, "Should return 400 when session lacks tenant")
+
+    def test_require_auth_with_tenant_mismatch(self):
+        """require_auth with tenant enforcement: tenant mismatch => 403."""
+        from flask import Flask
+        app = Flask(__name__)
+
+        @require_auth("operator", require_tenant=True)
+        def test_endpoint():
+            return "success"
+
+        with app.test_request_context('/test_endpoint', headers={'X-Session-ID': 'test_session_123', 'X-BAS-Tenant': 'tenant-2'}) as ctx:
+            ctx.request.auth_config = Mock()
+            ctx.request.auth_config.auth_enabled = True
+            ctx.request.auth_config.auth_mode = "enforced"
+            ctx.request.auth_config.tenant_id_header = 'X-BAS-Tenant'
+
+            mock_session = Mock()
+            mock_session.role = "operator"
+            mock_session.username = "testuser"
+            mock_session.user_id = "uid-1"
+            mock_session.tenant_id = "tenant-1"
+
+            mock_session_manager = Mock()
+            mock_session_manager.validate_session.return_value = mock_session
+            ctx.request.session_manager = mock_session_manager
+
+            response, status_code = test_endpoint()
+            assert_equals(status_code, 403, "Should return 403 when tenant mismatch")
+
+    def test_enforce_tenant_isolation_missing_header(self):
+        """_enforce_tenant_isolation returns 400 when tenant header is missing."""
+        from flask import Flask
+        app = Flask(__name__)
+        session = Mock()
+        session.username = 'user'
+        session.user_id = 'uid'
+        session.tenant_id = 'tenant-1'
+
+        with app.test_request_context('/endpoint') as ctx:
+            ctx.request.auth_config = Mock()
+            ctx.request.auth_config.tenant_id_header = 'X-BAS-Tenant'
+            # No tenant header
+            result, status = _enforce_tenant_isolation(session, ctx.request)
+            assert_equals(status, 400)
+
+    def test_enforce_tenant_isolation_no_session_tenant(self):
+        """_enforce_tenant_isolation returns 400 when session has no tenant."""
+        from flask import Flask
+        app = Flask(__name__)
+        session = Mock()
+        session.username = 'user'
+        session.user_id = 'uid'
+        session.tenant_id = None
+
+        with app.test_request_context('/endpoint', headers={'X-BAS-Tenant': 'tenant-1'}) as ctx:
+            ctx.request.auth_config = Mock()
+            ctx.request.auth_config.tenant_id_header = 'X-BAS-Tenant'
+            result, status = _enforce_tenant_isolation(session, ctx.request)
+            assert_equals(status, 400)
+
+    def test_enforce_tenant_isolation_mismatch(self):
+        """_enforce_tenant_isolation returns 403 when tenant IDs mismatch."""
+        from flask import Flask
+        app = Flask(__name__)
+        session = Mock()
+        session.username = 'user'
+        session.user_id = 'uid'
+        session.tenant_id = 'tenant-1'
+
+        with app.test_request_context('/endpoint', headers={'X-BAS-Tenant': 'tenant-2'}) as ctx:
+            ctx.request.auth_config = Mock()
+            ctx.request.auth_config.tenant_id_header = 'X-BAS-Tenant'
+            result, status = _enforce_tenant_isolation(session, ctx.request)
+            assert_equals(status, 403)
+
+    def test_enforce_tenant_isolation_success(self):
+        """_enforce_tenant_isolation returns True and sets g.tenant_id on success."""
+        from flask import Flask, g
+        app = Flask(__name__)
+        session = Mock()
+        session.username = 'user'
+        session.user_id = 'uid'
+        session.tenant_id = 'tenant-1'
+
+        with app.test_request_context('/endpoint', headers={'X-BAS-Tenant': 'tenant-1'}) as ctx:
+            ctx.request.auth_config = Mock()
+            ctx.request.auth_config.tenant_id_header = 'X-BAS-Tenant'
+            result = _enforce_tenant_isolation(session, ctx.request)
+            assert_true(result is True)
+            assert_equals(g.tenant_id, 'tenant-1')
+
+    def test_enforce_tenant_isolation_exception(self):
+        """_enforce_tenant_isolation returns 500 on unexpected exception."""
+        from flask import Flask
+        app = Flask(__name__)
+
+        class BadSession:
+            # tenant_id missing/None, username access raises to trigger except path
+            def __getattr__(self, name):
+                if name == 'tenant_id':
+                    return None
+                if name in ('username', 'user_id'):
+                    raise RuntimeError('boom')
+                raise AttributeError
+
+        bad_session = BadSession()
+
+        with app.test_request_context('/endpoint', headers={'X-BAS-Tenant': 'tenant-1'}) as ctx:
+            ctx.request.auth_config = Mock()
+            ctx.request.auth_config.tenant_id_header = 'X-BAS-Tenant'
+            response, status = _enforce_tenant_isolation(bad_session, ctx.request)
+            assert_equals(status, 500)
+
+    def test_audit_auth_failure_firestore(self):
+        """_audit_auth_failure uses firestore audit when available."""
+        from flask import Flask
+        app = Flask(__name__)
+        with app.test_request_context('/endpoint', headers={'User-Agent': 'UA'}) as ctx:
+            firestore = Mock()
+            audit_logger = Mock()
+            audit_logger.firestore_audit = firestore
+            ctx.request.audit_logger = audit_logger
+
+            _audit_auth_failure('REASON', '1.2.3.4', 'endpoint')
+            firestore.log_event.assert_called_once()
+
+    def test_audit_auth_failure_fallback(self):
+        """_audit_auth_failure falls back to sqlite audit when firestore unavailable."""
+        from flask import Flask
+        app = Flask(__name__)
+        with app.test_request_context('/endpoint', headers={'User-Agent': 'UA'}) as ctx:
+            audit_logger = Mock()
+            audit_logger.firestore_audit = None
+            audit_logger.log_auth_failure = Mock()
+            ctx.request.audit_logger = audit_logger
+
+            _audit_auth_failure('REASON', '1.2.3.4', 'endpoint')
+            audit_logger.log_auth_failure.assert_called_once()
+
+    def test_audit_auth_failure_exception(self):
+        """_audit_auth_failure swallows exceptions from audit sink."""
+        from flask import Flask
+        app = Flask(__name__)
+        with app.test_request_context('/endpoint', headers={'User-Agent': 'UA'}) as ctx:
+            firestore = Mock()
+            firestore.log_event.side_effect = Exception('boom')
+            audit_logger = Mock()
+            audit_logger.firestore_audit = firestore
+            ctx.request.audit_logger = audit_logger
+
+            _audit_auth_failure('REASON', '1.2.3.4', 'endpoint')
+
+    def test_audit_permission_denied_firestore(self):
+        """_audit_permission_denied uses firestore audit when available."""
+        from flask import Flask
+        app = Flask(__name__)
+        with app.test_request_context('/endpoint', headers={'User-Agent': 'UA'}) as ctx:
+            firestore = Mock()
+            audit_logger = Mock()
+            audit_logger.firestore_audit = firestore
+            ctx.request.audit_logger = audit_logger
+
+            _audit_permission_denied('user', 'uid', '1.2.3.4', 'endpoint', 'REASON')
+            firestore.log_event.assert_called_once()
+
+    def test_audit_permission_denied_fallback(self):
+        """_audit_permission_denied falls back when firestore unavailable."""
+        from flask import Flask
+        app = Flask(__name__)
+        with app.test_request_context('/endpoint', headers={'User-Agent': 'UA'}) as ctx:
+            audit_logger = Mock()
+            audit_logger.firestore_audit = None
+            audit_logger.log_permission_denied = Mock()
+            ctx.request.audit_logger = audit_logger
+
+            _audit_permission_denied('user', 'uid', '1.2.3.4', 'endpoint', 'REASON')
+            audit_logger.log_permission_denied.assert_called_once()
+
+    def test_audit_permission_denied_exception(self):
+        """_audit_permission_denied swallows exceptions from audit sink."""
+        from flask import Flask
+        app = Flask(__name__)
+        with app.test_request_context('/endpoint', headers={'User-Agent': 'UA'}) as ctx:
+            firestore = Mock()
+            firestore.log_event.side_effect = Exception('boom')
+            audit_logger = Mock()
+            audit_logger.firestore_audit = firestore
+            ctx.request.audit_logger = audit_logger
+
+            _audit_permission_denied('user', 'uid', '1.2.3.4', 'endpoint', 'REASON')
+
+    def test_audit_tenant_violation_firestore(self):
+        """_audit_tenant_violation uses firestore audit when available."""
+        from flask import Flask
+        app = Flask(__name__)
+        with app.test_request_context('/endpoint', headers={'User-Agent': 'UA'}) as ctx:
+            firestore = Mock()
+            audit_logger = Mock()
+            audit_logger.firestore_audit = firestore
+            ctx.request.audit_logger = audit_logger
+
+            _audit_tenant_violation('uid', 'user', '1.2.3.4', 'tenant-x', 'tenant-y')
+            firestore.log_event.assert_called_once()
+
+    def test_audit_tenant_violation_fallback(self):
+        """_audit_tenant_violation falls back when firestore unavailable."""
+        from flask import Flask
+        app = Flask(__name__)
+        with app.test_request_context('/endpoint', headers={'User-Agent': 'UA'}) as ctx:
+            audit_logger = Mock()
+            audit_logger.firestore_audit = None
+            audit_logger.log_tenant_violation = Mock()
+            ctx.request.audit_logger = audit_logger
+
+            _audit_tenant_violation('uid', 'user', '1.2.3.4', 'tenant-x', 'tenant-y')
+            audit_logger.log_tenant_violation.assert_called_once()
+
+    def test_audit_tenant_violation_exception(self):
+        """_audit_tenant_violation swallows exceptions from audit sink."""
+        from flask import Flask
+        app = Flask(__name__)
+        with app.test_request_context('/endpoint', headers={'User-Agent': 'UA'}) as ctx:
+            firestore = Mock()
+            firestore.log_event.side_effect = Exception('boom')
+            audit_logger = Mock()
+            audit_logger.firestore_audit = firestore
+            ctx.request.audit_logger = audit_logger
+
+            _audit_tenant_violation('uid', 'user', '1.2.3.4', 'tenant-x', 'tenant-y')
 
     def test_require_auth_shadow_mode_no_audit_logger(self):
         """Test require_auth decorator in shadow mode without audit logger."""

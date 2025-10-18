@@ -298,7 +298,7 @@ def create_mock_success_response(data: Any) -> Dict[str, Any]:
 
 
 # Mock data constants
-MOCK_TENANT_ID = "test_tenant_123"
+MOCK_TENANT_ID = "test_e6f7a8b9-c0d1-4e2f-3a4b-5c6d7e8f9a0b"
 MOCK_DEVICE_ID = "test_device_456"
 MOCK_USER_ID = "test_user_789"
 MOCK_SESSION_ID = "test_session_abc"

@@ -1,0 +1,4 @@
+# file: /Users/diyarkudrat/BAS System Project/server/auth/models.py
+# hypothesis_version: 6.142.1
+
+[1800, 'Session', 'User', '[]', 'admin', 'created_at', 'expires_at', 'failed_attempts', 'fingerprint', 'ip_address', 'last_access', 'last_login', 'locked_until', 'operator', 'password_hash', 'password_history', 'read-only', 'role', 'salt', 'session_id', 'tenant_id', 'unknown', 'user_agent', 'user_id', 'username']
