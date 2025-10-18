@@ -2,7 +2,7 @@
 
 **Production-grade Building Automation System with Raspberry Pi Pico W + Computer Server**
 
-A distributed temperature control system that solves Pico W storage limitations by running the web interface and control logic on your computer while the Pico W handles only essential hardware operations.
+A production-grade, distributed BAS (building automation system) platform featuring a Python/Flask server for authentication, REST APIs, real-time telemetry, dashboards, and alarm management, with a lightweight Pico W client handling sensor and relay I/O — designed to scale seamlessly from single-zone to multi-device control.
 
 ## 📋 Table of Contents
 
