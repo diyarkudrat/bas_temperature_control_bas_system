@@ -46,21 +46,6 @@ A structured, multi-tab AI workflow in Cursor that separates **design**, **criti
 
 - When you work in a tab or chat window, Cursor pairs your prompt with these rules to shape the answer: output size limits, table formats, and the exact handoff data to pass between tabs.
 
-**Quick walkthrough of sections**
-
-- **Refine Mode**: If a message starts with “REFINE:” or asks about the DDR, temporarily switch to conversational design clarification (no size limits), then return to the standard DDR format when asked.
-- **Tab 1 — Design (Grok‑4)**: Produce a DDR table (≤8 rows). Row format: `ID | statement | rationale | status | invariant?`. Include ≤200‑word summary and Top‑5 risks. No implementation or code.
-- **Tab 2 — Critique (Grok‑4 Fast Reasoning)**: Review only the DDR table and risks; output 5–12 concise bullets highlighting risks/blind spots. No re‑designing.
-- **Tab 3 — Implementation Plan (Grok‑4)**: Convert DDR into a Patch Plan table (≤12 rows): `file | op | functions/APIs | tests | perf/mem budget | risk`. No prose.
-- **Tab 4 — Implement (Grok Code Fast)**: Output unified diffs only, one per logical change, with brief explanation and a small test checklist. Don’t regenerate whole files; include line numbers.
-- **Tab 5 — Triage (Grok‑4 Fast Non‑Reasoning)**: Parse test/device logs into an actionable TODO/fixlist (≤10 items) plus a short root‑cause summary.
-- **Tab 6 — Sweep (Grok‑4)**: Audit only changed `application/`, `network/`, or `services/` files; return a brief summary and an issues table (file, line, type, severity).
-- **Handoff Format**: A compact block passed between tabs: short summary, decisions table, Top‑5 risks, and a Patch Plan excerpt.
-- **Tab Workflow**: The standard path: Design → Critique → Impl Plan → (Critique) → Implement → Triage → (Sweep).
-
-
----
-
 ## 🧩 Tabs and Models
 
 | Tab Name                               | Model                     | Purpose                                                                           | Typical Output                      |
