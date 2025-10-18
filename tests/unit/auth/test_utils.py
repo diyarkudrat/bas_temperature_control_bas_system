@@ -1,3 +1,27 @@
+"""Unit tests for authentication utilities."""
+
+import pytest
+
+from auth.utils import hash_password
+from tests.utils.assertions import assert_equals
+
+
+@pytest.mark.auth
+@pytest.mark.unit
+class TestAuthUtils:
+    """Tests for auth utility functions."""
+
+    def test_hash_password_same_salt_deterministic(self):
+        """Hashing with same salt should produce identical results."""
+        password = "ValidPassword123!"
+        salt = b"test_salt_for_migration"
+
+        hash1, salt_hex1 = hash_password(password, salt)
+        hash2, salt_hex2 = hash_password(password, salt)
+
+        assert_equals(hash1, hash2)
+        assert_equals(salt_hex1, salt_hex2)
+
 """
 Unit tests for authentication utility functions using pytest.
 """
@@ -139,13 +163,17 @@ class TestAuthUtils:
 
     def test_validate_password_strength_common_password(self):
         """Test password strength validation with common password."""
-        # Test with exact match from common passwords list
-        password = "password"  # Common password
+        # Exact short common password still fails length first
+        password = "password"
         is_valid, message = validate_password_strength(password)
-        
-        # Should fail due to being too short (less than 12 chars)
         assert_false(is_valid)
         assert "at least 12 characters" in message
+
+        # Long but common after normalization (e.g., "Password123!!!") should hit common branch
+        long_common = "Password123!!!"  # Normalizes to "password123"
+        is_valid2, message2 = validate_password_strength(long_common)
+        assert_false(is_valid2)
+        assert "too common" in message2
     
     def test_generate_uuid(self):
         """Test UUID generation function."""

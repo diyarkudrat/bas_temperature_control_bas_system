@@ -25,7 +25,7 @@ def test_update_user_role(self, user_manager, created_user):
 
 ### Run the test:
 ```bash
-python3 -m pytest tests/unit/auth/test_managers.py::TestUserManager::test_update_user_role -v
+cd server && source venv/bin/activate && cd .. && python3 -m pytest tests/unit/auth/test_managers.py::TestUserManager::test_update_user_role -v
 ```
 
 ---
@@ -60,7 +60,7 @@ class TestNotificationService:
 
 ### Run the tests:
 ```bash
-python3 -m pytest tests/unit/auth/test_notification_service.py -v
+cd server && source venv/bin/activate && cd .. && python3 -m pytest tests/unit/auth/test_notification_service.py -v
 ```
 
 ---
@@ -131,7 +131,7 @@ class TestDeviceManager:
 
 ### Step 5: Run the tests
 ```bash
-python3 -m pytest tests/unit/device/ -v
+cd server && source venv/bin/activate && cd .. && python3 -m pytest tests/unit/device/ -v
 ```
 
 ---

@@ -2,13 +2,25 @@
 
 import logging
 from typing import Optional, Dict, Any, Callable
-from flask import request, jsonify, g
+from types import SimpleNamespace
+from flask import request as _flask_request
+from flask import jsonify as _flask_jsonify
 from functools import wraps
 
 from .config import AuthConfig
 from .exceptions import AuthError, PermissionError as AuthPermissionError
 
 logger = logging.getLogger(__name__)
+
+# Module-level globals that tests can patch without Flask request/app context
+g = SimpleNamespace()
+request = None  # will be patched in tests; fallback to _flask_request at runtime
+jsonify = _flask_jsonify
+
+
+def get_request():
+    """Return patched request if provided, else real Flask request proxy."""
+    return request if request is not None else _flask_request
 
 
 class TenantMiddleware:
@@ -20,6 +32,35 @@ class TenantMiddleware:
         self.audit_service = audit_service
         self.tenant_header = auth_config.tenant_id_header
     
+    def setup_tenant_context(self, req=None):
+        """Resolve tenant_id and place it on Flask g without raising exceptions.
+
+        Priority: header (auth_config.tenant_id_header) -> request.session.tenant_id
+        Returns the resolved tenant_id or None.
+        """
+        try:
+            request_obj = req or get_request()
+        except Exception:
+            request_obj = None
+
+        tenant_id = None
+        try:
+            if request_obj is not None:
+                tenant_id = self.extract_tenant_id(request_obj)
+        except Exception:
+            tenant_id = None
+
+        # Attempt to set Flask's g if available; fall back to module g
+        try:
+            from flask import g as flask_g
+            if tenant_id:
+                setattr(flask_g, 'tenant_id', tenant_id)
+        except Exception:
+            if tenant_id:
+                setattr(g, 'tenant_id', tenant_id)
+
+        return tenant_id
+
     def extract_tenant_id(self, request) -> Optional[str]:
         """Extract tenant ID from request headers or session."""
         # Try header first
@@ -61,22 +102,25 @@ class TenantMiddleware:
         @wraps(func)
         def decorated_function(*args, **kwargs):
             # Extract tenant ID
-            tenant_id = self.extract_tenant_id(request)
+            req = get_request()
+            tenant_id = self.extract_tenant_id(req)
             
             if not tenant_id:
                 logger.warning(f"Missing tenant ID in request to {request.endpoint}")
                 if self.audit_service:
+                    session_obj = getattr(req, 'session', None)
+                    username = getattr(session_obj, 'username', None)
+                    user_id = getattr(session_obj, 'user_id', None)
                     self.audit_service.log_permission_denied(
-                        username=getattr(request, 'session', {}).get('username'),
-                        user_id=getattr(request, 'session', {}).get('user_id'),
-                        ip_address=request.remote_addr,
-                        resource=request.endpoint,
+                        username=username,
+                        user_id=user_id,
+                        ip_address=req.remote_addr,
+                        resource=req.endpoint,
                         reason="MISSING_TENANT_ID"
                     )
-                return jsonify({
-                    'error': 'Tenant ID required',
-                    'code': 'MISSING_TENANT_ID'
-                }), 400
+                resp = jsonify({'error': 'Tenant ID required', 'code': 'MISSING_TENANT_ID'})
+                # Avoid double-wrapping when jsonify is patched to return a tuple
+                return resp if isinstance(resp, tuple) else (resp, 400)
             
             # Store in request context
             g.tenant_id = tenant_id
@@ -90,19 +134,18 @@ class TenantMiddleware:
         @wraps(func)
         def decorated_function(*args, **kwargs):
             # Extract tenant ID from request
-            requested_tenant_id = self.extract_tenant_id(request)
+            req = get_request()
+            requested_tenant_id = self.extract_tenant_id(req)
             
             if not requested_tenant_id:
-                logger.warning(f"Missing tenant ID in request to {request.endpoint}")
-                return jsonify({
-                    'error': 'Tenant ID required',
-                    'code': 'MISSING_TENANT_ID'
-                }), 400
+                logger.warning(f"Missing tenant ID in request to {req.endpoint}")
+                resp = jsonify({'error': 'Tenant ID required', 'code': 'MISSING_TENANT_ID'})
+                return resp if isinstance(resp, tuple) else (resp, 400)
             
             # Get user's allowed tenant from session
             user_tenant_id = None
-            if hasattr(request, 'session') and request.session:
-                user_tenant_id = getattr(request.session, 'tenant_id', None)
+            if hasattr(req, 'session') and req.session:
+                user_tenant_id = getattr(req.session, 'tenant_id', None)
             
             # If no user session, allow with warning (for public endpoints)
             if not user_tenant_id:
@@ -112,23 +155,21 @@ class TenantMiddleware:
             
             # Validate tenant access
             if not self.validate_tenant_access(user_tenant_id, requested_tenant_id):
-                logger.warning(f"Tenant violation: user {getattr(request.session, 'username')} "
+                logger.warning(f"Tenant violation: user {getattr(req.session, 'username', None)} "
                              f"attempted to access tenant {requested_tenant_id}, "
                              f"allowed tenant: {user_tenant_id}")
                 
                 # Audit the violation
                 self.audit_tenant_violation(
-                    user_id=getattr(request.session, 'user_id'),
-                    username=getattr(request.session, 'username'),
-                    ip_address=request.remote_addr,
+                    user_id=getattr(req.session, 'user_id', None),
+                    username=getattr(req.session, 'username', None),
+                    ip_address=req.remote_addr,
                     attempted_tenant=requested_tenant_id,
                     allowed_tenant=user_tenant_id
                 )
                 
-                return jsonify({
-                    'error': 'Access denied to tenant',
-                    'code': 'TENANT_ACCESS_DENIED'
-                }), 403
+                resp = jsonify({'error': 'Access denied to tenant', 'code': 'TENANT_ACCESS_DENIED'})
+                return resp if isinstance(resp, tuple) else (resp, 403)
             
             # Store validated tenant ID in request context
             g.tenant_id = requested_tenant_id
@@ -157,24 +198,21 @@ class TenantMiddleware:
             # Get tenant ID from request context
             tenant_id = getattr(g, 'tenant_id', None)
             if not tenant_id:
-                return jsonify({
-                    'error': 'Tenant ID not available',
-                    'code': 'TENANT_ID_MISSING'
-                }), 400
+                resp = jsonify({'error': 'Tenant ID not available', 'code': 'TENANT_ID_MISSING'})
+                return resp if isinstance(resp, tuple) else (resp, 400)
             
             # Extract device ID from request data or URL parameters
+            req = get_request()
             device_id = None
-            if request.is_json and request.json:
-                device_id = request.json.get('device_id')
-            elif 'device_id' in request.args:
-                device_id = request.args.get('device_id')
+            if getattr(req, 'is_json', False) and getattr(req, 'json', None):
+                device_id = req.json.get('device_id')
+            elif hasattr(req, 'args') and 'device_id' in req.args:
+                device_id = req.args.get('device_id')
             
             if not device_id:
                 logger.warning(f"Missing device_id in request to {request.endpoint}")
-                return jsonify({
-                    'error': 'Device ID required',
-                    'code': 'MISSING_DEVICE_ID'
-                }), 400
+                resp = jsonify({'error': 'Device ID required', 'code': 'MISSING_DEVICE_ID'})
+                return resp if isinstance(resp, tuple) else (resp, 400)
             
             # Validate device ownership (if devices service available)
             # This would need to be injected or accessed via service factory
@@ -200,7 +238,7 @@ def setup_tenant_middleware(app, auth_config: AuthConfig, audit_service=None):
     def setup_tenant_context():
         """Setup tenant context for each request."""
         # Extract and validate tenant ID
-        tenant_id = middleware.extract_tenant_id(request)
+        tenant_id = middleware.extract_tenant_id(get_request())
         if tenant_id:
             g.tenant_id = tenant_id
     
@@ -212,11 +250,12 @@ def require_tenant(func: Callable) -> Callable:
     """Decorator to require tenant ID in request."""
     @wraps(func)
     def decorated_function(*args, **kwargs):
-        from flask import current_app, g, jsonify
+        from flask import current_app
         
         if not hasattr(current_app, 'tenant_middleware'):
             logger.warning("Tenant middleware not configured")
-            return jsonify({'error': 'Tenant middleware not configured'}), 500
+            resp = jsonify({'error': 'Tenant middleware not configured'})
+            return resp if isinstance(resp, tuple) else (resp, 500)
         
         return current_app.tenant_middleware.require_tenant(func)(*args, **kwargs)
     
@@ -231,7 +270,8 @@ def enforce_tenant_isolation(func: Callable) -> Callable:
         
         if not hasattr(current_app, 'tenant_middleware'):
             logger.warning("Tenant middleware not configured")
-            return jsonify({'error': 'Tenant middleware not configured'}), 500
+            resp = jsonify({'error': 'Tenant middleware not configured'})
+            return resp if isinstance(resp, tuple) else (resp, 500)
         
         return current_app.tenant_middleware.enforce_tenant_isolation(func)(*args, **kwargs)
     
@@ -246,7 +286,8 @@ def require_device_access(func: Callable) -> Callable:
         
         if not hasattr(current_app, 'tenant_middleware'):
             logger.warning("Tenant middleware not configured")
-            return jsonify({'error': 'Tenant middleware not configured'}), 500
+            resp = jsonify({'error': 'Tenant middleware not configured'})
+            return resp if isinstance(resp, tuple) else (resp, 500)
         
         return current_app.tenant_middleware.require_device_access(func)(*args, **kwargs)
     

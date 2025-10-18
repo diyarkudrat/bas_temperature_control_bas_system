@@ -6,7 +6,7 @@ import secrets
 from typing import Dict, Any, Optional
 from datetime import datetime, timedelta
 from google.cloud import firestore
-from google.cloud.exceptions import NotFound, PermissionDenied
+from google.api_core.exceptions import NotFound, PermissionDenied
 
 logger = logging.getLogger(__name__)
 

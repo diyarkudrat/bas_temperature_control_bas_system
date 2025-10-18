@@ -7,7 +7,7 @@ from google.cloud import firestore
 from google.auth import default
 
 from server.auth.firestore_client import FirestoreClientFactory, get_firestore_client
-from tests.utils.assertions import assert_equals, assert_not_equals, assert_true, assert_false, assert_is_not_none, assert_is_instance, assert_raises
+from tests.utils.assertions import assert_equals, assert_not_equals, assert_true, assert_false, assert_is_none, assert_is_not_none, assert_is_instance, assert_raises
 
 
 @pytest.mark.auth
@@ -15,6 +15,27 @@ from tests.utils.assertions import assert_equals, assert_not_equals, assert_true
 class TestFirestoreClientFactory:
     """Test cases for FirestoreClientFactory."""
     
+    def test_create_client_unsets_emulator_env_for_production(self):
+        """Ensure production client creation unsets emulator env var if present."""
+        original_env = os.environ.get('FIRESTORE_EMULATOR_HOST')
+        os.environ['FIRESTORE_EMULATOR_HOST'] = 'localhost:9999'
+        try:
+            with patch('server.auth.firestore_client.firestore.Client') as mock_client_class:
+                mock_client = Mock()
+                mock_client_class.return_value = mock_client
+                result = FirestoreClientFactory.create_client(project_id="prod-project")
+
+                # Env var should be removed for production clients
+                assert_true('FIRESTORE_EMULATOR_HOST' not in os.environ, "Should unset emulator host env var for production")
+                mock_client_class.assert_called_once_with(project="prod-project")
+                assert_equals(result, mock_client, "Should return created client")
+        finally:
+            if original_env is None:
+                if 'FIRESTORE_EMULATOR_HOST' in os.environ:
+                    del os.environ['FIRESTORE_EMULATOR_HOST']
+            else:
+                os.environ['FIRESTORE_EMULATOR_HOST'] = original_env
+
     def test_create_client_with_emulator_host(self):
         """Test creating client with emulator host."""
         emulator_host = "127.0.0.1:8080"
@@ -351,3 +372,22 @@ class TestGetFirestoreClient:
                 project_id="test-project",
                 emulator_host=None
             )
+
+    def test_get_firestore_client_handles_is_mock_attr_exception(self):
+        """Ensure getattr exception for _is_mock is handled and function proceeds."""
+        class WeirdConfig:
+            def __init__(self):
+                self.use_firestore_telemetry = False
+                self.use_firestore_auth = False
+                self.use_firestore_audit = False
+                self.gcp_project_id = None
+                self.firestore_emulator_host = None
+
+            def __getattribute__(self, name):
+                if name == '_is_mock':
+                    raise RuntimeError('boom')
+                return object.__getattribute__(self, name)
+
+        cfg = WeirdConfig()
+        result = get_firestore_client(cfg)
+        assert_is_none(result, "Should return None even if _is_mock getattr raises")

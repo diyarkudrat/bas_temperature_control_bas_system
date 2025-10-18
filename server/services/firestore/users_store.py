@@ -5,7 +5,7 @@ import logging
 import uuid
 from typing import Dict, Any, Optional, List
 from google.cloud import firestore
-from google.cloud.exceptions import NotFound, PermissionDenied
+from google.api_core.exceptions import NotFound, PermissionDenied
 
 from .base import BaseRepository, TimestampedRepository, QueryOptions, PaginatedResult, OperationResult
 from .models import User, create_user, validate_username, validate_role
@@ -13,12 +13,13 @@ from .models import User, create_user, validate_username, validate_role
 logger = logging.getLogger(__name__)
 
 
-class UsersRepository(BaseRepository, TimestampedRepository):
+class UsersRepository(TimestampedRepository):
     """Modern users repository with validation and timestamping."""
     
     def __init__(self, client: firestore.Client):
         """Initialize with Firestore client."""
-        super().__init__(client, 'users')
+        # Explicitly initialize base to avoid MRO issues
+        BaseRepository.__init__(self, client, 'users')
         self.required_fields = ['username', 'password_hash', 'salt']
     
     def create(self, entity: User) -> OperationResult[str]:
@@ -131,18 +132,18 @@ class UsersRepository(BaseRepository, TimestampedRepository):
             # Verify password hash
             if user.password_hash != password_hash:
                 # Increment failed attempts
-                self.increment_failed_attempts(user.user_id)
+                self.increment_failed_attempts_by_id(user.user_id)
                 return OperationResult(success=False, error="Invalid credentials", error_code="INVALID_CREDENTIALS")
             
             # Clear failed attempts on successful auth
-            self.clear_failed_attempts(user.user_id)
+            self.clear_failed_attempts_by_id(user.user_id)
             
             return OperationResult(success=True, data=user)
             
         except Exception as e:
             self._handle_firestore_error("authenticate user", e)
     
-    def update_last_login(self, user_id: str) -> OperationResult[bool]:
+    def update_last_login_by_id(self, user_id: str) -> OperationResult[bool]:
         """Update user's last login timestamp."""
         try:
             current_time = int(time.time() * 1000)
@@ -152,7 +153,7 @@ class UsersRepository(BaseRepository, TimestampedRepository):
         except Exception as e:
             self._handle_firestore_error("update last login", e)
     
-    def increment_failed_attempts(self, user_id: str) -> OperationResult[bool]:
+    def increment_failed_attempts_by_id(self, user_id: str) -> OperationResult[bool]:
         """Increment failed login attempts for user."""
         try:
             user_result = self.get_by_id(user_id)
@@ -168,7 +169,7 @@ class UsersRepository(BaseRepository, TimestampedRepository):
         except Exception as e:
             self._handle_firestore_error("increment failed attempts", e)
     
-    def clear_failed_attempts(self, user_id: str) -> OperationResult[bool]:
+    def clear_failed_attempts_by_id(self, user_id: str) -> OperationResult[bool]:
         """Clear failed login attempts for user."""
         try:
             result = self.update(user_id, {'failed_attempts': 0})
@@ -177,16 +178,19 @@ class UsersRepository(BaseRepository, TimestampedRepository):
         except Exception as e:
             self._handle_firestore_error("clear failed attempts", e)
     
-    def lock_user(self, user_id: str, lock_until_ms: int) -> OperationResult[bool]:
+    def lock_user_by_id(self, user_id: str, lock_until_ms: int) -> OperationResult[bool]:
         """Lock user account until specified time."""
         try:
-            result = self.update(user_id, {'locked_until': lock_until_ms})
-            return OperationResult(success=result.success, data=result.success)
+            # Perform direct update without read-after-write to avoid requiring a valid document payload
+            updates = self._add_timestamps({'locked_until': lock_until_ms}, include_updated=True)
+            doc_ref = self.collection.document(user_id)
+            doc_ref.update(updates)
+            return OperationResult(success=True, data=True)
             
         except Exception as e:
             self._handle_firestore_error("lock user", e)
     
-    def update_password(self, user_id: str, new_password_hash: str, new_salt: str,
+    def update_password_by_id(self, user_id: str, new_password_hash: str, new_salt: str,
                        algorithm_params: Optional[Dict] = None) -> OperationResult[bool]:
         """Update user password and add to history."""
         try:
@@ -304,7 +308,7 @@ class UsersRepository(BaseRepository, TimestampedRepository):
             if not user_result.success or not user_result.data:
                 return False
             
-            result = self.update_last_login(user_result.data.user_id)
+            result = self.update_last_login_by_id(user_result.data.user_id)
             return result.success
             
         except Exception as e:
@@ -318,7 +322,7 @@ class UsersRepository(BaseRepository, TimestampedRepository):
             if not user_result.success or not user_result.data:
                 return False
             
-            result = self.increment_failed_attempts(user_result.data.user_id)
+            result = self.increment_failed_attempts_by_id(user_result.data.user_id)
             return result.success
             
         except Exception as e:
@@ -332,7 +336,7 @@ class UsersRepository(BaseRepository, TimestampedRepository):
             if not user_result.success or not user_result.data:
                 return False
             
-            result = self.clear_failed_attempts(user_result.data.user_id)
+            result = self.clear_failed_attempts_by_id(user_result.data.user_id)
             return result.success
             
         except Exception as e:
@@ -346,7 +350,7 @@ class UsersRepository(BaseRepository, TimestampedRepository):
             if not user_result.success or not user_result.data:
                 return False
             
-            result = self.lock_user(user_result.data.user_id, lock_until_ms)
+            result = self.lock_user_by_id(user_result.data.user_id, lock_until_ms)
             return result.success
             
         except Exception as e:
@@ -374,7 +378,7 @@ class UsersRepository(BaseRepository, TimestampedRepository):
             if not user_result.success or not user_result.data:
                 return False
             
-            result = self.update_password(user_result.data.user_id, new_password_hash, new_salt, algorithm_params)
+            result = self.update_password_by_id(user_result.data.user_id, new_password_hash, new_salt, algorithm_params)
             return result.success
             
         except Exception as e:

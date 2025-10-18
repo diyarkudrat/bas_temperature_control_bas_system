@@ -1,6 +1,12 @@
 {
   "auth_enabled": true,
   "auth_mode": "user_password",
+  "use_firestore_telemetry": true,
+  "use_firestore_auth": false,
+  "use_firestore_audit": true,
+  "gcp_project_id": "bas-system-project",
+  "firestore_emulator_host": "",
+  "tenant_id_header": "X-BAS-Tenant",
   "session_timeout": 1800,
   "max_concurrent_sessions": 3,
   "session_rotation": true,

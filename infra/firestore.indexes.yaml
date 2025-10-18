@@ -1,0 +1,67 @@
+indexes:
+  # Telemetry: filters on tenant_id, device_id; order by timestamp_ms desc
+  - collectionGroup: telemetry
+    queryScope: COLLECTION
+    fields:
+      - fieldPath: tenant_id
+        order: ASCENDING
+      - fieldPath: device_id
+        order: ASCENDING
+      - fieldPath: timestamp_ms
+        order: DESCENDING
+
+  # Audit log: various filters with timestamp ordering
+  - collectionGroup: audit_log
+    queryScope: COLLECTION
+    fields:
+      - fieldPath: user_id
+        order: ASCENDING
+      - fieldPath: timestamp_ms
+        order: DESCENDING
+
+  - collectionGroup: audit_log
+    queryScope: COLLECTION
+    fields:
+      - fieldPath: event_type
+        order: ASCENDING
+      - fieldPath: timestamp_ms
+        order: DESCENDING
+
+  - collectionGroup: audit_log
+    queryScope: COLLECTION
+    fields:
+      - fieldPath: tenant_id
+        order: ASCENDING
+      - fieldPath: timestamp_ms
+        order: DESCENDING
+
+  # Devices: list for tenant ordered by created_at desc
+  - collectionGroup: devices
+    queryScope: COLLECTION
+    fields:
+      - fieldPath: tenant_id
+        order: ASCENDING
+      - fieldPath: created_at
+        order: DESCENDING
+
+  # Devices: inactive devices (inequality on last_seen) with ordering
+  - collectionGroup: devices
+    queryScope: COLLECTION
+    fields:
+      - fieldPath: tenant_id
+        order: ASCENDING
+      - fieldPath: last_seen
+        order: ASCENDING
+
+  # Sessions: user_id equality + expires_at inequality
+  - collectionGroup: sessions
+    queryScope: COLLECTION
+    fields:
+      - fieldPath: user_id
+        order: ASCENDING
+      - fieldPath: expires_at
+        order: ASCENDING
+
+fieldOverrides: []
+
+

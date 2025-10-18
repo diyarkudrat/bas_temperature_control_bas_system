@@ -5,7 +5,7 @@ import logging
 from typing import Dict, Any, Optional, List
 from datetime import datetime
 from google.cloud import firestore
-from google.cloud.exceptions import NotFound, PermissionDenied
+from google.api_core.exceptions import NotFound, PermissionDenied
 
 logger = logging.getLogger(__name__)
 

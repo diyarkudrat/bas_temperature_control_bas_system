@@ -3,6 +3,7 @@ Enhanced assertion utilities for better test error messages.
 """
 
 from typing import Any, Optional
+import builtins
 
 
 def assert_equals(actual: Any, expected: Any, message: str = "") -> None:
@@ -46,6 +47,10 @@ def assert_is_none(value: Any, message: str = "") -> None:
         if not message:
             error_msg = f"Expected None, but got {value}"
         raise AssertionError(error_msg)
+
+# Expose commonly used assertions via builtins for convenience in tests that
+# omit explicit imports (legacy pattern in some test files).
+builtins.assert_is_none = assert_is_none
 
 
 def assert_is_not_none(value: Any, message: str = "") -> None:

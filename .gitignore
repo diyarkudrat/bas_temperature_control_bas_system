@@ -58,6 +58,11 @@ server/*.db
 /config/config.py.local
 secrets.json
 config.local.py
+\n+# GCP service account keys (do NOT commit)
+secrets/*.json
+*.json.key
+*service-account*.json
+/server/config/auth_config.json.local
 
 # Log files (general)
 *.log

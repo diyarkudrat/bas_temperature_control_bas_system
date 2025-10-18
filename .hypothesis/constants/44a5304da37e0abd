@@ -1,0 +1,4 @@
+# file: /Users/diyarkudrat/BAS System Project/server/auth/config.py
+# hypothesis_version: 6.142.1
+
+[100, 300, 900, 1800, '0', '1', '1800', '3', '5', '900', 'AuthConfig', 'BAS_AUTH_ENABLED', 'BAS_AUTH_MODE', 'BAS_LOCKOUT_DURATION', 'BAS_SESSION_TIMEOUT', 'GOOGLE_CLOUD_PROJECT', 'TENANT_ID_HEADER', 'USE_FIRESTORE_AUDIT', 'USE_FIRESTORE_AUTH', 'X-BAS-Tenant', 'disabled', 'r', 'true', 'user_password']
