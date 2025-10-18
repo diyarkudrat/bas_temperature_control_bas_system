@@ -2,7 +2,9 @@
 
 ## 📘 Overview
 
-This guide explains how to set up **AI-assisted feature development tabs in Cursor** for the **Application and Network layers** of your Building Automation System (BAS) controller project. It defines the tabs, their models, usage rules, and example prompts.
+This guide explains how to set up **AI-assisted feature development tabs in Cursor** for the **Application and Network layers** of your Building Automation System (BAS) controller project. It defines the tabs, their models, usage rules, and example prompts. This whole setup is a fun experiment idea when developing with Cursor—adapt or simplify it to match your team’s style.
+
+Note: In this guide, “tabs” refers to Cursor chat windows/threads.
 
 ---
 
@@ -28,6 +30,37 @@ A structured, multi-tab AI workflow in Cursor that separates **design**, **criti
 
 ---
 
+## ℹ️ About `.cursorrules`
+
+**What it is**
+
+-.cursorrules is a small, repo-local rules file (in the project root) that Cursor reads to steer AI responses for this project.
+
+**Purpose**
+
+- Keep outputs consistent, small, and deterministic across tabs
+- Encode the 6‑tab workflow, roles, models, and allowed formats
+- Provide a shared handoff block and guardrails (e.g., no code in Design)
+
+**How Cursor uses it**
+
+- When you work in a tab or chat window, Cursor pairs your prompt with these rules to shape the answer: output size limits, table formats, and the exact handoff data to pass between tabs.
+
+**Quick walkthrough of sections**
+
+- **Refine Mode**: If a message starts with “REFINE:” or asks about the DDR, temporarily switch to conversational design clarification (no size limits), then return to the standard DDR format when asked.
+- **Tab 1 — Design (Grok‑4)**: Produce a DDR table (≤8 rows). Row format: `ID | statement | rationale | status | invariant?`. Include ≤200‑word summary and Top‑5 risks. No implementation or code.
+- **Tab 2 — Critique (Grok‑4 Fast Reasoning)**: Review only the DDR table and risks; output 5–12 concise bullets highlighting risks/blind spots. No re‑designing.
+- **Tab 3 — Implementation Plan (Grok‑4)**: Convert DDR into a Patch Plan table (≤12 rows): `file | op | functions/APIs | tests | perf/mem budget | risk`. No prose.
+- **Tab 4 — Implement (Grok Code Fast)**: Output unified diffs only, one per logical change, with brief explanation and a small test checklist. Don’t regenerate whole files; include line numbers.
+- **Tab 5 — Triage (Grok‑4 Fast Non‑Reasoning)**: Parse test/device logs into an actionable TODO/fixlist (≤10 items) plus a short root‑cause summary.
+- **Tab 6 — Sweep (Grok‑4)**: Audit only changed `application/`, `network/`, or `services/` files; return a brief summary and an issues table (file, line, type, severity).
+- **Handoff Format**: A compact block passed between tabs: short summary, decisions table, Top‑5 risks, and a Patch Plan excerpt.
+- **Tab Workflow**: The standard path: Design → Critique → Impl Plan → (Critique) → Implement → Triage → (Sweep).
+
+
+---
+
 ## 🧩 Tabs and Models
 
 | Tab Name                               | Model                     | Purpose                                                                           | Typical Output                      |
@@ -43,87 +76,7 @@ A structured, multi-tab AI workflow in Cursor that separates **design**, **criti
 
 ## 📋 Tab Rules and Prompts
 
-### **1. Design (grok-4)**
-
-**Rules:**
-
-* Output strictly formatted **DDR table** (≤8 rows).
-* Each row = `ID | statement (≤20w) | rationale (≤25w) | status | invariant? (Y/N)`.
-* Include a 200w summary and Top-5 risk list.
-* Never include implementation details.
-
-**Example prompt:**
-
-> Draft a Design Decision Record for the new HTTP authentication system. Include invariants for clockless HMAC auth, non-blocking I/O, and retry logic.
-
----
-
-### **2. Critique (grok-4-fast-reasoning)**
-
-**Rules:**
-
-* Only review the **decision table and risks**.
-* Produce ≤12 bullet points (risks, blind spots, counterexamples).
-* No re-writing or re-designing.
-
-**Example prompt:**
-
-> Review this DDR and list edge cases that could break auth or cause network lockups. Keep your response to 10 concise bullets.
-
----
-
-### **3. Implementation Plan (grok-4)**
-
-**Rules:**
-
-* Convert DDR into a **Patch Plan** (≤12 rows).
-* Each row = `file | op | functions/APIs | tests | perf/mem budget | risk`.
-* Include no prose or speculative design.
-
-**Example prompt:**
-
-> Create a Patch Plan to implement the approved DDR for non-blocking SSE and auth token verification.
-
----
-
-### **4. Implement (grok-code-fast-1)**
-
-**Rules:**
-
-* Generate **unified git patches** only (one per logical change).
-* Include short checklist: `pytest → mpremote deploy → device smoke`.
-* Never regenerate whole files unless explicitly asked.
-
-**Example prompt:**
-
-> Apply Patch Plan row #3 (network/sse.py). Implement non-blocking SSE with 20s heartbeat and jittered reconnects. Output a unified diff.
-
----
-
-### **5. Triage (grok-4-fast-non-reasoning)**
-
-**Rules:**
-
-* Input = test or device logs.
-* Output = actionable TODO/fixlist (≤10 items).
-
-**Example prompt:**
-
-> Parse this pytest output. Summarize root causes and list fixes ranked by impact.
-
----
-
-### **6. Sweep (grok-4)** *(Optional)*
-
-**Rules:**
-
-* Audit only changed `application/`, `network/`, or `services/` directories.
-* Search for blocking I/O, missing timeouts, unbounded buffers, or auth bypass.
-* Output a brief audit summary with file paths.
-
-**Example prompt:**
-
-> Audit all changed files for blocking socket calls and missing timeout handling. Return a short table of issues found.
+For exact per‑tab rules, output budgets, and example prompt formats, see `.cursorrules` in the project root. That file is the canonical source; use the table above for quick reference.
 
 ---
 
@@ -169,7 +122,3 @@ A structured, multi-tab AI workflow in Cursor that separates **design**, **criti
 * Token auth via HMAC (no clock dependence)
 * Telemetry stream uses NDJSON; heapΔ ≤3KB per tick
 * API handlers complete ≤150ms p95 latency
-
----
-
-**End of File**
