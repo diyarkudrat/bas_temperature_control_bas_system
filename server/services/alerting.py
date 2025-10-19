@@ -132,7 +132,7 @@ class AlertService:
         msg = self._build_email_message(
             subject=subject,
             to_addresses=to_list,
-            body_text=body_text,
+            body_text=self.minimize_content(body_text) if body_text else None,
             body_html=body_html,
             from_email=cfg.from_email,
             attachments=attachments,
@@ -225,7 +225,7 @@ class AlertService:
                 **sender_params,
             }
             if body:
-                params["body"] = body
+                params["body"] = self.minimize_content(body)
             if media_urls:
                 params["media_url"] = media_urls
             if extra_params:
@@ -243,5 +243,29 @@ class AlertService:
         except Exception as exc:
             logger.error("AlertService: send_sms failed for %s: %s", to_number, exc)
             raise AlertingSendError("Failed to send SMS via Twilio") from exc
+
+
+    # --- Content minimization & secure links ---
+    def minimize_content(self, text: Optional[str], max_len: int = 480) -> str:
+        """
+        Trim content safely for SMS/plaintext; collapse whitespace and cap length.
+        """
+        try:
+            compact = " ".join((text or "").split())
+            return compact[:max_len]
+        except Exception:
+            return (text or "")[:max_len]
+
+    def secure_link_generator(self, base_url: str, params: Optional[Dict[str, str]] = None) -> str:
+        """
+        Build a link without embedding secrets; caller must pass non-sensitive params only.
+        """
+        if not params:
+            return base_url
+        try:
+            from urllib.parse import urlencode
+            return f"{base_url}?{urlencode(params)}"
+        except Exception:
+            return base_url
 
 
