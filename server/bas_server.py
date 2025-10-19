@@ -24,6 +24,10 @@ from auth import (
 from services.firestore.service_factory import get_service_factory
 from auth.tenant_middleware import TenantMiddleware
 
+# Alerting imports
+from services.alerting import AlertService
+from models.alert import Alert, AlertSeverity
+
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -220,9 +224,12 @@ session_manager = None
 audit_logger = None
 rate_limiter = None
 
-# Firestore global variables
+# Firestore / Alerting global variables
 firestore_factory = None
 tenant_middleware = None
+alert_service = AlertService()
+# Simple event hook registry
+_event_hooks = {}
 
 def init_auth():
     """Initialize authentication system."""
@@ -264,6 +271,7 @@ def init_auth():
         # Initialize services
         audit_logger = AuditLogger(database.db_path, firestore_factory)
         rate_limiter = RateLimiter(auth_config)
+        _init_alerting_service()
         
         logger.info("Authentication system initialized successfully")
         return True
@@ -271,6 +279,94 @@ def init_auth():
     except Exception as e:
         logger.error(f"Failed to initialize auth system: {e}")
         return False
+
+def _init_alerting_service():
+    """Initialize alerting; safe no-op if env/config is absent."""
+    try:
+        alert_service.init_twilio()
+        logger.info("Alerting service initialized")
+    except Exception as e:
+        logger.info(f"Alerting not initialized (skipped): {e}")
+
+def add_event_hook(event_name, callback):
+    """Register a callback for a named event."""
+    hooks = _event_hooks.setdefault(event_name, [])
+    hooks.append(callback)
+
+def _trigger_event(event_name, payload):
+    """Invoke registered callbacks for an event (best-effort)."""
+    for cb in _event_hooks.get(event_name, []):
+        try:
+            cb(payload)
+        except Exception as e:
+            logger.warning(f"Event hook error for {event_name}: {e}")
+
+def _trigger_alert(message, severity="error", *, sms_to=None, email_to=None, subject=None, metadata=None):
+    """Lightweight alert trigger; logs and continues on failure."""
+    try:
+        alert = Alert(
+            message=message,
+            severity=AlertSeverity.from_string(severity),
+            sms_to=list(sms_to or []),
+            email_to=list(email_to or []),
+            subject=subject,
+            tenant_id=getattr(g, 'tenant_id', None),
+            metadata=metadata or {},
+        )
+        # Prefer SMS when provided; otherwise log email intention (no SMTP config wired here)
+        for dest in alert.sms_to:
+            alert_service.send_sms(to_number=dest, body=alert.message)
+        if alert.email_to:
+            logger.info("Email targets present but no email_config provided; skipping email send")
+        logger.info("Alert triggered: %s (%s)", alert.message, alert.severity.value)
+        return True
+    except Exception as e:
+        logger.error("Failed to trigger alert: %s", e)
+        return False
+
+def _build_telemetry_payload(data):
+    return {
+        'timestamp': data.get('timestamp', time.time() * 1000),
+        'temp_tenths': data.get('temp_tenths', 0),
+        'sensor_ok': data.get('sensor_ok', False),
+        'setpoint_tenths': controller.setpoint_tenths,
+        'deadband_tenths': controller.deadband_tenths,
+        'cool_active': controller.cool_active,
+        'heat_active': controller.heat_active,
+        'state': controller.state
+    }
+
+def _store_telemetry_with_fallback(telemetry_data, data):
+    """Store telemetry in Firestore when enabled; fallback to SQLite."""
+    if firestore_factory and firestore_factory.is_telemetry_enabled():
+        try:
+            tenant_id = getattr(g, 'tenant_id', 'default')
+            device_id = data.get('device_id', 'unknown')
+            telemetry_service = firestore_factory.get_telemetry_service()
+            telemetry_service.add_telemetry(
+                tenant_id=tenant_id,
+                device_id=device_id,
+                timestamp_ms=int(telemetry_data['timestamp']),
+                temp_tenths=telemetry_data['temp_tenths'],
+                setpoint_tenths=telemetry_data['setpoint_tenths'],
+                deadband_tenths=telemetry_data['deadband_tenths'],
+                cool_active=telemetry_data['cool_active'],
+                heat_active=telemetry_data['heat_active'],
+                state=telemetry_data['state'],
+                sensor_ok=telemetry_data['sensor_ok']
+            )
+            logger.debug(f"Stored telemetry in Firestore for tenant={tenant_id}, device={device_id}")
+            return
+        except Exception as e:
+            logger.error(f"Failed to store telemetry in Firestore: {e}")
+    database.store_data(telemetry_data)
+
+def _handle_sensor_fault_alert(data, telemetry_data):
+    if telemetry_data.get('sensor_ok'):
+        return
+    payload = {"device_id": data.get('device_id', 'unknown')}
+    _trigger_event('sensor_fault', payload)
+    _trigger_alert("Sensor fault detected on device", severity="error", metadata=payload)
 
 @app.route('/')
 def dashboard():
@@ -333,46 +429,14 @@ def receive_sensor_data():
             data.get('sensor_ok', False)
         )
         
-        # Store in database
-        telemetry_data = {
-            'timestamp': data.get('timestamp', time.time() * 1000),
-            'temp_tenths': data.get('temp_tenths', 0),
-            'sensor_ok': data.get('sensor_ok', False),
-            'setpoint_tenths': controller.setpoint_tenths,
-            'deadband_tenths': controller.deadband_tenths,
-            'cool_active': controller.cool_active,
-            'heat_active': controller.heat_active,
-            'state': controller.state
-        }
+        # Build telemetry payload
+        telemetry_data = _build_telemetry_payload(data)
         
-        # Store in appropriate database based on feature flags
-        if firestore_factory and firestore_factory.is_telemetry_enabled():
-            try:
-                # Store in Firestore with tenant isolation
-                tenant_id = getattr(g, 'tenant_id', 'default')
-                device_id = data.get('device_id', 'unknown')
-                
-                telemetry_service = firestore_factory.get_telemetry_service()
-                telemetry_service.add_telemetry(
-                    tenant_id=tenant_id,
-                    device_id=device_id,
-                    timestamp_ms=int(telemetry_data['timestamp']),
-                    temp_tenths=telemetry_data['temp_tenths'],
-                    setpoint_tenths=telemetry_data['setpoint_tenths'],
-                    deadband_tenths=telemetry_data['deadband_tenths'],
-                    cool_active=telemetry_data['cool_active'],
-                    heat_active=telemetry_data['heat_active'],
-                    state=telemetry_data['state'],
-                    sensor_ok=telemetry_data['sensor_ok']
-                )
-                logger.debug(f"Stored telemetry in Firestore for tenant={tenant_id}, device={device_id}")
-            except Exception as e:
-                logger.error(f"Failed to store telemetry in Firestore: {e}")
-                # Fallback to SQLite
-                database.store_data(telemetry_data)
-        else:
-            # Use SQLite as fallback or when Firestore is disabled
-            database.store_data(telemetry_data)
+        # Hooks and alerts (non-blocking best-effort)
+        _handle_sensor_fault_alert(data, telemetry_data)
+
+        # Store with fallback
+        _store_telemetry_with_fallback(telemetry_data, data)
         
         # Return control commands
         commands = controller.get_control_commands()
