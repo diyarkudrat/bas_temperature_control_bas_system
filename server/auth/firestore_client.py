@@ -91,13 +91,16 @@ def get_firestore_client(config) -> Optional[firestore.Client]:
             logger.debug("Firestore features not enabled")
             return None
             
-        # Prefer explicit config, but allow ADC fallback when project ID isn't provided
-        # In unit tests some configs are Mock but still expect client creation via patching;
-        # don't early return here, allow patched create_client to be called.
+        # Require explicit project_id or emulator_host; if neither is provided, do not create a client.
+        project_id = getattr(config, 'gcp_project_id', None)
+        emulator_host = getattr(config, 'firestore_emulator_host', None)
+        if not project_id and not emulator_host:
+            logger.debug("Firestore enabled but no project_id or emulator_host provided; skipping client init")
+            return None
 
         client = FirestoreClientFactory.create_client(
-            project_id=getattr(config, 'gcp_project_id', None),
-            emulator_host=getattr(config, 'firestore_emulator_host', None)
+            project_id=project_id,
+            emulator_host=emulator_host
         )
         
         logger.info("Firestore client initialized successfully")
