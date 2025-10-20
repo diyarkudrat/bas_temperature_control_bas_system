@@ -1,0 +1,105 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "AlertConfig",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["version", "providers", "routing"],
+  "properties": {
+    "version": {
+      "type": "string",
+      "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$"
+    },
+    "providers": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "twilio": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "account_sid": { "type": "string", "minLength": 5 },
+            "auth_token": { "type": "string", "minLength": 5 },
+            "from_number": { "type": "string" },
+            "messaging_service_sid": { "type": "string" }
+          },
+          "anyOf": [
+            { "required": ["account_sid", "auth_token", "from_number"] },
+            { "required": ["account_sid", "auth_token", "messaging_service_sid"] }
+          ]
+        },
+        "email": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "smtp_host": { "type": "string" },
+            "smtp_port": { "type": "integer", "minimum": 1, "maximum": 65535, "default": 587 },
+            "username": { "type": ["string", "null"] },
+            "password": { "type": ["string", "null"] },
+            "use_tls": { "type": "boolean", "default": true },
+            "from_email": { "type": ["string", "null"], "pattern": ".+@.+" }
+          },
+          "required": ["smtp_host", "smtp_port"]
+        }
+      }
+    },
+    "routing": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["default_channels"],
+      "properties": {
+        "default_channels": {
+          "type": "array",
+          "items": { "enum": ["sms", "email"] },
+          "uniqueItems": true
+        },
+        "severity_routes": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "array",
+            "items": { "enum": ["sms", "email"] },
+            "uniqueItems": true
+          },
+          "properties": {
+            "info": {},
+            "warning": {},
+            "error": {},
+            "critical": {}
+          }
+        },
+        "tenants": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "channels": {
+                "type": "array",
+                "items": { "enum": ["sms", "email"] },
+                "uniqueItems": true
+              },
+              "sms_to": {
+                "type": "array",
+                "items": { "type": "string" }
+              },
+              "email_to": {
+                "type": "array",
+                "items": { "type": "string", "pattern": ".+@.+" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "limits": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "max_sms_per_minute": { "type": "integer", "minimum": 1 },
+        "max_email_per_minute": { "type": "integer", "minimum": 1 },
+        "burst": { "type": "integer", "minimum": 1 }
+      }
+    }
+  }
+}
+
+

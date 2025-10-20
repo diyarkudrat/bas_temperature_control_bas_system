@@ -23,19 +23,12 @@ If the user’s message **starts with “REFINE:”** or contains questions abou
 
 ### Rules
 - Output strictly formatted **DDR table** (≤ 8 rows).  
-- Each row = `ID | statement (≤ 20 w) | rationale (≤ 25 w) | status | invariant? (Y/N)`.  
+- Each row = `ID | statement | rationale | status | invariant? (Y/N)`.  
 - Include ≤ 200-word summary + Top-5 risks.  
 - **Never** include implementation or code.  
 - Focus on **decisions, trade-offs, and constraints.**  
 - Keep responses deterministic and within size budgets.  
 
-#### 🔁 Refine Mode
-If the user’s message **starts with “REFINE:”** or contains questions about the DDR:  
-- Temporarily enter **Refine Mode.**  
-- Ignore output size limits and table requirements.  
-- Respond conversationally to clarify assumptions, design choices, or trade-offs.  
-- Summarize resolved points and offer to emit an updated DDR when ready.  
-- Return to standard DDR format after the user requests a final update.
 
 ### Example Prompts
 
@@ -105,11 +98,19 @@ If the user’s message **starts with “REFINE:”** or contains questions abou
 - **Total**: ~ 300 – 800 tokens  
 
 ### Rules
-- Generate **unified git patches** only (one per logical change).  
-- Include short checklist: `pytest → mpremote deploy → device smoke`.  
-- **Never** regenerate whole files unless explicitly asked.  
-- Keep diffs small and focused; prefer incremental changes.  
+- Generate **unified git patches** only (one per logical change).
+- Include short checklist: `pytest → mpremote deploy → device smoke`.
+- **Never** regenerate whole files unless explicitly asked.
+- Keep diffs small and focused; prefer incremental changes.
 - Include line numbers in patches.
+- Execute one row at a time in order; do not skip or batch rows.
+- Before coding each row:
+- Summarize the intended change, files to touch, and rationale.
+- Show a proposed diff/plan (what will be added/removed/modified).
+- Confirm I fully understand and explicitly get my approval.
+- After approval: implement only the changes for that row.
+- Present the actual diff, run tests/linters for the touched scope, and report results.
+- Pause for my review; do not proceed to the next row without my consent.
 
 ### Example Prompt
 
