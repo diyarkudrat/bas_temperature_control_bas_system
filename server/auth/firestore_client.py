@@ -26,12 +26,13 @@ class FirestoreClientFactory:
         """
         try:
             # Check if we should use emulator
-            if emulator_host:
+            use_emulators = os.getenv('USE_EMULATORS', '0') in {'1', 'true', 'True'}
+            if emulator_host or (use_emulators and os.getenv('FIRESTORE_EMULATOR_HOST')):
                 logger.info(f"Using Firestore emulator at {emulator_host}")
-                os.environ['FIRESTORE_EMULATOR_HOST'] = emulator_host
+                os.environ['FIRESTORE_EMULATOR_HOST'] = emulator_host or os.getenv('FIRESTORE_EMULATOR_HOST')
                 
                 # For emulator, we can use a dummy project ID
-                client_project_id = project_id or 'test-project'
+                client_project_id = project_id or os.getenv('GOOGLE_CLOUD_PROJECT') or 'local-dev'
                 client = firestore.Client(project=client_project_id)
                 logger.info(f"Firestore emulator client created for project: {client_project_id}")
                 return client
