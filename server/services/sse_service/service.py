@@ -1,6 +1,7 @@
 """Public SSEService facade over internal hub/backends."""
 from typing import Optional, Any, Iterator
 from .hub import _InProcessHub
+from .redis_backend import _RedisBackend, _RedisPyClientAdapter
 
 
 class SSEService:
@@ -21,7 +22,25 @@ class SSEService:
 		return self._hub.subscriber_count()
 
 	def attach_redis(self, *args, **kwargs) -> None:
-		# Intentionally no-op until backend is provided
-		pass
+		"""Attach a Redis backend using boundary-first client adapter.
+
+		Constructor-injected via composition root; this method is a thin
+		adapter to keep callsites stable during Phase 2. Accepts either a
+		redis-py client via `client=...` or connection params via `url`.
+		"""
+		client = kwargs.get("client")
+		url = kwargs.get("url")
+		if client is None and url is None:
+			return
+		try:
+			if client is None and url is not None:
+				# Lazy import to avoid hard dependency at import time
+				import redis  # type: ignore
+				client = redis.Redis.from_url(url)
+			adapter = _RedisPyClientAdapter(client)
+			self._redis = _RedisBackend(adapter)
+		except Exception:
+			# Keep in-process hub if Redis cannot be attached
+			self._redis = None
 
 

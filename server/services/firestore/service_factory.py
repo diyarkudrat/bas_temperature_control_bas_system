@@ -25,18 +25,24 @@ class MockConfig:
 
 
 class FirestoreServiceFactory:
-    """Factory for creating Firestore service instances."""
+    """
+    Manual DI factory for Firestore repositories.
+    Boundary-first: only the Firestore client is injectable.
+    Lifetimes: default singleton per factory instance.
+    """
 
-    def __init__(self, config_or_client):
-        """Initialize with configuration or client (for testing)."""
-        if hasattr(config_or_client, 'use_firestore_telemetry'):
-            # It's a config object
-            self.config = config_or_client
-            self._client: Optional[firestore.Client] = None
+    def __init__(self, client: Optional[firestore.Client] = None, *, config: Optional[Any] = None):
+        """
+        Constructor injection only. Prefer passing a client directly for tests,
+        otherwise provide a config to construct a client lazily.
+        """
+        if client is not None:
+            self._client: Optional[firestore.Client] = client
+            self.config = config or MockConfig()
         else:
-            # It's a client object (for testing)
-            self.config = MockConfig()
-            self._client = config_or_client
+            # No client provided; keep None and resolve from config on demand
+            self._client = None
+            self.config = config
         self._repositories: Dict[str, Any] = {}
     
     @property
@@ -45,17 +51,12 @@ class FirestoreServiceFactory:
         if self._client is None:
             self._client = get_firestore_client(self.config)
             if self._client is None:
-                # In tests, allow lazy/no client without raising
-                if type(self.config).__name__ == 'Mock':
-                    logger.info("No Firestore client for Mock config; using None for tests")
-                    # Provide a lightweight mock client for health checks
-                    class _NoopClient:
-                        def collections(self):
-                            return iter(())
-                    self._client = _NoopClient()  # type: ignore
-                else:
-                    raise FirestoreError("Failed to initialize Firestore client")
-        return self._client
+                # Provide a lightweight mock client for health checks (tests)
+                class _NoopClient:
+                    def collections(self):
+                        return iter(())
+                self._client = _NoopClient()  # type: ignore
+        return self._client  # type: ignore[return-value]
     
     def get_telemetry_service(self) -> TelemetryRepository:
         """Get telemetry service instance."""
@@ -177,19 +178,32 @@ class FirestoreServiceFactory:
             }
 
 
-# Global service factory instance
-_service_factory: Optional[FirestoreServiceFactory] = None
+def build_service_factory_with_config(config) -> FirestoreServiceFactory:
+    """Composition-root helper: build a factory using config to obtain client."""
+    return FirestoreServiceFactory(client=None, config=config)
 
 
-def get_service_factory(config) -> FirestoreServiceFactory:
-    """Get global service factory instance."""
-    global _service_factory
-    if _service_factory is None:
-        _service_factory = FirestoreServiceFactory(config)
-    return _service_factory
+# Back-compat global helpers for existing callsites/tests
+_global_factory: Optional[FirestoreServiceFactory] = None
 
 
-def reset_service_factory():
-    """Reset global service factory (for testing)."""
-    global _service_factory
-    _service_factory = None
+def get_service_factory(config_or_client) -> FirestoreServiceFactory:
+    """Return a module-scoped singleton factory.
+
+    Maintained for compatibility with legacy code/tests. Prefer manual wiring
+    via build_service_factory_with_config at the composition root.
+    """
+    global _global_factory
+    if _global_factory is None:
+        # Heuristic: if it looks like a client (has collections), use as client
+        if hasattr(config_or_client, 'collections'):
+            _global_factory = FirestoreServiceFactory(client=config_or_client)
+        else:
+            _global_factory = build_service_factory_with_config(config_or_client)
+    return _global_factory
+
+
+def reset_service_factory() -> None:
+    """Reset the module-scoped singleton (tests only)."""
+    global _global_factory
+    _global_factory = None

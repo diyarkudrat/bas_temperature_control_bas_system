@@ -7,7 +7,7 @@ from typing import Dict, Any, Optional, List
 from google.cloud import firestore
 from google.api_core.exceptions import NotFound, PermissionDenied
 
-from .base import BaseRepository, TimestampedRepository, QueryOptions, PaginatedResult, OperationResult
+from .base import BaseRepository, TimestampedRepository, QueryOptions, PaginatedResult, OperationResult, FirestoreClientBoundary
 from .models import User, create_user, validate_username, validate_role
 
 logger = logging.getLogger(__name__)
@@ -16,7 +16,7 @@ logger = logging.getLogger(__name__)
 class UsersRepository(TimestampedRepository):
     """Modern users repository with validation and timestamping."""
     
-    def __init__(self, client: firestore.Client):
+    def __init__(self, client: FirestoreClientBoundary):
         """Initialize with Firestore client."""
         # Explicitly initialize base to avoid MRO issues
         BaseRepository.__init__(self, client, 'users')

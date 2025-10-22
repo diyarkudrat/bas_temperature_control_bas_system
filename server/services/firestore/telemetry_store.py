@@ -8,7 +8,7 @@ from datetime import datetime
 from google.cloud import firestore
 from google.api_core.exceptions import NotFound, PermissionDenied
 
-from .base import TenantAwareRepository, TimestampedRepository, QueryOptions, PaginatedResult, OperationResult
+from .base import TenantAwareRepository, TimestampedRepository, QueryOptions, PaginatedResult, OperationResult, FirestoreClientBoundary
 from .models import TelemetryRecord, create_telemetry_record
 
 logger = logging.getLogger(__name__)
@@ -19,7 +19,7 @@ DEFAULT_QUERY_TIMEOUT_S = 15
 class TelemetryRepository(TenantAwareRepository, TimestampedRepository):
     """Modern telemetry repository with multi-tenant support and timestamping."""
     
-    def __init__(self, client: firestore.Client):
+    def __init__(self, client: FirestoreClientBoundary):
         """Initialize with Firestore client."""
         super().__init__(client, 'telemetry')
         self.required_fields = ['tenant_id', 'device_id', 'temp_tenths', 'sensor_ok']

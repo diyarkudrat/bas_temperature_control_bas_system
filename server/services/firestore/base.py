@@ -3,7 +3,7 @@
 import logging
 import time
 from abc import ABC, abstractmethod
-from typing import Dict, Any, Optional, List, TypeVar, Generic
+from typing import Dict, Any, Optional, List, TypeVar, Generic, Protocol
 from dataclasses import dataclass
 from datetime import datetime
 from google.cloud import firestore
@@ -74,10 +74,16 @@ class ValidationError(FirestoreError):
         super().__init__(message, "VALIDATION_ERROR", original_error)
 
 
+class FirestoreClientBoundary(Protocol):
+    """Boundary-first protocol for Firestore-like clients used by repositories."""
+    def collection(self, name: str) -> Any: ...
+    def collections(self) -> Any: ...
+
+
 class BaseRepository(ABC, Generic[T, K]):
     """Base repository interface for Firestore operations."""
     
-    def __init__(self, client: firestore.Client, collection_name: str):
+    def __init__(self, client: FirestoreClientBoundary, collection_name: str):
         """Initialize repository with Firestore client and collection name."""
         self.client = client
         self.collection = client.collection(collection_name)
@@ -134,7 +140,7 @@ class BaseRepository(ABC, Generic[T, K]):
             'utc_timestamp': utc_timestamp
         }
     
-    def _apply_query_options(self, query: firestore.Query, options: QueryOptions) -> firestore.Query:
+    def _apply_query_options(self, query: Any, options: QueryOptions) -> Any:
         """Apply query options to Firestore query."""
         # Apply filters
         if options.filters:
