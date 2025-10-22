@@ -236,3 +236,57 @@ class _RedisBackend:
 			pass
 
 
+# ------------------------------
+# redis-py adapter (internal)
+# ------------------------------
+
+class _RedisPyClientAdapter:
+    """
+    Adapter around redis-py to match the minimal _RedisClient protocol.
+    Boundary-first: narrow surface for publishing and simple subscription
+    with polling via pubsub.get_message.
+    """
+
+    def __init__(self, redis_client: "Any") -> None:
+        self._client = redis_client
+        self._pubsub = None
+
+    def publish(self, channel: str, message: bytes) -> int:
+        return int(self._client.publish(channel, message) or 0)
+
+    def subscribe(self, channel: str) -> Any:
+        # Lazily create pubsub; ensure single subscription context
+        if self._pubsub is None:
+            self._pubsub = self._client.pubsub()
+        self._pubsub.subscribe(channel)
+        return self._pubsub
+
+    def get_message(self, timeout: float = 0.0) -> Optional[Dict[str, Any]]:
+        if self._pubsub is None:
+            return None
+        # redis-py expects timeout in seconds via blocking get_message
+        msg = self._pubsub.get_message(timeout=timeout)
+        return msg  # Already a dict or None
+
+    def unsubscribe(self, channel: str) -> None:
+        if self._pubsub is not None:
+            try:
+                self._pubsub.unsubscribe(channel)
+            except Exception:
+                pass
+
+    def close(self) -> None:
+        try:
+            if self._pubsub is not None:
+                try:
+                    self._pubsub.close()
+                except Exception:
+                    pass
+                self._pubsub = None
+        finally:
+            try:
+                self._client.close()
+            except Exception:
+                pass
+
+

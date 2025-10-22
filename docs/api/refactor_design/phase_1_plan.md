@@ -8,16 +8,14 @@ Set up local development environment with Redis and Firestore emulators, update 
 | file | op | functions/APIs | tests | perf/mem budget | risk |
 |------|----|----------------|-------|-----------------|------|
 | server/requirements.txt | modify | Add 'redis' and 'google-cloud-firestore' dependencies | N/A | N/A | Low - Dependency updates may require version checks |
-| scripts/setup_emulators.sh | add | Bash script to launch local Redis server and Firestore emulator | Manual test: Verify startup and connectivity | Startup &lt;60s, Mem &lt;500MB | Medium - Local env variations may affect reliability |
-| server/config/config.py | modify | Add config vars for emulator hosts/ports (e.g., EMULATOR_REDIS_URL) | Unit tests for config loading and validation | Load time &lt;5ms | Low - Simple config extension |
+| scripts/setup_emulators.sh | add | Bash script to launch local Redis server and Firestore emulator | N/A | Startup &lt;60s, Mem &lt;500MB | Medium - Local env variations may affect reliability |
+| server/config/config.py | modify | Add config vars for emulator hosts/ports (e.g., EMULATOR_REDIS_URL) | N/A | Load time &lt;5ms | Low - Simple config extension |
 | docs/api/refactor_design/existing_services_refactoring.md | modify | Refine Decisions table and Multi-Phase Plan based on reviews | N/A | N/A | Low - Doc updates only |
 | docs/api/refactor_design/api_design.md | modify | Update Decisions and Top-7 Risks with refinements | N/A | N/A | Low - Potential for minor inconsistencies if not reviewed |
-| tests/fixtures/emulator_fixtures.py | add | Pytest fixtures for mocked Redis and Firestore emulators | Integration tests for fixture setup | Setup &lt;100ms | Medium - Ensures test isolation |
-| server/services/sse_service/factory.py | modify | Add factory option for local Redis backend | Unit tests for factory creation | Init &lt;20ms | Low - Extends existing factory |
-| server/services/firestore/__init__.py | modify | Add emulator mode initialization | Unit tests for client in emulator mode | Init &lt;50ms, Mem &lt;10MB | Medium - Affects data access patterns |
+| server/services/sse_service/factory.py | modify | Add factory option for local Redis backend | N/A | Init &lt;20ms | Low - Extends existing factory |
+| server/services/firestore/__init__.py | modify | Add emulator mode initialization | N/A | Init &lt;50ms, Mem &lt;10MB | Medium - Affects data access patterns |
 | infra/redis.config | add | Configuration file for local Redis settings | N/A | N/A | Low - Basic config file |
-| tests/unit/test_config.py | modify | Add tests for new emulator config vars | pytest | &lt;10ms per test | Low - Expands existing test suite |
-| server/auth/firestore_client.py | modify | Support for Firestore emulator connection | Unit tests for client connectivity | Connect &lt;100ms | Medium - Critical for auth isolation |
+| server/auth/firestore_client.py | modify | Support for Firestore emulator connection | N/A | Connect &lt;100ms | Medium - Critical for auth isolation |
 | README.md | modify | Update setup instructions with emulator guide | N/A | N/A | Low - Documentation enhancement |
 
 ## Notes

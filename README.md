@@ -186,6 +186,29 @@ tail -f server/logs/server.log
 cd server && source venv/bin/activate && python3 bas_server.py
 ```
 
+### Local Emulators (Redis + Firestore)
+
+For fast, cost-free local development, you can run Redis and the Firestore emulator:
+
+```bash
+# Start emulators and export env vars for current shell
+./scripts/setup_emulators.sh
+
+# Environment variables set by the script
+# USE_EMULATORS=1
+# EMULATOR_REDIS_URL=redis://127.0.0.1:6379
+# FIRESTORE_EMULATOR_HOST=127.0.0.1:8080
+# GOOGLE_CLOUD_PROJECT=local-dev
+
+# Then start the server as usual
+./scripts/start_bas.sh --server-only
+```
+
+Notes:
+- Redis config for local dev is in `infra/redis.config`.
+- When `USE_EMULATORS=1`, services prefer local Redis and Firestore emulator automatically.
+- If Redis/Firestore CLI tools are not installed, the script will skip starting them but still export env vars.
+
 ### Authentication & User Management
 The system includes comprehensive authentication with user management:
 

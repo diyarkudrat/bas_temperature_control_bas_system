@@ -21,7 +21,7 @@ from auth import (
 )
 
 # Firestore imports
-from services.firestore.service_factory import get_service_factory
+from services.firestore.service_factory import build_service_factory_with_config
 from auth.tenant_middleware import TenantMiddleware
 
 # Configure logging
@@ -242,7 +242,8 @@ def init_auth():
         # Initialize Firestore if enabled
         if any([auth_config.use_firestore_telemetry, auth_config.use_firestore_auth, auth_config.use_firestore_audit]):
             logger.info("Initializing Firestore services")
-            firestore_factory = get_service_factory(auth_config)
+            # Manual composition root: construct factory with config
+            firestore_factory = build_service_factory_with_config(auth_config)
             
             # Health check
             health = firestore_factory.health_check()
