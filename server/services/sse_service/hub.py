@@ -47,17 +47,18 @@ class _InProcessHub:
 			self._subscribers[client_id] = q
 		logger.info("SSE subscriber added: %s (total=%d)", client_id, len(self._subscribers))
 
-		last_send = time.time()
+        last_send = time.monotonic()
 		try:
 			while True:
-				now = time.time()
+                now = time.monotonic()
 				if now - last_send >= self._heartbeat_interval_s:
-					hb = _format_sse({"ts": int(now * 1000)}, event="heartbeat", id_value=self._next_id())
+                    # Use wall clock for payload timestamp while using monotonic for scheduling
+                    hb = _format_sse({"ts": int(time.time() * 1000)}, event="heartbeat", id_value=self._next_id())
 					yield hb.encode("utf-8")
 					last_send = now
 				try:
 					frame = q.get(timeout=0.5)
-					last_send = time.time()
+                    last_send = time.monotonic()
 					yield frame.encode("utf-8")
 				except Empty:
 					continue

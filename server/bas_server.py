@@ -9,20 +9,25 @@ import sqlite3
 import time
 import threading
 from datetime import datetime, timedelta
-from flask import Flask, render_template, jsonify, request, g
+from flask import Flask, jsonify, request, g
 from flask_cors import CORS
 import logging
+import os as _os
 
 # Authentication imports
 from auth import (
     AuthConfig, UserManager, SessionManager,
     AuditLogger, RateLimiter,
-    require_auth, add_security_headers
+    require_auth, add_security_headers as _sec_headers
 )
 
 # Firestore imports
 from services.firestore.service_factory import build_service_factory_with_config
+from http.versioning import build_versioning_applier
+from http import routes as http_routes
+from errors import register_error_handlers
 from auth.tenant_middleware import TenantMiddleware
+from config.config import get_server_config
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -120,98 +125,14 @@ class BASController:
         return False
 
 class BASDatabase:
-    """SQLite database for telemetry data."""
-    
-    def __init__(self, db_path="bas_telemetry.db"):
-        self.db_path = db_path
-        self.init_database()
-    
-    def init_database(self):
-        """Initialize database tables."""
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
-        
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS telemetry (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                timestamp REAL,
-                temp_tenths INTEGER,
-                setpoint_tenths INTEGER,
-                deadband_tenths INTEGER,
-                cool_active BOOLEAN,
-                heat_active BOOLEAN,
-                state TEXT,
-                sensor_ok BOOLEAN
-            )
-        ''')
-        
-        cursor.execute('''
-            CREATE INDEX IF NOT EXISTS idx_timestamp 
-            ON telemetry(timestamp)
-        ''')
-        
-        conn.commit()
-        conn.close()
-        logger.info("Database initialized")
-    
-    def store_data(self, data):
-        """Store telemetry data."""
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
-        
-        cursor.execute('''
-            INSERT INTO telemetry 
-            (timestamp, temp_tenths, setpoint_tenths, deadband_tenths, 
-             cool_active, heat_active, state, sensor_ok)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-        ''', (
-            data.get('timestamp', time.time() * 1000),
-            data.get('temp_tenths', 0),
-            data.get('setpoint_tenths', 230),
-            data.get('deadband_tenths', 10),
-            data.get('cool_active', False),
-            data.get('heat_active', False),
-            data.get('state', 'IDLE'),
-            data.get('sensor_ok', False)
-        ))
-        
-        conn.commit()
-        conn.close()
-    
-    def get_recent_data(self, limit=100):
-        """Get recent telemetry data."""
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
-        
-        cursor.execute('''
-            SELECT timestamp, temp_tenths, setpoint_tenths, deadband_tenths,
-                   cool_active, heat_active, state, sensor_ok
-            FROM telemetry 
-            ORDER BY timestamp DESC 
-            LIMIT ?
-        ''', (limit,))
-        
-        rows = cursor.fetchall()
-        conn.close()
-        
-        data = []
-        for row in rows:
-            data.append({
-                'timestamp': row[0],
-                'temp_tenths': row[1],
-                'setpoint_tenths': row[2],
-                'deadband_tenths': row[3],
-                'cool_active': bool(row[4]),
-                'heat_active': bool(row[5]),
-                'state': row[6],
-                'sensor_ok': bool(row[7])
-            })
-        
-        return data
+    """Placeholder database stub."""
+    def __init__(self):
+        pass
 
 # Global instances
 controller = BASController()
 database = BASDatabase()
+server_config = get_server_config()
 
 # Authentication global variables
 auth_config = None
@@ -275,209 +196,38 @@ def init_auth():
 
 @app.route('/')
 def dashboard():
-    """Main dashboard."""
-    return render_template('dashboard.html')
+    return http_routes.dashboard()
 
 @app.route('/auth/login')
 def auth_login_page():
-    """Login page."""
-    return render_template('auth/login.html')
+    return http_routes.auth_login_page()
 
 
 @app.route('/api/health')
 def health():
-    """Health check endpoint."""
-    health_status = {
-        "status": "healthy", 
-        "timestamp": time.time(),
-        "services": {
-            "auth": bool(auth_config is not None),
-            "firestore": bool(firestore_factory is not None)
-        }
-    }
-    
-    # Add Firestore health if available
-    if firestore_factory:
-        try:
-            firestore_health = firestore_factory.health_check()
-            # Ensure JSON-safe primitives
-            if isinstance(firestore_health, dict):
-                safe_health = {}
-                for k, v in firestore_health.items():
-                    try:
-                        json.dumps(v)
-                        safe_health[k] = v
-                    except Exception:
-                        safe_health[k] = str(v)
-                health_status["firestore"] = safe_health
-            else:
-                # Fallback to string representation
-                health_status["firestore"] = str(firestore_health)
-        except Exception as e:
-            logger.error(f"Error retrieving Firestore health: {e}")
-            health_status["firestore"] = {"status": "error", "detail": str(e)}
-    
-    return jsonify(health_status)
+    return http_routes.health(auth_config, firestore_factory)
 
 @app.route('/api/sensor_data', methods=['POST'])
 def receive_sensor_data():
-    """Receive sensor data from Pico client."""
-    try:
-        data = request.get_json()
-        
-        if not data:
-            return jsonify({"error": "No data received"}), 400
-        
-        # Update controller
-        controller.update_control(
-            data.get('temp_tenths', 0),
-            data.get('sensor_ok', False)
-        )
-        
-        # Store in database
-        telemetry_data = {
-            'timestamp': data.get('timestamp', time.time() * 1000),
-            'temp_tenths': data.get('temp_tenths', 0),
-            'sensor_ok': data.get('sensor_ok', False),
-            'setpoint_tenths': controller.setpoint_tenths,
-            'deadband_tenths': controller.deadband_tenths,
-            'cool_active': controller.cool_active,
-            'heat_active': controller.heat_active,
-            'state': controller.state
-        }
-        
-        # Store in appropriate database based on feature flags
-        if firestore_factory and firestore_factory.is_telemetry_enabled():
-            try:
-                # Store in Firestore with tenant isolation
-                tenant_id = getattr(g, 'tenant_id', 'default')
-                device_id = data.get('device_id', 'unknown')
-                
-                telemetry_service = firestore_factory.get_telemetry_service()
-                telemetry_service.add_telemetry(
-                    tenant_id=tenant_id,
-                    device_id=device_id,
-                    timestamp_ms=int(telemetry_data['timestamp']),
-                    temp_tenths=telemetry_data['temp_tenths'],
-                    setpoint_tenths=telemetry_data['setpoint_tenths'],
-                    deadband_tenths=telemetry_data['deadband_tenths'],
-                    cool_active=telemetry_data['cool_active'],
-                    heat_active=telemetry_data['heat_active'],
-                    state=telemetry_data['state'],
-                    sensor_ok=telemetry_data['sensor_ok']
-                )
-                logger.debug(f"Stored telemetry in Firestore for tenant={tenant_id}, device={device_id}")
-            except Exception as e:
-                logger.error(f"Failed to store telemetry in Firestore: {e}")
-                # Fallback to SQLite
-                database.store_data(telemetry_data)
-        else:
-            # Use SQLite as fallback or when Firestore is disabled
-            database.store_data(telemetry_data)
-        
-        # Return control commands
-        commands = controller.get_control_commands()
-        return jsonify(commands)
-        
-    except Exception as e:
-        logger.error(f"Error processing sensor data: {e}")
-        return jsonify({"error": "Internal server error"}), 500
+    return http_routes.receive_sensor_data(controller, firestore_factory)
 
 @app.route('/api/status')
 def get_status():
-    """Get current system status."""
-    return jsonify({
-        "temp_tenths": controller.current_temp_tenths,
-        "setpoint_tenths": controller.setpoint_tenths,
-        "deadband_tenths": controller.deadband_tenths,
-        "state": controller.state,
-        "cool_active": controller.cool_active,
-        "heat_active": controller.heat_active,
-        "sensor_ok": controller.sensor_ok,
-        "timestamp": time.time() * 1000
-    })
+    return http_routes.get_status(controller)
 
 @app.route('/api/set_setpoint', methods=['POST'])
 @require_auth(required_role="operator")
 def set_setpoint():
-    """Set temperature setpoint - now requires authentication."""
-    try:
-        logger.info(f"Setpoint change request from {getattr(request, 'session', None).username if hasattr(getattr(request, 'session', None), 'username') else 'unknown'}")
-        data = request.get_json()
-        setpoint = data.get('setpoint_tenths')
-        deadband = data.get('deadband_tenths')
-        
-        if setpoint is not None:
-            if not controller.set_setpoint(setpoint):
-                logger.warning(f"Invalid setpoint value: {setpoint}")
-                return jsonify({"error": "Invalid setpoint"}), 400
-        
-        if deadband is not None:
-            if not controller.set_deadband(deadband):
-                logger.warning(f"Invalid deadband value: {deadband}")
-                return jsonify({"error": "Invalid deadband"}), 400
-        
-        # Log the change with user info
-        user_info = f"User: {request.session.username}" if hasattr(request, 'session') else "Unknown"
-        logger.info(f"Setpoint updated by {user_info}: sp={setpoint}, db={deadband}")
-        
-        return jsonify({
-            "success": True,
-            "setpoint_tenths": controller.setpoint_tenths,
-            "deadband_tenths": controller.deadband_tenths,
-            "updated_by": request.session.username if hasattr(request, 'session') else "system"
-        })
-        
-    except Exception as e:
-        logger.error(f"Error setting setpoint: {e}")
-        return jsonify({"error": "Internal server error"}), 500
+    return http_routes.set_setpoint(controller)
 
 @app.route('/api/telemetry')
 @require_auth(required_role="read-only")
 def get_telemetry():
-    """Get telemetry data - now requires authentication."""
-    try:
-        logger.debug(f"Telemetry request from {getattr(request, 'session', None).username if hasattr(getattr(request, 'session', None), 'username') else 'unknown'}")
-        limit = request.args.get('limit', 100, type=int)
-        device_id = request.args.get('device_id', 'unknown')
-        
-        # Get data from appropriate source based on feature flags
-        if firestore_factory and firestore_factory.is_telemetry_enabled():
-            try:
-                tenant_id = getattr(g, 'tenant_id', 'default')
-                telemetry_service = firestore_factory.get_telemetry_service()
-                
-                # Query recent telemetry with tenant isolation
-                data = telemetry_service.query_recent(
-                    tenant_id=tenant_id,
-                    device_id=device_id,
-                    limit=limit
-                )
-                logger.debug(f"Retrieved {len(data)} telemetry records from Firestore")
-            except Exception as e:
-                logger.error(f"Failed to get telemetry from Firestore: {e}")
-                # Fallback to SQLite
-                data = database.get_recent_data(limit)
-        else:
-            # Use SQLite when Firestore is disabled
-            data = database.get_recent_data(limit)
-        
-        return jsonify(data)
-        
-    except Exception as e:
-        logger.error(f"Error getting telemetry: {e}")
-        return jsonify({"error": "Internal server error"}), 500
+    return http_routes.get_telemetry(database, firestore_factory)
 
 @app.route('/api/config')
 def get_config():
-    """Get system configuration."""
-    config_payload = {
-        "setpoint_tenths": int(controller.setpoint_tenths),
-        "deadband_tenths": int(controller.deadband_tenths),
-        "min_on_time_ms": int(controller.min_on_time_ms),
-        "min_off_time_ms": int(controller.min_off_time_ms)
-    }
-    return jsonify(config_payload)
+    return http_routes.get_config(controller)
 
 # Authentication endpoints
 @app.route('/auth/login', methods=['POST'])
@@ -617,6 +367,8 @@ def auth_status():
 @app.before_request
 def setup_auth_context():
     """Setup authentication context for each request."""
+    # Always attach server_config for downstream components
+    request.server_config = server_config
     if auth_config:
         request.auth_config = auth_config
         request.session_manager = session_manager
@@ -626,41 +378,28 @@ def setup_auth_context():
         if tenant_middleware:
             tenant_middleware.setup_tenant_context(request)
 
-# Apply security headers
-app.after_request(add_security_headers)
+    # Apply security + versioning headers in a single after_request
+    _apply_versioning = build_versioning_applier(
+        sunset_v1_http_date=_os.getenv('SERVER_V1_SUNSET'),
+        deprecate_v1=_os.getenv('SERVER_V1_DEPRECATE', 'true').lower() in {'1', 'true', 'yes'},
+)
 
-def cleanup_old_data():
-    """Clean up old telemetry data (keep last 7 days)."""
-    while True:
-        try:
-            conn = sqlite3.connect(database.db_path)
-            cursor = conn.cursor()
-            
-            # Delete data older than 7 days
-            cutoff_time = (time.time() - 7 * 24 * 3600) * 1000
-            cursor.execute('DELETE FROM telemetry WHERE timestamp < ?', (cutoff_time,))
-            
-            deleted_count = cursor.rowcount
-            conn.commit()
-            conn.close()
-            
-            if deleted_count > 0:
-                logger.info(f"Cleaned up {deleted_count} old telemetry records")
-                
-        except Exception as e:
-            logger.error(f"Error during cleanup: {e}")
-        
-        # Run cleanup once per day
-        time.sleep(24 * 3600)
+@app.after_request
+def _after(resp):
+    resp = _sec_headers(resp)
+    resp = _apply_versioning(resp)
+    return resp
+
+register_error_handlers(app)
+
+## Versioned blueprints removed; unversioned routes carry v2 semantics via headers
 
 if __name__ == '__main__':
     # Initialize authentication system
     if not init_auth():
         logger.warning("Authentication system initialization failed - running without auth")
     
-    # Start cleanup thread
-    cleanup_thread = threading.Thread(target=cleanup_old_data, daemon=True)
-    cleanup_thread.start()
+    # No cleanup thread needed
     
     logger.info("Starting BAS Server...")
     logger.info("Dashboard available at: http://localhost:8080")

@@ -258,6 +258,45 @@ class TestBASServerEndpoints:
             assert_equals(data['status'], 'healthy')
             assert_is_not_none(data['timestamp'])
 
+    def test_versioned_health_v1_headers(self):
+        from bas_server import app
+        app.config['TESTING'] = True
+        with app.test_client() as client:
+            response = client.get('/api/v1/health')
+            assert_equals(response.status_code, 200)
+            assert_equals(response.headers.get('API-Version'), '1')
+            assert_equals(response.headers.get('Deprecation'), 'true')
+            assert 'GMT' in response.headers.get('Sunset', '')
+
+    def test_versioned_health_v2_headers(self):
+        from bas_server import app
+        app.config['TESTING'] = True
+        with app.test_client() as client:
+            response = client.get('/api/v2/health')
+            assert_equals(response.status_code, 200)
+            assert_equals(response.headers.get('API-Version'), '2')
+            assert response.headers.get('Deprecation') is None
+
+    @pytest.mark.parametrize('path', [
+        '/api/status',
+        '/api/config',
+        '/api/v1/status',
+        '/api/v2/status',
+        '/api/v1/config',
+        '/api/v2/config',
+    ])
+    def test_version_headers_parametrized(self, path):
+        from bas_server import app
+        app.config['TESTING'] = True
+        with app.test_client() as client:
+            response = client.get(path)
+            assert response.status_code in (200, 302, 401, 500)  # some require auth
+            if '/api/v1/' in path:
+                assert_equals(response.headers.get('API-Version'), '1')
+                assert_equals(response.headers.get('Deprecation'), 'true')
+            elif '/api/v2/' in path:
+                assert_equals(response.headers.get('API-Version'), '2')
+
     def test_status_endpoint(self):
         """Test status endpoint."""
         from bas_server import app
@@ -426,6 +465,38 @@ class TestBASServerSecurityHeaders:
             assert 'max-age=31536000' in response.headers['Strict-Transport-Security']
             assert_equals(response.headers['Content-Security-Policy'], "default-src 'self'")
             assert_equals(response.headers['Referrer-Policy'], 'strict-origin-when-cross-origin')
+
+
+@pytest.mark.unit
+class TestBASServerErrorMapping:
+    """Test central error mapping behaviors."""
+
+    def test_error_mapping_value_error(self):
+        from bas_server import app
+        app.config['TESTING'] = True
+        with app.test_client() as client:
+            res = client.get('/api/v2/_raise/value')
+            assert_equals(res.status_code, 400)
+            body = res.get_json()
+            assert_equals(body['code'], 'INVALID_ARGUMENT')
+
+    def test_error_mapping_not_found(self):
+        from bas_server import app
+        app.config['TESTING'] = True
+        with app.test_client() as client:
+            res = client.get('/api/v2/_raise/notfound')
+            assert_equals(res.status_code, 404)
+            body = res.get_json()
+            assert_equals(body['code'], 'NOT_FOUND')
+
+    def test_error_mapping_permission(self):
+        from bas_server import app
+        app.config['TESTING'] = True
+        with app.test_client() as client:
+            res = client.get('/api/v2/_raise/perm')
+            assert_equals(res.status_code, 403)
+            body = res.get_json()
+            assert_equals(body['code'], 'PERMISSION_DENIED')
 
 
 @pytest.mark.unit

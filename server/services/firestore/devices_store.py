@@ -1,12 +1,23 @@
-"""Firestore devices data access layer."""
+"""Firestore devices data access layer with optional Redis read-through cache for by-ID reads."""
 
 import time
+import os
+import json
 import logging
 from typing import Dict, Any, Optional, List
 from google.cloud import firestore
 from google.api_core.exceptions import NotFound, PermissionDenied
 
 from .base import OperationResult, PaginatedResult, QueryOptions, TenantAwareRepository, TimestampedRepository
+from .cache_utils import (
+    CacheClient,
+    cap_ttl_seconds,
+    normalize_key_part,
+    ensure_text,
+    json_dumps_compact,
+    json_loads_safe,
+)
+from .lru_cache import LRUCache
 from .models import Device
 
 logger = logging.getLogger(__name__)
@@ -15,10 +26,23 @@ logger = logging.getLogger(__name__)
 class DevicesStore(TenantAwareRepository[Device, str], TimestampedRepository[Device, str]):
     """Firestore-based devices data store."""
 
-    def __init__(self, client: firestore.Client):
-        """Initialize with Firestore client."""
+    def __init__(self, client: firestore.Client, *, cache: Optional[CacheClient] = None):
+        """Initialize with Firestore client and optional cache client.
+
+        Cache client is expected to provide: get(key), setex(key, ttl_seconds, value), delete(key)
+        """
         super().__init__(client, 'devices')
         self.required_fields = ['tenant_id', 'device_id']
+        self._cache = cache
+        self._cache_prefix = os.getenv('DEVICES_CACHE_PREFIX', 'dev:')
+        self._ttl_s = int(os.getenv('DEVICES_MAX_TTL_S', '60'))
+        self._lru = LRUCache(capacity=int(os.getenv('DEVICES_LRU_CAPACITY', '128')), ttl_s=int(os.getenv('DEVICES_LRU_TTL_S', '3')))
+
+    def _cache_key_id(self, entity_id: str) -> str:
+        return f"{self._cache_prefix}{self._normalize_id(entity_id)}"
+
+    def _normalize_id(self, entity_id: Any) -> str:
+        return normalize_key_part(entity_id)
         
     def create(self, entity: Device) -> OperationResult[str]:
         """
@@ -70,6 +94,31 @@ class DevicesStore(TenantAwareRepository[Device, str], TimestampedRepository[Dev
             OperationResult with Device entity on success
         """
         try:
+            # In-process LRU first
+            key = self._cache_key_id(entity_id)
+            # 1) LRU
+            obj = self._lru.get(key)
+            if obj is not None:
+                try:
+                    device = Device.from_dict(obj)
+                    device.id = self._normalize_id(entity_id)
+                    return OperationResult(success=True, data=device)
+                except Exception:
+                    pass
+            # 2) Redis/external cache
+            if self._cache is not None:
+                try:
+                    cached = ensure_text(self._cache.get(key))
+                    if cached:
+                        obj = json_loads_safe(cached)
+                        if obj is not None:
+                            device = Device.from_dict(obj)
+                            device.id = self._normalize_id(entity_id)
+                            self._lru.set(key, obj)
+                            return OperationResult(success=True, data=device)
+                except Exception:
+                    pass
+
             doc_ref = self.collection.document(entity_id)
             doc = doc_ref.get()
 
@@ -79,6 +128,14 @@ class DevicesStore(TenantAwareRepository[Device, str], TimestampedRepository[Dev
             data = doc.to_dict()
             device = Device.from_dict(data)
             device.id = doc.id
+
+            # Fill cache
+            self._lru.set(key, data)
+            if self._cache is not None:
+                try:
+                    self._cache.setex(key, cap_ttl_seconds(self._ttl_s, self._ttl_s), json_dumps_compact(data))
+                except Exception:
+                    pass
 
             return OperationResult(success=True, data=device)
 
@@ -108,6 +165,19 @@ class DevicesStore(TenantAwareRepository[Device, str], TimestampedRepository[Dev
             doc_ref.update(updates)
 
             # Return updated device
+            # Invalidate cache to avoid stale reads
+            key = self._cache_key_id(entity_id)
+            # 1) LRU
+            try:
+                self._lru.delete(key)
+            except Exception:
+                pass
+            # 2) Redis
+            if self._cache is not None:
+                try:
+                    self._cache.delete(key)
+                except Exception:
+                    pass
             return self.get_by_id(entity_id)
 
         except PermissionDenied as e:
@@ -136,6 +206,20 @@ class DevicesStore(TenantAwareRepository[Device, str], TimestampedRepository[Dev
             doc_ref = self.collection.document(entity_id)
             doc_ref.delete()
 
+            # Invalidate cache
+            key = self._cache_key_id(entity_id)
+            # 1) LRU
+            try:
+                self._lru.delete(key)
+            except Exception:
+                pass
+            # 2) Redis
+            if self._cache is not None:
+                try:
+                    self._cache.delete(key)
+                except Exception:
+                    pass
+
             self.logger.info(f"Deleted device {entity_id}")
             return OperationResult(success=True, data=True)
 
@@ -146,6 +230,9 @@ class DevicesStore(TenantAwareRepository[Device, str], TimestampedRepository[Dev
             self.logger.error(f"Failed to delete device {entity_id}: {e}")
             return OperationResult(success=False, error=str(e), error_code="DELETE_FAILED")
     
+    def _build_doc_id(self, tenant_id: str, device_id: str) -> str:
+        return f"{tenant_id}_{device_id}"
+
     def get_device(self, tenant_id: str, device_id: str) -> OperationResult[Device]:
         """
         Get device by tenant ID and device ID.
@@ -158,7 +245,7 @@ class DevicesStore(TenantAwareRepository[Device, str], TimestampedRepository[Dev
             OperationResult with Device entity on success
         """
         try:
-            doc_id = f"{tenant_id}_{device_id}"
+            doc_id = self._build_doc_id(tenant_id, device_id)
             return self.get_by_id(doc_id)
 
         except Exception as e:
@@ -178,7 +265,7 @@ class DevicesStore(TenantAwareRepository[Device, str], TimestampedRepository[Dev
             OperationResult with updated Device entity on success
         """
         try:
-            doc_id = f"{tenant_id}_{device_id}"
+            doc_id = self._build_doc_id(tenant_id, device_id)
             return self.update(doc_id, {'metadata': metadata})
 
         except Exception as e:
@@ -197,7 +284,7 @@ class DevicesStore(TenantAwareRepository[Device, str], TimestampedRepository[Dev
             OperationResult with updated Device entity on success
         """
         try:
-            doc_id = f"{tenant_id}_{device_id}"
+            doc_id = self._build_doc_id(tenant_id, device_id)
             current_time = int(time.time() * 1000)
             return self.update(doc_id, {'last_seen': current_time})
 
@@ -218,7 +305,7 @@ class DevicesStore(TenantAwareRepository[Device, str], TimestampedRepository[Dev
             OperationResult with updated Device entity on success
         """
         try:
-            doc_id = f"{tenant_id}_{device_id}"
+            doc_id = self._build_doc_id(tenant_id, device_id)
             return self.update(doc_id, {'status': status})
 
         except Exception as e:
@@ -237,7 +324,7 @@ class DevicesStore(TenantAwareRepository[Device, str], TimestampedRepository[Dev
             OperationResult with success boolean
         """
         try:
-            doc_id = f"{tenant_id}_{device_id}"
+            doc_id = self._build_doc_id(tenant_id, device_id)
             return self.delete(doc_id)
 
         except Exception as e:

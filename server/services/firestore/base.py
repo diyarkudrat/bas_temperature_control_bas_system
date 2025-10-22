@@ -2,8 +2,12 @@
 
 import logging
 import time
+import threading
+import os
+import random
 from abc import ABC, abstractmethod
-from typing import Dict, Any, Optional, List, TypeVar, Generic, Protocol
+from typing import Dict, Any, Optional, List, TypeVar, Generic, Protocol, Callable
+from collections import deque
 from dataclasses import dataclass
 from datetime import datetime
 from google.cloud import firestore
@@ -80,14 +84,80 @@ class FirestoreClientBoundary(Protocol):
     def collections(self) -> Any: ...
 
 
+@dataclass
+class RetryPolicy:
+    """Retry/backoff and time budget settings for repository operations."""
+    op_timeout_s: float = 0.05  # 50 ms soft budget per op
+    max_retries: int = 2        # at most 2 retries (3 attempts total)
+    backoff_base_s: float = 0.01
+    backoff_factor: float = 2.0
+    backoff_cap_s: float = 0.05
+
+
+class _CircuitBreaker:
+    """Lightweight circuit breaker for Firestore paths (module-local)."""
+
+    def __init__(self, failure_threshold: int = 5, window_s: float = 30.0, reset_timeout_s: float = 15.0) -> None:
+        self._failure_threshold = max(1, failure_threshold)
+        self._window_s = window_s
+        self._reset_timeout_s = reset_timeout_s
+        self._failures = deque()  # type: ignore[var-annotated]
+        self._open_until: float = 0.0
+        self._lock = threading.RLock()
+
+    def allow_call(self) -> bool:
+        with self._lock:
+        now = time.monotonic()
+            if now < self._open_until:
+                return False
+            cutoff = now - self._window_s
+            while self._failures and self._failures[0] < cutoff:
+                self._failures.popleft()
+            return True
+
+    def on_success(self) -> None:
+        with self._lock:
+            self._open_until = 0.0
+            self._failures.clear()
+
+    def on_failure(self) -> None:
+        with self._lock:
+        now = time.monotonic()
+            # Ensure non-decreasing timestamps to keep deque ordered
+            if self._failures:
+                last = self._failures[-1]
+                if now < last:
+                    now = last
+            self._failures.append(now)
+            cutoff = now - self._window_s
+            while self._failures and self._failures[0] < cutoff:
+                self._failures.popleft()
+            if len(self._failures) >= self._failure_threshold:
+                self._open_until = now + self._reset_timeout_s
+
+
 class BaseRepository(ABC, Generic[T, K]):
     """Base repository interface for Firestore operations."""
     
-    def __init__(self, client: FirestoreClientBoundary, collection_name: str):
+    def __init__(self, client: FirestoreClientBoundary, collection_name: str, *, retry_policy: Optional[RetryPolicy] = None, breaker: Optional["_CircuitBreaker"] = None):
         """Initialize repository with Firestore client and collection name."""
         self.client = client
         self.collection = client.collection(collection_name)
         self.logger = logging.getLogger(f"{__name__}.{self.__class__.__name__}")
+        # Initialize retry policy from environment overrides
+        self._policy = retry_policy or RetryPolicy(
+            op_timeout_s=float(os.getenv("FS_OP_TIMEOUT_S", "0.05")),
+            max_retries=int(os.getenv("FS_MAX_RETRIES", "2")),
+            backoff_base_s=float(os.getenv("FS_BACKOFF_BASE_S", "0.01")),
+            backoff_factor=float(os.getenv("FS_BACKOFF_FACTOR", "2.0")),
+            backoff_cap_s=float(os.getenv("FS_BACKOFF_CAP_S", "0.05")),
+        )
+        # Circuit breaker to isolate persistent failures
+        self._breaker = breaker or _CircuitBreaker(
+            failure_threshold=int(os.getenv("FS_BREAKER_THRESHOLD", "5")),
+            window_s=float(os.getenv("FS_BREAKER_WINDOW_S", "30")),
+            reset_timeout_s=float(os.getenv("FS_BREAKER_RESET_S", "15")),
+        )
     
     @abstractmethod
     def create(self, entity: T) -> OperationResult[K]:
@@ -171,6 +241,45 @@ class BaseRepository(ABC, Generic[T, K]):
         query = query.limit(options.limit)
         
         return query
+
+    # ------------------------------
+    # Resilience helpers (optional for subclasses to use)
+    # ------------------------------
+
+    def _execute_with_retry(self, op_name: str, func: Callable[[], T]) -> T:
+        """Execute func with bounded retries and soft time budget under a breaker.
+
+        Subclasses may wrap Firestore calls with this to gain resilience. On
+        budget exhaustion or repeated failures, the last exception is raised
+        for the caller to handle via _handle_firestore_error.
+        """
+        # Short-circuit if breaker is open
+        if not self._breaker.allow_call():
+            raise FirestoreError(f"Breaker open for operation: {op_name}")
+
+        start = time.monotonic()
+        attempt = 0
+        while True:
+            try:
+                result = func()
+                self._breaker.on_success()
+                return result
+            except Exception as e:
+                # If soft time budget exceeded, propagate immediately
+                if (time.monotonic() - start) >= self._policy.op_timeout_s:
+                    self._breaker.on_failure()
+                    raise
+                # If retries exhausted, propagate
+                if attempt >= self._policy.max_retries:
+                    self._breaker.on_failure()
+                    raise
+                # Sleep with exponential backoff + full jitter
+                sleep_ceiling = min(
+                    self._policy.backoff_cap_s,
+                    self._policy.backoff_base_s * (self._policy.backoff_factor ** attempt),
+                )
+                time.sleep(random.uniform(0.0, max(0.0, sleep_ceiling)))
+                attempt += 1
 
 
 class TenantAwareRepository(BaseRepository[T, K]):

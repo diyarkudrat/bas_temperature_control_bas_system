@@ -5,6 +5,7 @@ from typing import Optional, Dict, Any, Callable
 from types import SimpleNamespace
 from flask import request as _flask_request
 from flask import jsonify as _flask_jsonify
+from flask import g as flask_g, current_app
 from functools import wraps
 
 from .config import AuthConfig
@@ -33,47 +34,123 @@ class TenantMiddleware:
         self.tenant_header = auth_config.tenant_id_header
     
     def setup_tenant_context(self, req=None):
-        """Resolve tenant_id and place it on Flask g without raising exceptions.
+        """Resolve tenant_id once per request and cache it on request and Flask g.
 
-        Priority: header (auth_config.tenant_id_header) -> request.session.tenant_id
-        Returns the resolved tenant_id or None.
+        Resolution order:
+          1) request.session.tenant_id (authoritative)
+          2) trusted header (auth_config.tenant_id_header) when no session is present
+
+        If a header is present and mismatches the session tenant, the session value
+        wins and a warning is logged (optionally audited). Returns the resolved
+        tenant_id or None.
         """
         try:
             request_obj = req or get_request()
         except Exception:
             request_obj = None
 
-        tenant_id = None
+        if request_obj is None:
+            return None
+
+        # Reuse if already resolved earlier in the request lifecycle
         try:
-            if request_obj is not None:
-                tenant_id = self.extract_tenant_id(request_obj)
+            cached_tenant_id = getattr(request_obj, 'tenant_id', None)
+            if cached_tenant_id:
+                # Ensure g also has the value for downstream code that reads g
+                try:
+                    setattr(flask_g, 'tenant_id', cached_tenant_id)
+                except Exception:
+                    setattr(g, 'tenant_id', cached_tenant_id)
+                return cached_tenant_id
         except Exception:
+            pass
+
+        tenant_id = None
+        header_tenant_id = None
+        session_tenant_id = None
+
+        try:
+            header_tenant_id = request_obj.headers.get(self.tenant_header)
+        except Exception:
+            header_tenant_id = None
+
+        try:
+            session_obj = getattr(request_obj, 'session', None)
+            session_tenant_id = getattr(session_obj, 'tenant_id', None) if session_obj else None
+        except Exception:
+            session_tenant_id = None
+
+        if session_tenant_id:
+            tenant_id = session_tenant_id
+            if header_tenant_id and header_tenant_id != session_tenant_id:
+                try:
+                    logger.warning(
+                        "Tenant header mismatch; using session tenant. header=%s session=%s endpoint=%s",
+                        header_tenant_id,
+                        session_tenant_id,
+                        getattr(request_obj, 'endpoint', 'unknown')
+                    )
+                except Exception:
+                    pass
+                # Optional audit hook
+                if self.audit_service:
+                    try:
+                        self.audit_service.log_tenant_violation(
+                            user_id=getattr(session_obj, 'user_id', None),
+                            username=getattr(session_obj, 'username', None),
+                            ip_address=getattr(request_obj, 'remote_addr', ''),
+                            attempted_tenant=header_tenant_id,
+                            allowed_tenant=session_tenant_id
+                        )
+                    except Exception:
+                        pass
+        elif header_tenant_id:
+            tenant_id = header_tenant_id
+        else:
             tenant_id = None
 
-        # Attempt to set Flask's g if available; fall back to module g
+        # Cache on request for downstream access and set Flask g
         try:
-            from flask import g as flask_g
-            if tenant_id:
+            setattr(request_obj, 'tenant_id', tenant_id)
+        except Exception:
+            pass
+        try:
+            if tenant_id is not None:
                 setattr(flask_g, 'tenant_id', tenant_id)
         except Exception:
-            if tenant_id:
+            if tenant_id is not None:
                 setattr(g, 'tenant_id', tenant_id)
 
         return tenant_id
 
     def extract_tenant_id(self, request) -> Optional[str]:
-        """Extract tenant ID from request headers or session."""
-        # Try header first
-        tenant_id = request.headers.get(self.tenant_header)
-        if tenant_id:
-            return tenant_id
-        
-        # Try session if available
+        """Extract tenant ID using cached value or from session/header.
+
+        Prefers any previously cached value on the request. Otherwise falls back to
+        the authoritative session tenant, then to the header when no session exists.
+        """
+        # Prefer cached value
+        try:
+            cached = getattr(request, 'tenant_id', None)
+            if cached:
+                return cached
+        except Exception:
+            pass
+
+        # Prefer session value (authoritative)
         if hasattr(request, 'session') and request.session:
-            tenant_id = getattr(request.session, 'tenant_id', None)
-            if tenant_id:
-                return tenant_id
-        
+            session_tid = getattr(request.session, 'tenant_id', None)
+            if session_tid:
+                return session_tid
+
+        # Fallback to header
+        try:
+            header_tid = request.headers.get(self.tenant_header)
+            if header_tid:
+                return header_tid
+        except Exception:
+            pass
+
         return None
     
     def validate_tenant_access(self, user_tenant_id: str, requested_tenant_id: str) -> bool:
@@ -250,8 +327,6 @@ def require_tenant(func: Callable) -> Callable:
     """Decorator to require tenant ID in request."""
     @wraps(func)
     def decorated_function(*args, **kwargs):
-        from flask import current_app
-        
         if not hasattr(current_app, 'tenant_middleware'):
             logger.warning("Tenant middleware not configured")
             resp = jsonify({'error': 'Tenant middleware not configured'})
@@ -266,8 +341,6 @@ def enforce_tenant_isolation(func: Callable) -> Callable:
     """Decorator to enforce tenant isolation."""
     @wraps(func)
     def decorated_function(*args, **kwargs):
-        from flask import current_app
-        
         if not hasattr(current_app, 'tenant_middleware'):
             logger.warning("Tenant middleware not configured")
             resp = jsonify({'error': 'Tenant middleware not configured'})
@@ -282,8 +355,6 @@ def require_device_access(func: Callable) -> Callable:
     """Decorator to require device access validation."""
     @wraps(func)
     def decorated_function(*args, **kwargs):
-        from flask import current_app
-        
         if not hasattr(current_app, 'tenant_middleware'):
             logger.warning("Tenant middleware not configured")
             resp = jsonify({'error': 'Tenant middleware not configured'})

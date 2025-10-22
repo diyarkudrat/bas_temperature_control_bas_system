@@ -1,6 +1,8 @@
-"""Modern Firestore users data access layer with repository pattern."""
+"""Modern Firestore users data access layer with repository pattern and optional caching."""
 
 import time
+import os
+import json
 import logging
 import uuid
 from typing import Dict, Any, Optional, List
@@ -8,6 +10,8 @@ from google.cloud import firestore
 from google.api_core.exceptions import NotFound, PermissionDenied
 
 from .base import BaseRepository, TimestampedRepository, QueryOptions, PaginatedResult, OperationResult, FirestoreClientBoundary
+from .cache_utils import CacheClient, cap_ttl_seconds, ensure_text, json_dumps_compact, json_loads_safe, normalize_key_part
+from .lru_cache import LRUCache
 from .models import User, create_user, validate_username, validate_role
 
 logger = logging.getLogger(__name__)
@@ -16,11 +20,24 @@ logger = logging.getLogger(__name__)
 class UsersRepository(TimestampedRepository):
     """Modern users repository with validation and timestamping."""
     
-    def __init__(self, client: FirestoreClientBoundary):
-        """Initialize with Firestore client."""
+    def __init__(self, client: FirestoreClientBoundary, *, cache: Optional[CacheClient] = None):
+        """Initialize with Firestore client and optional cache client."""
         # Explicitly initialize base to avoid MRO issues
         BaseRepository.__init__(self, client, 'users')
         self.required_fields = ['username', 'password_hash', 'salt']
+        self._cache = cache
+        self._cache_prefix = os.getenv('USERS_CACHE_PREFIX', 'user:')
+        self._ttl_s = int(os.getenv('USERS_MAX_TTL_S', '60'))
+        self._uname_ttl_s = int(os.getenv('USERS_USERNAME_TTL_S', '30'))
+        self._uname_neg_ttl_s = int(os.getenv('USERS_USERNAME_NEG_TTL_S', '10'))
+        self._lru = LRUCache(capacity=int(os.getenv('USERS_LRU_CAPACITY', '128')), ttl_s=int(os.getenv('USERS_LRU_TTL_S', '3')))
+
+    def _cache_key_id(self, user_id: str) -> str:
+        return f"{self._cache_prefix}{normalize_key_part(user_id)}"
+
+    def _cache_key_username(self, username: str) -> str:
+        # Do not alter case to match DB equality semantics; trim whitespace
+        return f"{self._cache_prefix}uname:{normalize_key_part(username)}"
     
     def create(self, entity: User) -> OperationResult[str]:
         """Create a new user."""
@@ -48,6 +65,28 @@ class UsersRepository(TimestampedRepository):
             doc_ref.set(data)
             
             self.logger.info(f"Created user {entity.username} with ID {entity.user_id}")
+            # Cache: LRU then Redis (id key)
+            key = self._cache_key_id(entity.user_id)
+            try:
+                self._lru.set(key, data)
+            except Exception:
+                pass
+            if self._cache is not None:
+                try:
+                    self._cache.setex(key, cap_ttl_seconds(self._ttl_s, self._ttl_s), json_dumps_compact(data))
+                except Exception:
+                    pass
+            # Username mapping cache (minimal data: user_id only)
+            uname_key = self._cache_key_username(entity.username)
+            try:
+                self._lru.set(uname_key, {"user_id": entity.user_id})
+            except Exception:
+                pass
+            if self._cache is not None:
+                try:
+                    self._cache.setex(uname_key, cap_ttl_seconds(self._uname_ttl_s, self._uname_ttl_s), json_dumps_compact({"user_id": entity.user_id}))
+                except Exception:
+                    pass
             return OperationResult(success=True, data=entity.user_id)
             
         except Exception as e:
@@ -56,6 +95,31 @@ class UsersRepository(TimestampedRepository):
     def get_by_id(self, entity_id: str) -> OperationResult[User]:
         """Get user by user ID."""
         try:
+            key = self._cache_key_id(entity_id)
+            # 1) LRU (id -> user)
+            obj = self._lru.get(key)
+            if obj is not None:
+                try:
+                    user = create_user(obj)
+                    user.id = entity_id
+                    return OperationResult(success=True, data=user)
+                except Exception:
+                    pass
+            # 2) Redis/external cache (id -> user)
+            if self._cache is not None:
+                try:
+                    cached = ensure_text(self._cache.get(key))
+                    if cached:
+                        obj = json_loads_safe(cached)
+                        if obj is not None:
+                            user = create_user(obj)
+                            user.id = entity_id
+                            self._lru.set(key, obj)
+                            return OperationResult(success=True, data=user)
+                except Exception:
+                    pass
+
+            # 3) Firestore
             doc_ref = self.collection.document(entity_id)
             doc = doc_ref.get()
             
@@ -65,7 +129,16 @@ class UsersRepository(TimestampedRepository):
             data = doc.to_dict()
             user = create_user(data)
             user.id = doc.id
-            
+            # Fill cache: LRU then Redis
+            try:
+                self._lru.set(key, data)
+            except Exception:
+                pass
+            if self._cache is not None:
+                try:
+                    self._cache.setex(key, cap_ttl_seconds(self._ttl_s, self._ttl_s), json_dumps_compact(data))
+                except Exception:
+                    pass
             return OperationResult(success=True, data=user)
             
         except Exception as e:
@@ -74,13 +147,59 @@ class UsersRepository(TimestampedRepository):
     def update(self, entity_id: str, updates: Dict[str, Any]) -> OperationResult[User]:
         """Update user by ID."""
         try:
+            # Fetch current for username invalidation
+            current = self.get_by_id(entity_id)
+            current_username = None
+            if current.success and current.data:
+                try:
+                    current_username = current.data.username
+                except Exception:
+                    current_username = None
+
             # Add update timestamp
             updates = self._add_timestamps(updates, include_updated=True)
             
             doc_ref = self.collection.document(entity_id)
             doc_ref.update(updates)
             
-            # Return updated user
+            # Invalidate caches and return updated user
+            key = self._cache_key_id(entity_id)
+            try:
+                self._lru.delete(key)
+            except Exception:
+                pass
+            if self._cache is not None:
+                try:
+                    self._cache.delete(key)
+                except Exception:
+                    pass
+
+            # Username change or auth-affecting update: invalidate username mapping(s)
+            new_username = updates.get('username') if isinstance(updates, dict) else None
+            # Invalidate old username mapping
+            if current_username:
+                uname_key_old = self._cache_key_username(current_username)
+                try:
+                    self._lru.delete(uname_key_old)
+                except Exception:
+                    pass
+                if self._cache is not None:
+                    try:
+                        self._cache.delete(uname_key_old)
+                    except Exception:
+                        pass
+            # Invalidate new username mapping if provided
+            if new_username:
+                uname_key_new = self._cache_key_username(new_username)
+                try:
+                    self._lru.delete(uname_key_new)
+                except Exception:
+                    pass
+                if self._cache is not None:
+                    try:
+                        self._cache.delete(uname_key_new)
+                    except Exception:
+                        pass
             return self.get_by_id(entity_id)
             
         except Exception as e:
@@ -89,10 +208,41 @@ class UsersRepository(TimestampedRepository):
     def delete(self, entity_id: str) -> OperationResult[bool]:
         """Delete user by ID."""
         try:
+            # Fetch for username invalidation
+            current = self.get_by_id(entity_id)
+            current_username = None
+            if current.success and current.data:
+                try:
+                    current_username = current.data.username
+                except Exception:
+                    current_username = None
+
             doc_ref = self.collection.document(entity_id)
             doc_ref.delete()
             
             self.logger.info(f"Deleted user {entity_id}")
+            # Invalidate caches
+            key = self._cache_key_id(entity_id)
+            try:
+                self._lru.delete(key)
+            except Exception:
+                pass
+            if self._cache is not None:
+                try:
+                    self._cache.delete(key)
+                except Exception:
+                    pass
+            if current_username:
+                uname_key = self._cache_key_username(current_username)
+                try:
+                    self._lru.delete(uname_key)
+                except Exception:
+                    pass
+                if self._cache is not None:
+                    try:
+                        self._cache.delete(uname_key)
+                    except Exception:
+                        pass
             return OperationResult(success=True, data=True)
             
         except Exception as e:
@@ -102,15 +252,63 @@ class UsersRepository(TimestampedRepository):
     def get_by_username(self, username: str) -> OperationResult[User]:
         """Get user by username."""
         try:
+            uname_key = self._cache_key_username(username)
+            # 1) LRU (username -> mapping)
+            mapping = self._lru.get(uname_key)
+            if isinstance(mapping, dict):
+                if mapping.get("__miss__"):
+                    return OperationResult(success=False, error="User not found in LRU cache", error_code="NOT_FOUND")
+                user_id = mapping.get("user_id")
+                if user_id:
+                    return self.get_by_id(user_id)
+            # 2) Redis (username -> mapping)
+            if self._cache is not None:
+                try:
+                    cached = ensure_text(self._cache.get(uname_key))
+                    if cached:
+                        mapping = json_loads_safe(cached)
+                        if isinstance(mapping, dict):
+                            if mapping.get("__miss__"):
+                                self._lru.set(uname_key, mapping)
+                                return OperationResult(success=False, error="User not found in distributed cache", error_code="NOT_FOUND")
+                            user_id = mapping.get("user_id")
+                            if user_id:
+                                self._lru.set(uname_key, mapping)
+                                return self.get_by_id(user_id)
+                except Exception:
+                    pass
+
+            # 3) Firestore
             query = self.collection.where('username', '==', username).limit(1)
             docs = query.stream()
-            
             for doc in docs:
                 data = doc.to_dict()
                 user = create_user(data)
                 user.id = doc.id
+                # Cache mapping
+                mapping = {"user_id": user.id}
+                try:
+                    self._lru.set(uname_key, mapping)
+                except Exception:
+                    pass
+                if self._cache is not None:
+                    try:
+                        self._cache.setex(uname_key, cap_ttl_seconds(self._uname_ttl_s, self._uname_ttl_s), json_dumps_compact(mapping))
+                    except Exception:
+                        pass
                 return OperationResult(success=True, data=user)
-            
+
+            # Negative cache miss
+            miss = {"__miss__": True}
+            try:
+                self._lru.set(uname_key, miss)
+            except Exception:
+                pass
+            if self._cache is not None:
+                try:
+                    self._cache.setex(uname_key, cap_ttl_seconds(self._uname_neg_ttl_s, self._uname_neg_ttl_s), json_dumps_compact(miss))
+                except Exception:
+                    pass
             return OperationResult(success=False, error="User not found", error_code="NOT_FOUND")
             
         except Exception as e:

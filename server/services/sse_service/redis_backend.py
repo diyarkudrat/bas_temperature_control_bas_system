@@ -27,6 +27,9 @@ class _RedisConfig:
 	channel_prefix: str = "sse"
 	connect_timeout_s: float = 3.0
 	read_timeout_s: float = 3.0
+	# Soft per-op budget for hot-path ops (e.g., publish). This is a best-effort
+	# budget and cannot preempt a blocking socket call.
+	op_timeout_s: float = 0.01  # 10 ms target per publish
 	pool_maxsize: int = 8
 	max_retries: int = 5
 	health_check_interval_s: float = 30.0
@@ -157,16 +160,37 @@ class _RedisBackend:
 		tenant_id: Optional[str] = None,
 		device_id: Optional[str] = None,
 	) -> bool:
-		"""Publish a single message to the derived channel."""
+		"""Publish a single message to the derived channel with retries/backoff.
+
+		Enforces a soft per-operation time budget (best effort) and retries with
+		exponential backoff + jitter up to `max_retries`.
+		"""
 		channel = self._namer.topic(kind, tenant_id=tenant_id, device_id=device_id)
 		data = self._ser.serialize(payload)
-		try:
-			self._client.publish(channel, data)
-			self._metrics.inc("sse.redis.publish", {"channel": kind})
-			return True
-		except Exception:
-			self._metrics.inc("sse.redis.publish.error", {"channel": kind})
-			return False
+		start = time.monotonic()
+		attempt = 0
+		while True:
+			try:
+				self._client.publish(channel, data)
+				self._metrics.inc("sse.redis.publish", {"channel": kind})
+				return True
+			except Exception:
+				self._metrics.inc("sse.redis.publish.error", {"channel": kind})
+				# Check soft time budget
+				elapsed = (time.monotonic() - start)
+				if elapsed >= self._cfg.op_timeout_s:
+					return False
+				# If max retries reached, stop
+				if attempt >= self._cfg.max_retries:
+					return False
+				# Sleep with jittered backoff and retry
+				sleep_s = self._backoff.next_sleep(attempt)
+				# Clamp sleep to remaining budget
+				remaining = max(0.0, self._cfg.op_timeout_s - elapsed)
+				if sleep_s > remaining:
+					sleep_s = remaining
+				attempt = min(attempt + 1, self._cfg.max_retries)
+				time.sleep(sleep_s)
 
 	def start_subscriber(
 		self,

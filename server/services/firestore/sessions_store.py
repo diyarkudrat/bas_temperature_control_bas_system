@@ -1,11 +1,22 @@
-"""Firestore sessions data access layer."""
+"""Firestore sessions data access layer with optional Redis read-through cache."""
 
 import time
+import json
+import os
 import logging
 import secrets
 from typing import Dict, Any, Optional
 from datetime import datetime, timedelta
 from google.cloud import firestore
+from .cache_utils import (
+    CacheClient,
+    cap_ttl_seconds,
+    normalize_key_part,
+    ensure_text,
+    json_dumps_compact,
+    json_loads_safe,
+)
+from .lru_cache import LRUCache
 from google.api_core.exceptions import NotFound, PermissionDenied
 
 logger = logging.getLogger(__name__)
@@ -14,10 +25,28 @@ logger = logging.getLogger(__name__)
 class SessionsStore:
     """Firestore-based sessions data store."""
     
-    def __init__(self, client: firestore.Client):
-        """Initialize with Firestore client."""
+    def __init__(self, client: firestore.Client, *, cache: Optional[CacheClient] = None):
+        """Initialize with Firestore client and optional Redis-like cache.
+
+        Cache client is expected to provide: get(key), setex(key, ttl_seconds, value), delete(key)
+        """
         self.client = client
         self.collection = client.collection('sessions')
+        self._cache = cache
+        self._cache_prefix = os.getenv("SESSIONS_CACHE_PREFIX", "sess:")
+        self._ttl_cap_s = int(os.getenv("SESSIONS_MAX_TTL_S", "1800"))
+        # tiny in-process by-id cache
+        self._lru = LRUCache(capacity=int(os.getenv("SESSIONS_LRU_CAPACITY", "128")), ttl_s=int(os.getenv("SESSIONS_LRU_TTL_S", "3")))
+
+    def _cache_key(self, session_id: str) -> str:
+        sid = self._normalize_session_id(session_id)
+        return f"{self._cache_prefix}{sid}"
+
+    def _normalize_session_id(self, session_id: Any) -> str:
+        """Ensure idempotent, canonical session key material."""
+        # Do not change case; session IDs are case-sensitive tokens
+        # Trim incidental whitespace and coerce to str
+        return normalize_key_part(session_id)
         
     def create_session(self, user_id: str, username: str, role: str, 
                       expires_in_seconds: int = 1800, request_info: Optional[Dict] = None) -> Optional[str]:
@@ -65,6 +94,21 @@ class SessionsStore:
             doc_ref.set(session_doc)
             
             logger.info(f"Created session {session_id} for user {username}")
+
+            # Prime cache with TTL bounded by expiry
+            key = self._cache_key(session_id)
+            # 1) LRU
+            self._lru.set(key, {**session_doc, 'id': session_id})
+            # 2) Redis
+            if self._cache is not None:
+                try:
+                    # include id for consistency in cache
+                    cached_doc = dict(session_doc)
+                    cached_doc['id'] = session_id
+                    ttl_s = cap_ttl_seconds(int(expires_in_seconds), self._ttl_cap_s)
+                    self._cache.setex(key, ttl_s, json.dumps(cached_doc))
+                except Exception:
+                    pass
             return session_id
             
         except PermissionDenied as e:
@@ -85,6 +129,31 @@ class SessionsStore:
             Session document or None if not found/expired
         """
         try:
+            # Try in-process LRU first
+            key = self._cache_key(session_id)
+            # 1) LRU
+            session_data = self._lru.get(key)
+            if session_data is not None:
+                current_time = int(time.time() * 1000)
+                if session_data.get('expires_at', 0) > current_time:
+                    session_data['id'] = session_id
+                    return session_data
+
+            # 2) Redis/external cache
+            if self._cache is not None:
+                try:
+                    cached = ensure_text(self._cache.get(key))
+                    if cached:
+                        session_data = json_loads_safe(cached)
+                        if session_data is not None:
+                            current_time = int(time.time() * 1000)
+                            if session_data.get('expires_at', 0) > current_time:
+                                session_data['id'] = session_id
+                                self._lru.set(key, session_data)
+                                return session_data
+                except Exception:
+                    pass
+
             doc_ref = self.collection.document(session_id)
             doc = doc_ref.get()
             
@@ -100,6 +169,16 @@ class SessionsStore:
                 return None
                 
             session_data['id'] = doc.id
+
+            # Write-through cache with remaining TTL
+            remaining_ms = max(0, int(session_data.get('expires_at', 0) - current_time))
+            ttl_s = cap_ttl_seconds(int(remaining_ms / 1000), self._ttl_cap_s)
+            self._lru.set(key, session_data)
+            if self._cache is not None:
+                try:
+                    self._cache.setex(key, ttl_s, json_dumps_compact(session_data))
+                except Exception:
+                    pass
             return session_data
             
         except PermissionDenied as e:
@@ -124,6 +203,30 @@ class SessionsStore:
             doc_ref = self.collection.document(session_id)
             doc_ref.update({'last_access': current_time})
             
+            # Refresh cached last_access without extending expiration
+            key = self._cache_key(session_id)
+            try:
+                if self._cache is not None:
+                    cached = ensure_text(self._cache.get(key))
+                    if cached:
+                        data = json_loads_safe(cached)
+                        if data is not None:
+                            data['last_access'] = current_time
+                            try:
+                                # type: ignore[attr-defined]
+                                self._cache.set(key, json_dumps_compact(data), keepttl=True)
+                            except Exception:
+                                ttl = self._cache.ttl(key)
+                                if ttl is None or ttl < 0:
+                                    ttl = 1
+                                self._cache.setex(key, cap_ttl_seconds(int(ttl), self._ttl_cap_s), json_dumps_compact(data))
+            except Exception:
+                pass
+            # 1) Update LRU
+            hit = self._lru.get(key)
+            if hit:
+                hit['last_access'] = current_time
+                self._lru.set(key, hit)
             return True
             
         except PermissionDenied as e:
@@ -147,6 +250,16 @@ class SessionsStore:
             doc_ref = self.collection.document(session_id)
             doc_ref.delete()
             
+            # Invalidate cache
+            key = self._cache_key(session_id)
+            # 1) LRU
+            self._lru.delete(key)
+            # 2) Redis
+            if self._cache is not None:
+                try:
+                    self._cache.delete(key)
+                except Exception:
+                    pass
             logger.info(f"Invalidated session {session_id}")
             return True
             
@@ -182,6 +295,17 @@ class SessionsStore:
                     
                 doc.reference.delete()
                 invalidated_count += 1
+
+                # Invalidate cache per session
+                key = self._cache_key(session_id)
+                # 1) LRU
+                self._lru.delete(key)
+                # 2) Redis
+                if self._cache is not None:
+                    try:
+                        self._cache.delete(key)
+                    except Exception:
+                        pass
                 
             logger.info(f"Invalidated {invalidated_count} sessions for user {user_id}")
             return invalidated_count
@@ -245,6 +369,18 @@ class SessionsStore:
             for doc in docs:
                 doc.reference.delete()
                 cleaned_count += 1
+                # Remove cache entry
+                # 1) LRU
+                try:
+                    self._lru.delete(self._cache_key(doc.id))
+                except Exception:
+                    pass
+                # 2) Redis
+                if self._cache is not None:
+                    try:
+                        self._cache.delete(self._cache_key(doc.id))
+                    except Exception:
+                        pass
                 
             if cleaned_count > 0:
                 logger.info(f"Cleaned up {cleaned_count} expired sessions")
