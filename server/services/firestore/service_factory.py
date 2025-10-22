@@ -2,6 +2,7 @@
 
 import logging
 from typing import Optional, Dict, Any
+import os
 from google.cloud import firestore
 
 from .base import FirestoreError
@@ -31,7 +32,7 @@ class FirestoreServiceFactory:
     Lifetimes: default singleton per factory instance.
     """
 
-    def __init__(self, client: Optional[firestore.Client] = None, *, config: Optional[Any] = None):
+    def __init__(self, client: Optional[firestore.Client] = None, *, config: Optional[Any] = None, cache_client: Optional[Any] = None):
         """
         Constructor injection only. Prefer passing a client directly for tests,
         otherwise provide a config to construct a client lazily.
@@ -43,6 +44,7 @@ class FirestoreServiceFactory:
             # No client provided; keep None and resolve from config on demand
             self._client = None
             self.config = config
+        self._cache_client = cache_client
         self._repositories: Dict[str, Any] = {}
     
     @property
@@ -67,25 +69,29 @@ class FirestoreServiceFactory:
     def get_users_service(self) -> UsersRepository:
         """Get users service instance."""
         if 'users' not in self._repositories:
-            self._repositories['users'] = UsersRepository(self.client)
+            cache = self._resolve_cache_client()
+            self._repositories['users'] = UsersRepository(self.client, cache=cache)
         return self._repositories['users']
 
     def get_sessions_service(self) -> SessionsStore:
         """Get sessions service instance."""
         if 'sessions' not in self._repositories:
-            self._repositories['sessions'] = SessionsStore(self.client)
+            cache = self._resolve_cache_client()
+            self._repositories['sessions'] = SessionsStore(self.client, cache=cache)
         return self._repositories['sessions']
 
     def get_audit_service(self) -> AuditLogStore:
         """Get audit service instance."""
         if 'audit' not in self._repositories:
-            self._repositories['audit'] = AuditLogStore(self.client)
+            cache = self._resolve_cache_client()
+            self._repositories['audit'] = AuditLogStore(self.client, cache=cache)
         return self._repositories['audit']
 
     def get_devices_service(self) -> DevicesStore:
         """Get devices service instance."""
         if 'devices' not in self._repositories:
-            self._repositories['devices'] = DevicesStore(self.client)
+            cache = self._resolve_cache_client()
+            self._repositories['devices'] = DevicesStore(self.client, cache=cache)
         return self._repositories['devices']
     
     # Alias methods for repository naming (for test compatibility)
@@ -118,6 +124,20 @@ class FirestoreServiceFactory:
             'audit': self.get_audit_repository(),
             'devices': self.get_devices_repository()
         }
+
+    def _resolve_cache_client(self) -> Optional[Any]:
+        """Resolve a Redis-like cache client from provided cache or environment."""
+        if self._cache_client is not None:
+            return self._cache_client
+        # Optional env-based wiring
+        url = os.getenv("SESSIONS_CACHE_URL")
+        if not url:
+            return None
+        try:
+            import redis  # type: ignore
+            return redis.Redis.from_url(url)
+        except Exception:
+            return None
 
     def reset_repositories(self):
         """Reset all repositories (for testing)."""

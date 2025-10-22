@@ -1,12 +1,119 @@
 """Flask middleware for authentication."""
 
 import logging
+import os
+import threading
+import time
 from functools import wraps
+from typing import Dict, Tuple
 from flask import request, jsonify, g
 from .exceptions import AuthError
 from .tenant_middleware import TenantMiddleware
+from http.versioning import get_version_from_path
 
 logger = logging.getLogger(__name__)
+
+
+# Lightweight, non-blocking token-bucket limiter keyed by (tenant_id, api_version)
+class _TokenBucket:
+    def __init__(self, capacity: int, refill_rate_per_sec: float):
+        self.capacity = capacity
+        self.refill_rate_per_sec = refill_rate_per_sec
+        self.tokens = float(capacity)
+        self.last_refill = time.monotonic()
+        self.lock = threading.Lock()
+
+    def allow(self) -> Tuple[bool, float]:
+        now = time.monotonic()
+        with self.lock:
+            elapsed = now - self.last_refill
+            if elapsed > 0:
+                self.tokens = min(self.capacity, self.tokens + elapsed * self.refill_rate_per_sec)
+                self.last_refill = now
+            if self.tokens >= 1.0:
+                self.tokens -= 1.0
+                return True, self.tokens
+            return False, self.tokens
+
+
+class _RequestRateLimiter:
+    """Per-tenant, per-version request limiter.
+
+    Disabled by default. Enable with env:
+      BAS_REQ_RATE_LIMIT_ENABLED=1
+      BAS_REQ_RATE_LIMIT_RPS=50
+      BAS_REQ_RATE_LIMIT_BURST=100
+    """
+
+    def __init__(self):
+        # Defaults are conservative and safe; will be overridden by ServerConfig if present.
+        self.enabled = os.getenv('BAS_REQ_RATE_LIMIT_ENABLED', '0').lower() in {'1', 'true', 'yes'}
+        self.shadow = os.getenv('BAS_REQ_RATE_LIMIT_SHADOW', '0').lower() in {'1', 'true', 'yes'}
+        self.refill_rps = float(os.getenv('BAS_REQ_RATE_LIMIT_RPS', '50'))
+        self.capacity = int(os.getenv('BAS_REQ_RATE_LIMIT_BURST', '100'))
+        self._buckets: Dict[Tuple[str, str], _TokenBucket] = {}
+        self._lock = threading.Lock()
+        # Minimal metrics counters
+        self._allowed_count = 0
+        self._limited_count = 0
+
+    def _key_from_request(self):
+        try:
+            tenant_header = getattr(request.auth_config, 'tenant_id_header', 'X-BAS-Tenant') if hasattr(request, 'auth_config') else 'X-BAS-Tenant'
+            tenant_id = request.headers.get(tenant_header) or getattr(getattr(request, 'session', None), 'tenant_id', None) or 'public'
+        except Exception:
+            tenant_id = 'public'
+        try:
+            version = get_version_from_path(getattr(request, 'path', '') or '') or '0'
+        except Exception:
+            version = '0'
+        return tenant_id, version
+
+    def _sync_from_server_config_if_available(self):
+        try:
+            cfg = getattr(getattr(request, 'server_config', None), 'rate_limit', None)
+            if cfg is None:
+                return
+            # Apply clamped values
+            self.enabled = bool(getattr(cfg, 'enabled', self.enabled))
+            self.shadow = bool(getattr(cfg, 'shadow_mode', self.shadow))
+            self.refill_rps = float(getattr(cfg, 'requests_per_second', self.refill_rps))
+            self.capacity = int(getattr(cfg, 'burst_capacity', self.capacity))
+        except Exception:
+            pass
+
+    def check(self) -> Tuple[bool, float, Tuple[str, str]]:
+        # Pull centralized configuration when available
+        self._sync_from_server_config_if_available()
+
+        if not self.enabled:
+            return True, float('inf'), ('', '')
+
+        key = self._key_from_request()
+        
+        with self._lock:
+            bucket = self._buckets.get(key)
+            if bucket is None:
+                bucket = _TokenBucket(self.capacity, self.refill_rps)
+                self._buckets[key] = bucket
+        allowed, remaining = bucket.allow()
+        with self._lock:
+            if allowed:
+                self._allowed_count += 1
+            else:
+                self._limited_count += 1
+        # If shadow mode, never block
+        if not allowed and self.shadow:
+            try:
+                logger.info(f"Rate limit (shadow) would block: key={key} remaining={remaining:.2f}")
+            except Exception:
+                pass
+            return True, remaining, key
+        return allowed, remaining, key
+
+
+_request_rate_limiter = _RequestRateLimiter()
+
 
 def require_auth(required_role="operator", require_tenant=False):
     """Decorator for protected endpoints with optional tenant enforcement."""
@@ -14,6 +121,20 @@ def require_auth(required_role="operator", require_tenant=False):
         @wraps(f)
         def decorated_function(*args, **kwargs):
             logger.debug(f"Checking authentication for endpoint: {request.endpoint}")
+            # Fast-path rate limit by tenant + API version (if enabled)
+            try:
+                allowed, remaining, key = _request_rate_limiter.check()
+                if not allowed:
+                    tenant_id, version = key
+                    return jsonify({
+                        "error": "Too many requests",
+                        "code": "RATE_LIMITED",
+                        "tenant": tenant_id,
+                        "version": version
+                    }), 429
+            except Exception:
+                # Never block on limiter errors
+                pass
             
             # Validate required_role parameter
             if required_role not in ['operator', 'admin', 'read-only']:
@@ -180,7 +301,8 @@ def _audit_auth_failure(reason: str, ip_address: str, endpoint: str):
                     event_type='AUTH_FAILURE',
                     ip_address=ip_address,
                     user_agent=request.headers.get('User-Agent'),
-                    details={'endpoint': endpoint, 'reason': reason}
+                    details={'endpoint': endpoint, 'reason': reason},
+                    tenant_id=(getattr(request, 'tenant_id', None) or getattr(g, 'tenant_id', None))
                 )
             else:
                 # Fallback to SQLite audit
@@ -200,7 +322,8 @@ def _audit_permission_denied(username: str, user_id: str, ip_address: str, endpo
                     username=username,
                     ip_address=ip_address,
                     user_agent=request.headers.get('User-Agent'),
-                    details={'endpoint': endpoint, 'reason': reason}
+                    details={'endpoint': endpoint, 'reason': reason},
+                    tenant_id=(getattr(request, 'tenant_id', None) or getattr(g, 'tenant_id', None))
                 )
             else:
                 # Fallback to SQLite audit
@@ -224,7 +347,8 @@ def _audit_tenant_violation(user_id: str, username: str, ip_address: str, attemp
                         'attempted_tenant': attempted_tenant,
                         'allowed_tenant': allowed_tenant,
                         'endpoint': request.endpoint
-                    }
+                    },
+                    tenant_id=attempted_tenant
                 )
             else:
                 # Fallback to SQLite audit

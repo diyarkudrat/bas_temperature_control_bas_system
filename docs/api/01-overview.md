@@ -6,6 +6,12 @@
 ```
 http://localhost:8080/
 ```
+### **API Versioning**
+
+- Preferred: `/api/v2/*` (stable)
+- Deprecated: `/api/v1/*` (responses include `Deprecation: true` and `Sunset` headers)
+
+Clients SHOULD migrate to `/api/v2/*`. Responses include `API-Version: 1|2`.
 
 **Example**: `http://localhost:8080/`
 

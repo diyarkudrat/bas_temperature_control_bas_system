@@ -1,10 +1,13 @@
-"""Firestore audit log data access layer."""
+"""Firestore audit log data access layer with optional short-TTL cache for recent dashboard view."""
 
 import time
+import os
+import json
 import logging
 from typing import Dict, Any, Optional, List
 from datetime import datetime
 from google.cloud import firestore
+from .cache_utils import CacheClient, cap_ttl_seconds, normalize_key_part, ensure_text
 from google.api_core.exceptions import NotFound, PermissionDenied
 
 logger = logging.getLogger(__name__)
@@ -13,10 +16,18 @@ logger = logging.getLogger(__name__)
 class AuditLogStore:
     """Firestore-based audit log data store."""
     
-    def __init__(self, client: firestore.Client):
-        """Initialize with Firestore client."""
+    def __init__(self, client: firestore.Client, *, cache: Optional[CacheClient] = None):
+        """Initialize with Firestore client and optional cache client.
+
+        Cache is feature-flagged via AUDIT_CACHE_ENABLED (default off). Only
+        query_recent_events uses cache with short TTL, to avoid complex invalidation.
+        """
         self.client = client
         self.collection = client.collection('audit_log')
+        self._cache_enabled = os.getenv('AUDIT_CACHE_ENABLED', '0') in {'1', 'true', 'True'}
+        self._cache: Optional[CacheClient] = cache if self._cache_enabled else None
+        self._cache_prefix = os.getenv('AUDIT_CACHE_PREFIX', 'audit:')
+        self._ttl_s = int(os.getenv('AUDIT_CACHE_TTL_S', '20'))
         
     def log_event(self, event_type: str, user_id: Optional[str] = None, username: Optional[str] = None,
                  ip_address: Optional[str] = None, user_agent: Optional[str] = None,
@@ -288,6 +299,16 @@ class AuditLogStore:
             List of audit events
         """
         try:
+            # Cache key per page size; short TTL is acceptable for dashboards
+            cache_key = f"{self._cache_prefix}recent:{normalize_key_part(limit)}"
+            if self._cache is not None:
+                try:
+                    cached = ensure_text(self._cache.get(cache_key))
+                    if cached:
+                        return json.loads(cached)
+                except Exception:
+                    pass
+
             query = (self.collection
                     .order_by('timestamp_ms', direction=firestore.Query.DESCENDING)
                     .limit(limit))
@@ -300,6 +321,13 @@ class AuditLogStore:
                 data['id'] = doc.id
                 results.append(data)
                 
+            # Fill cache (best-effort)
+            if self._cache is not None:
+                try:
+                    self._cache.setex(cache_key, cap_ttl_seconds(self._ttl_s, self._ttl_s), json.dumps(results))
+                except Exception:
+                    pass
+
             logger.debug(f"Retrieved {len(results)} recent audit events")
             return results
             
