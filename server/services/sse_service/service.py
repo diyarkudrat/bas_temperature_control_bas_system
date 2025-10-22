@@ -28,11 +28,15 @@ class SSEService:
 		if device_id is None and in_req_ctx:
 			device_id = getattr(flask_g, 'device_id', None)
 			
-		frame = self._hub.next_frame(data, event=event)
-		local_deliveries = self._hub.publish(frame)
-		# Attempt Redis fan-out with breaker guard; ignore result for caller
-		self._publish_redis_mirrored(frame, tenant_id=tenant_id, device_id=device_id)
-		return local_deliveries
+		try:
+			frame = self._hub.next_frame(data, event=event)
+			local_deliveries = self._hub.publish(frame)
+			# Attempt Redis fan-out with breaker guard; ignore result for caller
+			self._publish_redis_mirrored(frame, tenant_id=tenant_id, device_id=device_id)
+			return local_deliveries
+		except Exception:
+			# placeholder for metrics
+			return 0
 
 	def _publish_redis_mirrored(self, frame: str, *, tenant_id: Optional[str] = None, device_id: Optional[str] = None) -> None:
 		backend = self._redis

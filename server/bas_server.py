@@ -36,6 +36,9 @@ logger = logging.getLogger(__name__)
 app = Flask(__name__)
 CORS(app)
 
+# Default versioning applier; replaced during setup if build succeeds
+_apply_versioning = lambda resp: resp
+
 class BASController:
     """Temperature control logic."""
     
@@ -378,16 +381,29 @@ def setup_auth_context():
         if tenant_middleware:
             tenant_middleware.setup_tenant_context(request)
 
-    # Apply security + versioning headers in a single after_request
-    _apply_versioning = build_versioning_applier(
-        sunset_v1_http_date=_os.getenv('SERVER_V1_SUNSET'),
-        deprecate_v1=_os.getenv('SERVER_V1_DEPRECATE', 'true').lower() in {'1', 'true', 'yes'},
-)
+    # Apply security + versioning headers: build once, safely
+    global _apply_versioning
+    try:
+        _apply_versioning = build_versioning_applier(
+            sunset_v1_http_date=_os.getenv('SERVER_V1_SUNSET'),
+            deprecate_v1=_os.getenv('SERVER_V1_DEPRECATE', 'true').lower() in {'1', 'true', 'yes'},
+        )
+    except Exception:
+        # placeholder for metrics
+        _apply_versioning = (lambda resp: resp)
 
 @app.after_request
 def _after(resp):
-    resp = _sec_headers(resp)
-    resp = _apply_versioning(resp)
+    try:
+        resp = _sec_headers(resp)
+    except Exception:
+        # placeholder for metrics
+        pass
+    try:
+        resp = _apply_versioning(resp)
+    except Exception:
+        # placeholder for metrics
+        pass
     return resp
 
 register_error_handlers(app)

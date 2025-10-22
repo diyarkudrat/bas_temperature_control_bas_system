@@ -107,7 +107,7 @@ class _CircuitBreaker:
 
     def allow_call(self) -> bool:
         with self._lock:
-        now = time.monotonic()
+            now = time.monotonic()
             if now < self._open_until:
                 return False
             cutoff = now - self._window_s
@@ -122,7 +122,7 @@ class _CircuitBreaker:
 
     def on_failure(self) -> None:
         with self._lock:
-        now = time.monotonic()
+            now = time.monotonic()
             # Ensure non-decreasing timestamps to keep deque ordered
             if self._failures:
                 last = self._failures[-1]
