@@ -25,6 +25,7 @@ class FirestoreClientFactory:
             Configured Firestore client
         """
         try:
+            client = None
             # Check if we should use emulator
             use_emulators = os.getenv('USE_EMULATORS', '0') in {'1', 'true', 'True'}
             if emulator_host or (use_emulators and os.getenv('FIRESTORE_EMULATOR_HOST')):
@@ -35,28 +36,28 @@ class FirestoreClientFactory:
                 client_project_id = project_id or os.getenv('GOOGLE_CLOUD_PROJECT') or 'local-dev'
                 client = firestore.Client(project=client_project_id)
                 logger.info(f"Firestore emulator client created for project: {client_project_id}")
-                return client
             
             # Use production Firestore
             # Ensure emulator env var is not set when using production
-            if 'FIRESTORE_EMULATOR_HOST' in os.environ:
+            if client is None and 'FIRESTORE_EMULATOR_HOST' in os.environ:
                 logger.info("Unsetting FIRESTORE_EMULATOR_HOST for production client")
                 del os.environ['FIRESTORE_EMULATOR_HOST']
 
-            if project_id:
-                logger.info(f"Creating Firestore client for project: {project_id}")
-                client = firestore.Client(project=project_id)
-            else:
-                # Try to get project ID from environment or ADC
-                try:
-                    credentials, project_id = default()
-                    logger.info(f"Using ADC credentials for project: {project_id}")
-                    client = firestore.Client(project=project_id, credentials=credentials)
-                except Exception as e:
-                    logger.warning(f"Failed to get project ID from ADC: {e}")
-                    # Fallback to default client
-                    client = firestore.Client()
-                    logger.info("Created Firestore client with default configuration")
+            if client is None:
+                if project_id:
+                    logger.info(f"Creating Firestore client for project: {project_id}")
+                    client = firestore.Client(project=project_id)
+                else:
+                    # Try to get project ID from environment or ADC
+                    try:
+                        credentials, project_id = default()
+                        logger.info(f"Using ADC credentials for project: {project_id}")
+                        client = firestore.Client(project=project_id, credentials=credentials)
+                    except Exception as e:
+                        logger.warning(f"Failed to get project ID from ADC: {e}")
+                        # Fallback to default client
+                        client = firestore.Client()
+                        logger.info("Created Firestore client with default configuration")
             
             logger.info("Firestore client created successfully")
             return client
@@ -77,6 +78,7 @@ def get_firestore_client(config) -> Optional[firestore.Client]:
         Firestore client or None if not configured
     """
     try:
+        result_client: Optional[firestore.Client] = None
         # If config looks like a mock (common in tests), skip real client init
         try:
             is_mock_config = type(config).__name__ == 'Mock' or getattr(config, '_is_mock', False)
@@ -84,26 +86,25 @@ def get_firestore_client(config) -> Optional[firestore.Client]:
             is_mock_config = False
 
         # Check if Firestore is enabled for any feature
-        if not any([
+        enabled = any([
             getattr(config, 'use_firestore_telemetry', False),
             getattr(config, 'use_firestore_auth', False), 
             getattr(config, 'use_firestore_audit', False)
-        ]):
+        ])
+        if enabled:
+            # Prefer explicit config, but allow ADC fallback when project ID isn't provided
+            # In unit tests some configs are Mock but still expect client creation via patching;
+            # don't early return here, allow patched create_client to be called.
+            result_client = FirestoreClientFactory.create_client(
+                project_id=getattr(config, 'gcp_project_id', None),
+                emulator_host=getattr(config, 'firestore_emulator_host', None)
+            )
+            logger.info("Firestore client initialized successfully")
+        else:
             logger.debug("Firestore features not enabled")
-            return None
-            
-        # Prefer explicit config, but allow ADC fallback when project ID isn't provided
-        # In unit tests some configs are Mock but still expect client creation via patching;
-        # don't early return here, allow patched create_client to be called.
 
-        client = FirestoreClientFactory.create_client(
-            project_id=getattr(config, 'gcp_project_id', None),
-            emulator_host=getattr(config, 'firestore_emulator_host', None)
-        )
-        
-        logger.info("Firestore client initialized successfully")
-        return client
-        
+        return result_client
+
     except Exception as e:
         logger.error(f"Failed to initialize Firestore client: {e}")
         return None

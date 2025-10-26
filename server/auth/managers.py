@@ -5,7 +5,7 @@ import time
 import threading
 import logging
 import json
-from typing import Optional, List
+from typing import Optional, List, Any, Mapping, Dict
 from .models import User, Session
 from .utils import hash_password, verify_password, generate_session_id, create_session_fingerprint
 from .exceptions import AuthError, SessionError
@@ -20,6 +20,9 @@ class UserManager:
         self.config = config
         self.firestore_factory = firestore_factory
         self.firestore_users = None
+        # Optional external auth integrations (Auth0, etc.)
+        self._roles_provider: Optional[Any] = None
+        self._management_client: Optional[Any] = None
         
         # Initialize Firestore users service if available
         if firestore_factory and firestore_factory.is_auth_enabled():
@@ -225,6 +228,68 @@ class UserManager:
         conn.close()
         logger.debug(f"User {user.username} stored successfully")
 
+    # ---------------------- External Roles Operations ----------------------
+    def configure_roles_provider(self, provider: Any = None, management_client: Any = None) -> None:
+        """Configure external roles provider and optional management client.
+
+        The provider is expected to expose:
+          - get_user_roles(user_id: str) -> List[str]
+          - set_user_roles(user_id: str, roles: Mapping[str, Any], *, max_retries: int, initial_backoff_s: float, management_client: Any | None) -> Dict[str, Any]
+        """
+        self._roles_provider = provider
+        self._management_client = management_client
+
+    def get_effective_user_roles(self, username: str, user_id: Optional[str] = None) -> List[str]:
+        """Return effective roles for a user.
+
+        Preference order:
+        1) External provider by user_id (if configured)
+        2) Local stored role in users table (single-role list)
+        """
+        # Prefer external provider if available
+        if self._roles_provider and user_id:
+            try:
+                roles = self._roles_provider.get_user_roles(user_id)
+                if isinstance(roles, list):
+                    return [str(r) for r in roles]
+            except Exception as e:  # noqa: BLE001
+                logger.warning(f"get_effective_user_roles provider failure: {e}")
+
+        # Fallback to local single role
+        local = self.get_user(username)
+        if local and isinstance(local.role, str) and local.role:
+            return [local.role]
+        return []
+
+    def set_external_user_roles(
+        self,
+        user_id: str,
+        roles: Mapping[str, Any],
+        *,
+        max_retries: int = 3,
+        initial_backoff_s: float = 0.05,
+        management_client: Any | None = None,
+    ) -> Dict[str, Any]:
+        """Set roles for a user in the external provider with retry wrappers.
+
+        Delegates to the configured provider's set_user_roles. Allows per-call
+        override of management_client. Raises ValueError on failure.
+        """
+        if not self._roles_provider or not hasattr(self._roles_provider, "set_user_roles"):
+            raise ValueError("roles provider not configured")
+
+        client = management_client if management_client is not None else self._management_client
+        try:
+            return self._roles_provider.set_user_roles(
+                user_id,
+                roles,
+                max_retries=max_retries,
+                initial_backoff_s=initial_backoff_s,
+                management_client=client,
+            )
+        except Exception as e:  # noqa: BLE001
+            raise ValueError(f"failed to set external roles: {e}") from e
+
 class SessionManager:
     """Manages user sessions."""
     
@@ -361,43 +426,43 @@ class SessionManager:
         """Validate session and check fingerprint."""
         logger.debug(f"Validating session: {session_id[:12]}...")
         
+        result: Optional[Session] = None
         session = self.get_session(session_id)
         if not session:
             logger.warning(f"Session not found: {session_id[:12]}...")
-            return None
-        
-        # Check expiration
-        if session.is_expired():
-            logger.warning(f"Session expired: {session_id[:12]}...")
-            self.invalidate_session(session_id)
-            return None
-        
-        # Check fingerprint with input validation
-        user_agent = request.headers.get('User-Agent', '')
-        accept_language = request.headers.get('Accept-Language', '')
-        accept_encoding = request.headers.get('Accept-Encoding', '')
-        remote_addr = request.remote_addr or ''
-        
-        # Validate required fingerprint components
-        if not user_agent or not remote_addr:
-            logger.warning(f"Insufficient fingerprint data for session: {session_id[:12]}...")
-            self.invalidate_session(session_id)
-            return None
-        
-        current_fingerprint = create_session_fingerprint(
-            user_agent, accept_language, accept_encoding, remote_addr
-        )
-        
-        if session.fingerprint != current_fingerprint:
-            logger.warning(f"Session fingerprint mismatch: {session_id[:12]}...")
-            self.invalidate_session(session_id)
-            return None
-        
-        logger.debug(f"Session validated successfully: {session_id[:12]}...")
-        return session
+        else:
+            # Check expiration
+            if session.is_expired():
+                logger.warning(f"Session expired: {session_id[:12]}...")
+                self.invalidate_session(session_id)
+            else:
+                # Check fingerprint with input validation
+                user_agent = request.headers.get('User-Agent', '')
+                accept_language = request.headers.get('Accept-Language', '')
+                accept_encoding = request.headers.get('Accept-Encoding', '')
+                remote_addr = request.remote_addr or ''
+
+                # Validate required fingerprint components
+                if not user_agent or not remote_addr:
+                    logger.warning(f"Insufficient fingerprint data for session: {session_id[:12]}...")
+                    self.invalidate_session(session_id)
+                else:
+                    current_fingerprint = create_session_fingerprint(
+                        user_agent, accept_language, accept_encoding, remote_addr
+                    )
+
+                    if session.fingerprint != current_fingerprint:
+                        logger.warning(f"Session fingerprint mismatch: {session_id[:12]}...")
+                        self.invalidate_session(session_id)
+                    else:
+                        logger.debug(f"Session validated successfully: {session_id[:12]}...")
+                        result = session
+
+        return result
     
     def get_session(self, session_id: str) -> Optional[Session]:
         """Get session by ID."""
+        result: Optional[Session] = None
         # Check cache first
         with self._cache_lock:
             if session_id in self.sessions:
@@ -405,51 +470,49 @@ class SessionManager:
                 if session.is_expired():
                     logger.debug(f"Session expired in cache: {session_id[:12]}...")
                     del self.sessions[session_id]
-                    return None
-                return session
-        
-        # Try Firestore first if available
-        if self.firestore_sessions:
+                else:
+                    result = session
+
+        # Try Firestore first if available and not found
+        if result is None and self.firestore_sessions:
             try:
-                result = self.firestore_sessions.get_session(session_id)
-                if result.success and result.data:
-                    session = result.data
+                firestore_result = self.firestore_sessions.get_session(session_id)
+                if firestore_result.success and firestore_result.data:
+                    session = firestore_result.data
                     if not session.is_expired():
                         with self._cache_lock:
                             self.sessions[session_id] = session
                         logger.debug(f"Session loaded from Firestore: {session_id[:12]}...")
-                        return session
+                        result = session
                     else:
                         logger.debug(f"Session expired in Firestore: {session_id[:12]}...")
-                        return None
                 else:
                     logger.debug(f"Session not found in Firestore: {session_id[:12]}...")
-                    return None
             except Exception as e:
                 logger.warning(f"Failed to get session from Firestore: {e}, falling back to SQLite")
-        
-        # Fallback to SQLite
-        logger.debug(f"Loading session from SQLite database: {session_id[:12]}...")
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
-        
-        cursor.execute('SELECT * FROM sessions WHERE session_id = ?', (session_id,))
-        row = cursor.fetchone()
-        conn.close()
-        
-        if row:
-            columns = [desc[0] for desc in cursor.description]
-            data = dict(zip(columns, row))
-            session = Session.from_dict(data)
-            
-            if not session.is_expired():
-                with self._cache_lock:
-                    self.sessions[session_id] = session
-                logger.debug(f"Session loaded from SQLite: {session_id[:12]}...")
-                return session
-        
-        logger.debug(f"Session not found: {session_id[:12]}...")
-        return None
+
+        # Fallback to SQLite if still not found
+        if result is None:
+            logger.debug(f"Loading session from SQLite database: {session_id[:12]}...")
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+            cursor.execute('SELECT * FROM sessions WHERE session_id = ?', (session_id,))
+            row = cursor.fetchone()
+            conn.close()
+
+            if row:
+                columns = [desc[0] for desc in cursor.description]
+                data = dict(zip(columns, row))
+                session = Session.from_dict(data)
+                if not session.is_expired():
+                    with self._cache_lock:
+                        self.sessions[session_id] = session
+                    logger.debug(f"Session loaded from SQLite: {session_id[:12]}...")
+                    result = session
+
+        if result is None:
+            logger.debug(f"Session not found: {session_id[:12]}...")
+        return result
     
     def invalidate_session(self, session_id: str):
         """Invalidate session."""

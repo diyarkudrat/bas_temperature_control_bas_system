@@ -13,6 +13,7 @@ import random
 import threading
 import time
 from dataclasses import dataclass
+from collections import deque
 from typing import Any, Callable, Dict, Optional, Protocol
 
 
@@ -153,6 +154,52 @@ class _RedisBackend:
 		self._on_message: Optional[Callable[[Any], None]] = None
 		self._subscribed_channel: Optional[str] = None
 
+		# Local fallback queue for outage-resilient busting/replay.
+		# Bounded to avoid unbounded memory use.
+		self._fallback_max = 256
+		self._fallback = deque(maxlen=self._fallback_max)
+		self._fallback_lock = threading.Lock()
+		self._fallback_enabled = True
+
+	def _enqueue_fallback(self, channel: str, data: bytes) -> None:
+		if not self._fallback_enabled:
+			return
+		try:
+			with self._fallback_lock:
+				self._fallback.append((channel, data))
+			self._metrics.inc("sse.redis.fallback.enqueued", {"channel": channel})
+		except Exception:
+			pass
+
+	def _flush_fallback(self, budget_s: float = 0.005) -> None:
+		"""Best-effort flush of queued messages within a tiny time budget."""
+		if not self._fallback_enabled:
+			return
+		start = time.monotonic()
+		while True:
+			if (time.monotonic() - start) >= budget_s:
+				break
+			item = None
+			try:
+				with self._fallback_lock:
+					item = self._fallback.popleft() if self._fallback else None
+			except Exception:
+				item = None
+			if not item:
+				break
+			channel, data = item
+			try:
+				self._client.publish(channel, data)
+				self._metrics.inc("sse.redis.fallback.flushed", {"channel": channel})
+			except Exception:
+				# Push back if publish failed; stop flushing to avoid hot loop
+				try:
+					with self._fallback_lock:
+						self._fallback.appendleft((channel, data))
+				except Exception:
+					pass
+				break
+
 	def publish(
 		self,
 		kind: str,
@@ -169,20 +216,32 @@ class _RedisBackend:
 		data = self._ser.serialize(payload)
 		start = time.monotonic()
 		attempt = 0
+		success = False
+		# Opportunistically flush any queued messages first within a tiny budget
+		self._flush_fallback(budget_s=0.001)
 		while True:
 			try:
 				self._client.publish(channel, data)
 				self._metrics.inc("sse.redis.publish", {"channel": kind})
-				return True
+				success = True
+				# After a success, try to flush a bit more queued items if any budget remains
+				elapsed = (time.monotonic() - start)
+				remaining = max(0.0, self._cfg.op_timeout_s - elapsed)
+				if remaining > 0:
+					self._flush_fallback(budget_s=min(0.002, remaining))
+				break
 			except Exception:
 				self._metrics.inc("sse.redis.publish.error", {"channel": kind})
 				# Check soft time budget
 				elapsed = (time.monotonic() - start)
 				if elapsed >= self._cfg.op_timeout_s:
-					return False
+					# Enqueue for later replay
+					self._enqueue_fallback(channel, data)
+					break
 				# If max retries reached, stop
 				if attempt >= self._cfg.max_retries:
-					return False
+					self._enqueue_fallback(channel, data)
+					break
 				# Sleep with jittered backoff and retry
 				sleep_s = self._backoff.next_sleep(attempt)
 				# Clamp sleep to remaining budget
@@ -191,6 +250,7 @@ class _RedisBackend:
 					sleep_s = remaining
 				attempt = min(attempt + 1, self._cfg.max_retries)
 				time.sleep(sleep_s)
+		return success
 
 	def start_subscriber(
 		self,

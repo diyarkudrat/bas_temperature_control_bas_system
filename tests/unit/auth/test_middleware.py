@@ -1,3 +1,159 @@
+from __future__ import annotations
+
+import time
+from typing import Dict, Any
+
+import pytest
+from flask import Flask, request, jsonify
+
+from server.auth.middleware import require_auth
+
+
+class _DummySession:
+    def __init__(self, username: str, user_id: str, role: str, tenant_id: str | None = None):
+        self.username = username
+        self.user_id = user_id
+        self.role = role
+        self.tenant_id = tenant_id
+
+
+class _DummySessionManager:
+    def __init__(self, valid_id: str, session: _DummySession | None):
+        self._valid = valid_id
+        self._session = session
+
+    def validate_session(self, sid: str, req):  # noqa: ARG002
+        return self._session if sid == self._valid else None
+
+    def update_last_access(self, sid: str):  # noqa: ARG002
+        return True
+
+
+class _MockProvider:
+    def __init__(self, claims: Dict[str, Any] | None = None, roles: list[str] | None = None, fail: Exception | None = None):
+        self._claims = claims
+        self._roles = roles or []
+        self._fail = fail
+
+    def verify_token(self, token: str):  # noqa: ARG002
+        if self._fail:
+            raise self._fail
+        return self._claims or {}
+
+    def get_user_roles(self, uid: str):  # noqa: ARG002
+        return list(self._roles)
+
+    def healthcheck(self):
+        return {"status": "ok"}
+
+
+def _make_app(auth_config_overrides: Dict[str, Any] | None = None):
+    app = Flask(__name__)
+
+    class Cfg:
+        auth_enabled = True
+        auth_mode = "enforced"
+        tenant_id_header = "X-BAS-Tenant"
+        allow_session_fallback = False
+
+    cfg = Cfg()
+    if auth_config_overrides:
+        for k, v in auth_config_overrides.items():
+            setattr(cfg, k, v)
+
+    @app.before_request
+    def inject():
+        request.auth_config = cfg
+        # request.auth_provider & request.session_manager set in tests
+
+    @app.route("/protected")
+    @require_auth(required_role="operator", require_tenant=False)
+    def protected():
+        return jsonify({"ok": True})
+
+    @app.route("/tenant")
+    @require_auth(required_role="operator", require_tenant=True)
+    def protected_tenant():
+        return jsonify({"ok": True, "tenant": getattr(request, 'tenant_id', None)})
+
+    return app
+
+
+def test_jwt_auth_valid(client=None):  # noqa: ARG001
+    app = _make_app()
+    provider = _MockProvider(claims={"sub": "u1"}, roles=["operator"])
+
+    with app.test_client() as c:
+        headers = {"Authorization": "Bearer token", "X-BAS-Tenant": "t1"}
+        with app.test_request_context():
+            pass
+        # inject provider per request via environ_overrides
+        def _inject_provider(environ):
+            return environ
+
+        # monkeypatching context by setting on request is not trivial here; instead, use before_request to set attribute via after_open
+        @app.before_request
+        def _set_provider():
+            request.auth_provider = provider
+
+        rv = c.get("/protected", headers=headers)
+        assert rv.status_code == 200
+
+
+def test_jwt_auth_invalid_no_fallback():
+    app = _make_app({"allow_session_fallback": False})
+    provider = _MockProvider(fail=ValueError("expired"))
+    with app.test_client() as c:
+        @app.before_request
+        def _set_provider():
+            request.auth_provider = provider
+
+        rv = c.get("/protected", headers={"Authorization": "Bearer bad"})
+        assert rv.status_code == 401
+        data = rv.get_json()
+        assert data["code"] in {"INVALID_TOKEN", "TOKEN_EXPIRED"}
+
+
+def test_session_fallback_when_enabled():
+    app = _make_app({"allow_session_fallback": True})
+    provider = _MockProvider(fail=ValueError("boom"))
+    good_sid = "1234567890abcdef"
+    session = _DummySession("alice", "u1", "operator")
+    sm = _DummySessionManager(good_sid, session)
+
+    with app.test_client() as c:
+        @app.before_request
+        def _set_provider_and_session():
+            request.auth_provider = provider
+            request.session_manager = sm
+
+        rv = c.get("/protected", headers={"Authorization": "Bearer bad", "X-Session-ID": good_sid})
+        assert rv.status_code == 200
+
+
+def test_jwt_permission_denied():
+    app = _make_app()
+    provider = _MockProvider(claims={"sub": "u2"}, roles=["read-only"])  # needs operator
+    with app.test_client() as c:
+        @app.before_request
+        def _set_provider():
+            request.auth_provider = provider
+        rv = c.get("/protected", headers={"Authorization": "Bearer t"})
+        assert rv.status_code == 403
+
+
+def test_jwt_tenant_required_header_missing():
+    app = _make_app()
+    provider = _MockProvider(claims={"sub": "u3"}, roles=["operator"])  # good role
+    with app.test_client() as c:
+        @app.before_request
+        def _set_provider():
+            request.auth_provider = provider
+        rv = c.get("/tenant", headers={"Authorization": "Bearer t"})
+        assert rv.status_code == 400
+        data = rv.get_json()
+        assert data["code"] == "MISSING_TENANT_ID"
+
 """
 Unit tests for authentication middleware using pytest.
 """

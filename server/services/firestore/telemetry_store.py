@@ -2,9 +2,11 @@
 
 import time
 import concurrent.futures
+import threading
+from queue import Queue, Full, Empty
 import logging
 from typing import List, Dict, Any, Optional
-from datetime import datetime
+from datetime import datetime, timezone
 from google.cloud import firestore
 from google.api_core.exceptions import NotFound, PermissionDenied
 
@@ -23,6 +25,12 @@ class TelemetryRepository(TenantAwareRepository, TimestampedRepository):
         """Initialize with Firestore client."""
         super().__init__(client, 'telemetry')
         self.required_fields = ['tenant_id', 'device_id', 'temp_tenths', 'sensor_ok']
+        # Lightweight async writer for auth events
+        self._auth_events_queue: Queue = Queue(maxsize=1024)
+        self._auth_writer_executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+        self._auth_writer_stop = threading.Event()
+        # Start background worker
+        self._auth_writer_future = self._auth_writer_executor.submit(self._auth_event_worker)
     
     def create(self, entity: TelemetryRecord) -> OperationResult[str]:
         """Create a new telemetry record."""
@@ -173,6 +181,81 @@ class TelemetryRepository(TenantAwareRepository, TimestampedRepository):
 
         except Exception as e:
             self._handle_firestore_error("get device statistics", e)
+
+    # ------------------------------
+    # Auth events (async write path)
+    # ------------------------------
+
+    def store_auth_event(self, event: Dict[str, Any]) -> bool:
+        """Enqueue an authentication event for async storage.
+
+        Expected keys include: type, outcome, user_id/username/ip/user_agent, endpoint, details.
+        Adds timestamps automatically. Non-blocking; drops when queue is full.
+        """
+        # Add timestamps
+        try:
+            enriched = dict(event or {})
+            now_ms = int(time.time() * 1000)
+            enriched.setdefault('timestamp_ms', now_ms)
+            enriched.setdefault('utc_timestamp', datetime.now(timezone.utc).isoformat())
+            self._auth_events_queue.put_nowait(enriched)
+            return True
+        except Full:
+            # Drop on backpressure; avoid blocking the request path
+            logger.warning("auth_event queue full; dropping event")
+            return False
+
+    def wait_auth_events_drained(self, timeout_s: float = 0.5) -> None:
+        """Test helper to wait for the queue to drain (best-effort)."""
+        deadline = time.time() + max(0.0, timeout_s)
+        while time.time() < deadline:
+            if self._auth_events_queue.empty():
+                return
+            time.sleep(0.01)
+
+    def _auth_event_worker(self) -> None:
+        """Background worker that persists auth events with small retry loop."""
+        coll = None
+        try:
+            coll = self.client.collection('auth_events')
+        except Exception:
+            # Defer until first use
+            coll = None
+        while not self._auth_writer_stop.is_set():
+            try:
+                item = self._auth_events_queue.get(timeout=0.05)
+            except Empty:
+                continue
+            # Lazy collection resolution
+            if coll is None:
+                try:
+                    coll = self.client.collection('auth_events')
+                except Exception as e:
+                    # Could not resolve client now; drop with log
+                    logger.error(f"auth_event: failed to resolve collection: {e}")
+                    continue
+            # Write with up to 2 retries
+            attempts = 0
+            while attempts < 3:
+                try:
+                    coll.add(item)
+                    break
+                except Exception as e:
+                    attempts += 1
+                    if attempts >= 3:
+                        logger.error(f"auth_event: failed to persist after retries: {e}")
+                        break
+                    # small backoff
+                    time.sleep(0.02 * attempts)
+            self._auth_events_queue.task_done()
+
+    def close(self) -> None:
+        """Shutdown background writer (tests/cleanup)."""
+        self._auth_writer_stop.set()
+        try:
+            self._auth_writer_executor.shutdown(wait=False, cancel_futures=True)
+        except Exception:
+            pass
     
     # Legacy compatibility methods
     def add_telemetry(self, tenant_id: str, device_id: str, data: Dict[str, Any]) -> bool:
@@ -291,6 +374,9 @@ class TelemetryRepository(TenantAwareRepository, TimestampedRepository):
                        expected_limit: Optional[int] = None) -> PaginatedResult:
         """Execute a Firestore query with optional timeout and return paginated results."""
         try:
+            items: List[Any] = []
+            has_more = False
+            next_offset = None
             docs = self._stream_with_timeout(query, timeout_s) if timeout_s else query.stream()
 
             results = []
@@ -307,19 +393,19 @@ class TelemetryRepository(TenantAwareRepository, TimestampedRepository):
             effective_limit = expected_limit if (isinstance(expected_limit, int) and expected_limit > 0) else 100
             has_more = len(results) >= effective_limit
             next_offset = last_doc_id if has_more else None
-
-            return PaginatedResult(
-                items=results,
-                has_more=has_more,
-                next_offset=next_offset
-            )
+            items = results
 
         except TimeoutError as e:
             self.logger.error(f"Query timed out: {e}")
-            return PaginatedResult(items=[], has_more=False)
+            items = []
+            has_more = False
+            next_offset = None
         except Exception as e:
             self.logger.error(f"Failed to execute query: {e}")
-            return PaginatedResult(items=[], has_more=False)
+            items = []
+            has_more = False
+            next_offset = None
+        return PaginatedResult(items=items, has_more=has_more, next_offset=next_offset)
 
     def _stream_with_timeout(self, query: firestore.Query, timeout_s: int):
         """Run query.stream() in a worker thread and enforce a timeout; returns a list of docs."""

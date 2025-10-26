@@ -1,3 +1,103 @@
+from __future__ import annotations
+
+import importlib
+import os
+from unittest import mock
+
+import pytest
+
+
+@pytest.fixture(autouse=True)
+def _clear_env(monkeypatch):
+    for k in ["AUTH_PROVIDER", "AUTH0_DOMAIN", "AUTH0_AUDIENCE", "USE_EMULATORS"]:
+        monkeypatch.delenv(k, raising=False)
+    yield
+
+
+def _reload_server(monkeypatch, env: dict[str, str]):
+    for k, v in env.items():
+        monkeypatch.setenv(k, v)
+    # Force reload config and bas_server
+    if "server.config.config" in list(importlib.sys.modules.keys()):
+        importlib.reload(importlib.import_module("server.config.config"))
+    if "server.bas_server" in list(importlib.sys.modules.keys()):
+        importlib.reload(importlib.import_module("server.bas_server"))
+    mod = importlib.import_module("server.bas_server")
+    importlib.reload(mod)
+    return mod
+
+
+def test_auth_provider_init_auth0(monkeypatch):
+    mod = _reload_server(monkeypatch, {
+        "AUTH_PROVIDER": "auth0",
+        "AUTH0_DOMAIN": "example.auth0.com",
+        "AUTH0_AUDIENCE": "bas-api",
+    })
+    # Provider should be Auth0Provider
+    from auth.providers import Auth0Provider
+    assert isinstance(mod.auth_provider, Auth0Provider)
+
+    def test_auth_metrics_recorded_for_jwt_success(self, monkeypatch):
+        mod = _reload_server(monkeypatch, {
+            "AUTH_PROVIDER": "mock",
+            "USE_EMULATORS": "1",
+        })
+        app = mod.app
+        # Inject a minimal provider that always verifies
+        class _P:
+            def verify_token(self, t):
+                return {"sub": "u"}
+            def get_user_roles(self, u):
+                return ["operator", "read-only"]
+            def healthcheck(self):
+                return {"status": "ok"}
+        provider = _P()
+        with app.test_client() as c:
+            @app.before_request
+            def _set_provider():
+                from flask import request
+                request.auth_provider = provider
+            snap_before = mod.auth_metrics.snapshot()
+            rv = c.get('/api/telemetry', headers={"Authorization": "Bearer t", "X-BAS-Tenant": "t1"})
+            assert rv.status_code in (200, 500)  # 500 if telemetry not initialized
+            snap_after = mod.auth_metrics.snapshot()
+            assert snap_after["jwt_attempts"] >= snap_before["jwt_attempts"] + 1
+
+    def test_auth_metrics_recorded_for_session_failure(self, monkeypatch):
+        mod = _reload_server(monkeypatch, {
+            "AUTH_PROVIDER": "mock",
+            "USE_EMULATORS": "1",
+        })
+        app = mod.app
+        with app.test_client() as c:
+            snap_before = mod.auth_metrics.snapshot()
+            rv = c.post('/api/set_setpoint', json={"setpoint_tenths": 250})
+            # Expect 401 due to missing session id
+            assert rv.status_code in (401, 500)
+            snap_after = mod.auth_metrics.snapshot()
+            assert snap_after["session_attempts"] >= snap_before["session_attempts"] + 1
+
+
+def test_auth_provider_init_invalid_env(monkeypatch):
+    # Missing audience
+    mod = _reload_server(monkeypatch, {
+        "AUTH_PROVIDER": "auth0",
+        "AUTH0_DOMAIN": "example.auth0.com",
+    })
+    assert hasattr(mod, "auth_provider")
+    # Deny-all fallback healthcheck
+    hc = mod.auth_provider.healthcheck()
+    assert hc.get("provider") == "DenyAllAuthProvider"
+
+
+def test_no_mock_in_prod(monkeypatch):
+    mod = _reload_server(monkeypatch, {
+        "AUTH_PROVIDER": "mock",
+        "USE_EMULATORS": "0",
+    })
+    hc = mod.auth_provider.healthcheck()
+    assert hc.get("provider") == "DenyAllAuthProvider"
+
 """
 Unit tests for BAS server authentication integration and endpoints.
 """

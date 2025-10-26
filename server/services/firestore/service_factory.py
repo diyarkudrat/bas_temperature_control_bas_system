@@ -174,7 +174,7 @@ class FirestoreServiceFactory:
             collections_iter = self.client.collections()
             _ = next(collections_iter, None)
             
-            return {
+            result = {
                 'status': 'healthy',
                 'services': {
                     'telemetry': self.is_telemetry_enabled(),
@@ -183,10 +183,9 @@ class FirestoreServiceFactory:
                 },
                 'client_initialized': self._client is not None
             }
-            
         except Exception as e:
             logger.error(f"Firestore health check failed: {e}")
-            return {
+            result = {
                 'status': 'unhealthy',
                 'error': str(e),
                 'services': {
@@ -196,6 +195,7 @@ class FirestoreServiceFactory:
                 },
                 'client_initialized': False
             }
+        return result
 
 
 def build_service_factory_with_config(config) -> FirestoreServiceFactory:

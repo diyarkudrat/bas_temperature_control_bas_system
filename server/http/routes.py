@@ -74,14 +74,7 @@ def receive_sensor_data(controller, firestore_factory) -> Tuple[Any, int]:
                 telemetry_service.add_telemetry(
                     tenant_id=tenant_id,
                     device_id=device_id,
-                    timestamp_ms=int(telemetry_data['timestamp']),
-                    temp_tenths=telemetry_data['temp_tenths'],
-                    setpoint_tenths=telemetry_data['setpoint_tenths'],
-                    deadband_tenths=telemetry_data['deadband_tenths'],
-                    cool_active=telemetry_data['cool_active'],
-                    heat_active=telemetry_data['heat_active'],
-                    state=telemetry_data['state'],
-                    sensor_ok=telemetry_data['sensor_ok'],
+                    data=telemetry_data,
                 )
             except Exception as e:
                 # downgrade to debug info; avoid noisy logs
@@ -127,7 +120,7 @@ def set_setpoint(controller) -> Tuple[Any, int]:
         return make_error("Internal server error", "INTERNAL_ERROR")
 
 
-def get_telemetry(database, firestore_factory) -> Tuple[Any, int]:
+def get_telemetry(firestore_factory) -> Tuple[Any, int]:
     try:
         limit = request.args.get('limit', 100, type=int)
         device_id = request.args.get('device_id', 'unknown')
@@ -159,4 +152,33 @@ def get_config(controller) -> Tuple[Any, int]:
     response.headers['Cache-Control'] = 'public, max-age=2'
     return response, 200
 
+
+
+def auth_health(provider) -> Tuple[Any, int]:
+    """Return authentication provider health info.
+
+    Provider is injected by the server wiring. If not available, return a
+    minimal, stable payload for observability without external I/O.
+    """
+    try:
+        if provider is not None:
+            payload = provider.healthcheck()
+        else:
+            payload = {
+                "provider": "unavailable",
+                "status": "init",
+                "now_epoch_ms": int(time.time() * 1000),
+                "mode": "unknown",
+            }
+    except Exception as e:
+        payload = {
+            "provider": getattr(getattr(provider, "__class__", None), "__name__", "unknown"),
+            "status": "error",
+            "detail": str(e),
+            "now_epoch_ms": int(time.time() * 1000),
+        }
+
+    response = jsonify(payload)
+    response.headers['Cache-Control'] = 'public, max-age=2'
+    return response, 200
 

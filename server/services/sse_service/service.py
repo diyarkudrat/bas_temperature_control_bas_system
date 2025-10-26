@@ -33,10 +33,11 @@ class SSEService:
 			local_deliveries = self._hub.publish(frame)
 			# Attempt Redis fan-out with breaker guard; ignore result for caller
 			self._publish_redis_mirrored(frame, tenant_id=tenant_id, device_id=device_id)
-			return local_deliveries
+			result = local_deliveries
 		except Exception:
 			# placeholder for metrics
-			return 0
+			result = 0
+		return result
 
 	def _publish_redis_mirrored(self, frame: str, *, tenant_id: Optional[str] = None, device_id: Optional[str] = None) -> None:
 		backend = self._redis

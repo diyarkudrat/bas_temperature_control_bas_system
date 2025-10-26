@@ -24,6 +24,31 @@ class TestUserManager:
         assert_equals(user.username, "newuser")
         assert_equals(user.role, "operator")
 
+    def test_roles_distributed_tx(self, temp_db_file, auth_config):
+        um = UserManager(temp_db_file, auth_config)
+
+        class Provider:
+            def __init__(self):
+                self.calls = []
+            def get_user_roles(self, uid):
+                return ["operator"]
+            def set_user_roles(self, user_id, roles, *, max_retries, initial_backoff_s, management_client=None):  # noqa: ARG002
+                self.calls.append((user_id, dict(roles)))
+                return {"ok": True}
+
+        prov = Provider()
+        um.configure_roles_provider(provider=prov, management_client=object())
+
+        # Read effective roles (from provider)
+        roles = um.get_effective_user_roles("jane", user_id="uid-1")
+        assert_equals(roles, ["operator"])
+
+        # Set roles and verify delegation
+        out = um.set_external_user_roles("uid-1", {"viewer": True})
+        assert_equals(out.get("ok"), True)
+        assert_equals(prov.calls[-1][0], "uid-1")
+        assert_equals(prov.calls[-1][1], {"viewer": True})
+
     def test_create_user_weak_password(self, user_manager):
         """Test user creation with weak password."""
         with assert_raises(AuthError):

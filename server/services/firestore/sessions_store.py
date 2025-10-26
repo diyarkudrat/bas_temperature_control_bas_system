@@ -129,6 +129,7 @@ class SessionsStore:
             Session document or None if not found/expired
         """
         try:
+            result: Optional[Dict[str, Any]] = None
             # Try in-process LRU first
             key = self._cache_key(session_id)
             # 1) LRU
@@ -137,10 +138,10 @@ class SessionsStore:
                 current_time = int(time.time() * 1000)
                 if session_data.get('expires_at', 0) > current_time:
                     session_data['id'] = session_id
-                    return session_data
+                    result = session_data
 
             # 2) Redis/external cache
-            if self._cache is not None:
+            if result is None and self._cache is not None:
                 try:
                     cached = ensure_text(self._cache.get(key))
                     if cached:
@@ -150,36 +151,31 @@ class SessionsStore:
                             if session_data.get('expires_at', 0) > current_time:
                                 session_data['id'] = session_id
                                 self._lru.set(key, session_data)
-                                return session_data
+                                result = session_data
                 except Exception:
-                    pass
+                    result = None
 
-            doc_ref = self.collection.document(session_id)
-            doc = doc_ref.get()
-            
-            if not doc.exists:
-                return None
-                
-            session_data = doc.to_dict()
-            
-            # Check if session is expired
-            current_time = int(time.time() * 1000)
-            if session_data.get('expires_at', 0) <= current_time:
-                logger.debug(f"Session {session_id} has expired")
-                return None
-                
-            session_data['id'] = doc.id
-
-            # Write-through cache with remaining TTL
-            remaining_ms = max(0, int(session_data.get('expires_at', 0) - current_time))
-            ttl_s = cap_ttl_seconds(int(remaining_ms / 1000), self._ttl_cap_s)
-            self._lru.set(key, session_data)
-            if self._cache is not None:
-                try:
-                    self._cache.setex(key, ttl_s, json_dumps_compact(session_data))
-                except Exception:
-                    pass
-            return session_data
+            if result is None:
+                doc_ref = self.collection.document(session_id)
+                doc = doc_ref.get()
+                if doc.exists:
+                    session_data = doc.to_dict()
+                    # Check if session is expired
+                    current_time = int(time.time() * 1000)
+                    if session_data.get('expires_at', 0) > current_time:
+                        session_data['id'] = doc.id
+                        # Write-through cache with remaining TTL
+                        remaining_ms = max(0, int(session_data.get('expires_at', 0) - current_time))
+                        ttl_s = cap_ttl_seconds(int(remaining_ms / 1000), self._ttl_cap_s)
+                        self._lru.set(key, session_data)
+                        if self._cache is not None:
+                            try:
+                                self._cache.setex(key, ttl_s, json_dumps_compact(session_data))
+                            except Exception:
+                                pass
+                        result = session_data
+                # If doc doesn't exist or expired -> result stays None
+            return result
             
         except PermissionDenied as e:
             logger.error(f"Permission denied getting session: {e}")
@@ -247,6 +243,7 @@ class SessionsStore:
             True if successful, False otherwise
         """
         try:
+            success = False
             doc_ref = self.collection.document(session_id)
             doc_ref.delete()
             
@@ -261,7 +258,8 @@ class SessionsStore:
                 except Exception:
                     pass
             logger.info(f"Invalidated session {session_id}")
-            return True
+            success = True
+            return success
             
         except PermissionDenied as e:
             logger.error(f"Permission denied invalidating session: {e}")
@@ -308,7 +306,8 @@ class SessionsStore:
                         pass
                 
             logger.info(f"Invalidated {invalidated_count} sessions for user {user_id}")
-            return invalidated_count
+            result = invalidated_count
+            return result
             
         except PermissionDenied as e:
             logger.error(f"Permission denied invalidating user sessions: {e}")
@@ -334,19 +333,18 @@ class SessionsStore:
             New session ID if successful, None otherwise
         """
         try:
+            new_id: Optional[str] = None
             # Create new session
             new_session_id = self.create_session(
                 user_id, username, role, expires_in_seconds, request_info
             )
             
-            if not new_session_id:
-                return None
-                
-            # Invalidate old session
-            self.invalidate_session(old_session_id)
-            
-            logger.info(f"Rotated session {old_session_id} to {new_session_id}")
-            return new_session_id
+            if new_session_id:
+                # Invalidate old session
+                self.invalidate_session(old_session_id)
+                logger.info(f"Rotated session {old_session_id} to {new_session_id}")
+                new_id = new_session_id
+            return new_id
             
         except Exception as e:
             logger.error(f"Failed to rotate session: {e}")
@@ -385,7 +383,8 @@ class SessionsStore:
             if cleaned_count > 0:
                 logger.info(f"Cleaned up {cleaned_count} expired sessions")
                 
-            return cleaned_count
+            result = cleaned_count
+            return result
             
         except PermissionDenied as e:
             logger.error(f"Permission denied cleaning up sessions: {e}")

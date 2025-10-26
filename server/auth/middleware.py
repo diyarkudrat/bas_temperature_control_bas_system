@@ -5,7 +5,7 @@ import os
 import threading
 import time
 from functools import wraps
-from typing import Dict, Tuple
+from typing import Dict, Tuple, Optional, Any, List
 from flask import request, jsonify, g
 from .exceptions import AuthError
 from .tenant_middleware import TenantMiddleware
@@ -115,12 +115,19 @@ class _RequestRateLimiter:
 _request_rate_limiter = _RequestRateLimiter()
 
 
-def require_auth(required_role="operator", require_tenant=False):
+def require_auth(required_role="operator", require_tenant=False, provider: Optional[Any] = None):
     """Decorator for protected endpoints with optional tenant enforcement."""
     def decorator(f):
         @wraps(f)
         def decorated_function(*args, **kwargs):
             logger.debug(f"Checking authentication for endpoint: {request.endpoint}")
+            # Non-invasive provider injection (Phase 0): allow caller to pass a provider
+            # or defer to request.auth_provider set by server wiring.
+            try:
+                if provider is not None and not hasattr(request, 'auth_provider'):
+                    setattr(request, 'auth_provider', provider)
+            except Exception:
+                pass
             # Fast-path rate limit by tenant + API version (if enabled)
             try:
                 allowed, remaining, key = _request_rate_limiter.check()
@@ -155,14 +162,101 @@ def require_auth(required_role="operator", require_tenant=False):
                     request.audit_logger.log_session_access(session_id, request.endpoint)
                 return f(*args, **kwargs)
             
-            # Enforced mode - require valid session
+            # Enforced mode - prefer JWT verification first if a provider and token are present
+            logger.debug("Authentication enforced, checking JWT or session")
+            authz_header = request.headers.get('Authorization', '') or ''
+            token: Optional[str] = None
+            if isinstance(authz_header, str):
+                h = authz_header.strip()
+                # Robust, case-insensitive parsing of Bearer tokens
+                parts = h.split()
+                if len(parts) == 2 and parts[0].lower() == 'bearer' and parts[1]:
+                    token = parts[1].strip()
+
+            provider_obj = getattr(request, 'auth_provider', None)
+            metrics = getattr(request, 'auth_metrics', None)
+            # Determine whether session fallback is allowed. If the flag is absent,
+            # maintain backward compatibility by allowing fallback.
+            try:
+                if hasattr(request, 'auth_config') and hasattr(request.auth_config, 'allow_session_fallback'):
+                    allow_fallback = bool(getattr(request.auth_config, 'allow_session_fallback'))
+                else:
+                    allow_fallback = True
+            except Exception:
+                allow_fallback = True
+
+            # If no Bearer token is provided and fallback is explicitly disabled,
+            # fail closed with 401 rather than attempting session auth.
+            if not token and not allow_fallback:
+                return jsonify({
+                    "error": "Authorization required",
+                    "message": "Bearer token required",
+                    "code": "AUTH_REQUIRED"
+                }), 401
+            if token and provider_obj is not None:
+                start_ms = time.time() * 1000.0
+                _log_jwt_attempt(metrics)
+                try:
+                    claims = provider_obj.verify_token(token)
+                    if not isinstance(claims, dict):
+                        raise ValueError("invalid claims")
+                    setattr(request, 'user_claims', claims)
+                    user_id = str(claims.get('sub', '') or '').strip()
+                    roles: List[str] = []
+                    try:
+                        if user_id:
+                            roles = list(provider_obj.get_user_roles(user_id))
+                    except Exception:
+                        roles = []
+                    # Fallback to roles embedded in claims if provider roles unavailable/empty
+                    if not roles:
+                        roles = _extract_roles_from_claims_local(claims)
+
+                    if not _claims_has_permission(roles, required_role):
+                        logger.warning(f"JWT insufficient permissions for {user_id} to access {request.endpoint} (requires {required_role})")
+                        _log_jwt_failure(metrics)
+                        return jsonify({
+                            "error": "Insufficient permissions",
+                            "message": f"JWT roles missing permission: {required_role}",
+                            "code": "PERMISSION_DENIED"
+                        }), 403
+
+                    if require_tenant:
+                        tenant_result = _enforce_tenant_isolation_jwt(request)
+                        if tenant_result is not True:
+                            return tenant_result
+
+                    logger.debug(f"JWT authentication successful for {user_id} accessing {request.endpoint}")
+                    _log_jwt_success(metrics, start_ms)
+                    return f(*args, **kwargs)
+                except ValueError as exc:
+                    logger.warning(f"JWT verification failed for endpoint {request.endpoint}: {exc}")
+                    _log_jwt_failure(metrics)
+                    if not allow_fallback:
+                        msg = str(exc).lower()
+                        code = 'INVALID_TOKEN'
+                        if 'exp' in msg or 'expired' in msg:
+                            code = 'TOKEN_EXPIRED'
+                        if 'claim' in msg:
+                            code = 'INVALID_CLAIMS'
+                        return jsonify({
+                            "error": "Invalid or expired token",
+                            "message": "JWT verification failed",
+                            "code": code
+                        }), 401
+                    # else fall through to session checks
+
+            # Fallback or legacy: require valid session
             logger.debug("Authentication enforced, checking session")
+            sess_start_ms = time.time() * 1000.0
+            _log_session_attempt(metrics)
             session_id = request.headers.get('X-Session-ID') or request.cookies.get('bas_session_id')
             
             # Validate session ID format
             if not session_id or not isinstance(session_id, str) or len(session_id) < 10:
                 logger.warning(f"Invalid session ID format for {request.endpoint}")
                 _audit_auth_failure("INVALID_SESSION_ID", request.remote_addr, request.endpoint)
+                _log_session_failure(metrics)
                 return jsonify({
                     "error": "Invalid session ID",
                     "message": "Please login again",
@@ -178,6 +272,7 @@ def require_auth(required_role="operator", require_tenant=False):
             if not session:
                 logger.warning(f"Invalid or expired session for {request.endpoint}")
                 _audit_auth_failure("SESSION_INVALID", request.remote_addr, request.endpoint)
+                _log_session_failure(metrics)
                 return jsonify({
                     "error": "Invalid or expired session",
                     "message": "Please login again",
@@ -211,6 +306,7 @@ def require_auth(required_role="operator", require_tenant=False):
                 request.audit_logger.log_session_access(session_id, request.endpoint)
             
             logger.debug(f"Authentication successful for {session.username} accessing {request.endpoint}")
+            _log_session_success(metrics, sess_start_ms)
             return f(*args, **kwargs)
         return decorated_function
     return decorator
@@ -231,6 +327,99 @@ def _has_permission(user_role: str, required_role: str) -> bool:
     has_permission = user_level >= required_level
     logger.debug(f"Permission check result: {has_permission}")
     return has_permission
+
+
+def _log_jwt_attempt(metrics: Optional[Any]) -> None:
+    try:
+        if metrics is not None:
+            metrics.inc_jwt_attempt()
+    except Exception:
+        pass
+
+
+def _log_jwt_failure(metrics: Optional[Any]) -> None:
+    try:
+        if metrics is not None:
+            metrics.inc_jwt_failure()
+    except Exception:
+        pass
+
+
+def _log_jwt_success(metrics: Optional[Any], start_ms: float) -> None:
+    try:
+        if metrics is not None:
+            metrics.observe_jwt_success(time.time() * 1000.0 - start_ms)
+    except Exception:
+        pass
+
+
+def _log_session_attempt(metrics: Optional[Any]) -> None:
+    try:
+        if metrics is not None:
+            metrics.inc_session_attempt()
+    except Exception:
+        pass
+
+
+def _log_session_failure(metrics: Optional[Any]) -> None:
+    try:
+        if metrics is not None:
+            metrics.inc_session_failure()
+    except Exception:
+        pass
+
+
+def _log_session_success(metrics: Optional[Any], start_ms: float) -> None:
+    try:
+        if metrics is not None:
+            metrics.observe_session_success(time.time() * 1000.0 - start_ms)
+    except Exception:
+        pass
+
+
+def _claims_has_permission(user_roles: List[str], required_role: str) -> bool:
+    """Check if any of the user's roles satisfies the required role using hierarchy."""
+    normalized = set(r.lower() for r in user_roles)
+    if required_role == 'read-only':
+        return bool(normalized & {'read-only', 'operator', 'admin'})
+    if required_role == 'operator':
+        return bool(normalized & {'operator', 'admin'})
+    if required_role == 'admin':
+        return 'admin' in normalized
+    return False
+
+def _extract_roles_from_claims_local(claims: Dict[str, Any]) -> List[str]:
+    """Extract roles from common claim keys with normalization and de-dupe.
+
+    Accepts any of:
+      - roles: [str]
+      - permissions: [str]
+      - any "*/roles": [str] (custom namespace)
+    """
+    roles: List[str] = []
+    try:
+        if not isinstance(claims, dict):
+            return []
+        direct = claims.get('roles')
+        if isinstance(direct, list):
+            roles.extend([str(x) for x in direct])
+        perms = claims.get('permissions')
+        if isinstance(perms, list):
+            roles.extend([str(x) for x in perms])
+        for k, v in claims.items():
+            if isinstance(k, str) and k.endswith('/roles') and isinstance(v, list):
+                roles.extend([str(x) for x in v])
+        # normalize and de-dupe
+        seen = set()
+        result: List[str] = []
+        for r in roles:
+            rl = r.strip()
+            if rl and rl not in seen:
+                seen.add(rl)
+                result.append(rl)
+        return result
+    except Exception:
+        return []
 
 def _enforce_tenant_isolation(session, request):
     """Enforce tenant isolation for the session."""
@@ -286,6 +475,27 @@ def _enforce_tenant_isolation(session, request):
         
     except Exception as e:
         logger.error(f"Error enforcing tenant isolation: {e}")
+        return jsonify({
+            'error': 'Tenant validation error',
+            'code': 'TENANT_VALIDATION_ERROR'
+        }), 500
+
+
+def _enforce_tenant_isolation_jwt(request):
+    """Enforce tenant isolation for JWT-authenticated requests using header only."""
+    try:
+        tenant_header = getattr(request.auth_config, 'tenant_id_header', 'X-BAS-Tenant') if hasattr(request, 'auth_config') else 'X-BAS-Tenant'
+        requested_tenant_id = request.headers.get(tenant_header)
+        if not requested_tenant_id:
+            logger.warning(f"Missing tenant ID in JWT request to {request.endpoint}")
+            return jsonify({
+                'error': 'Tenant ID required',
+                'code': 'MISSING_TENANT_ID'
+            }), 400
+        g.tenant_id = requested_tenant_id
+        return True
+    except Exception as e:
+        logger.error(f"Error enforcing tenant isolation (JWT): {e}")
         return jsonify({
             'error': 'Tenant validation error',
             'code': 'TENANT_VALIDATION_ERROR'

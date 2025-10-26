@@ -28,8 +28,9 @@ def init_client(
     Returns:
         A firestore.Client instance, or None if library unavailable.
     """
+    client = None
     if firestore is None:
-        return None
+        return client
 
     # Prefer explicit values; fall back to environment
     use_emulators = os.getenv("USE_EMULATORS", "0") in {"1", "true", "True"}
@@ -38,14 +39,15 @@ def init_client(
     if use_emulators and emulator:
         os.environ["FIRESTORE_EMULATOR_HOST"] = emulator
         pid = project_id or os.getenv("GOOGLE_CLOUD_PROJECT") or "local-dev"
-        return firestore.Client(project=pid)
+        client = firestore.Client(project=pid)
+    else:
+        # Production path: ensure emulator var is not set accidentally
+        if "FIRESTORE_EMULATOR_HOST" in os.environ:
+            del os.environ["FIRESTORE_EMULATOR_HOST"]
 
-    # Production path: ensure emulator var is not set accidentally
-    if "FIRESTORE_EMULATOR_HOST" in os.environ:
-        del os.environ["FIRESTORE_EMULATOR_HOST"]
-
-    if project_id:
-        return firestore.Client(project=project_id)
-
-    # Fallback to default discovery/ADC
-    return firestore.Client()
+        if project_id:
+            client = firestore.Client(project=project_id)
+        else:
+            # Fallback to default discovery/ADC
+            client = firestore.Client()
+    return client

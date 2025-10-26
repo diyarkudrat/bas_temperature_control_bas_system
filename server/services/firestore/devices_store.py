@@ -93,20 +93,23 @@ class DevicesStore(TenantAwareRepository[Device, str], TimestampedRepository[Dev
         Returns:
             OperationResult with Device entity on success
         """
+        result: Optional[OperationResult[Device]] = None
+        
         try:
             # In-process LRU first
             key = self._cache_key_id(entity_id)
+            
             # 1) LRU
             obj = self._lru.get(key)
             if obj is not None:
                 try:
                     device = Device.from_dict(obj)
                     device.id = self._normalize_id(entity_id)
-                    return OperationResult(success=True, data=device)
+                    result = OperationResult(success=True, data=device)
                 except Exception:
-                    pass
+                    result = None
             # 2) Redis/external cache
-            if self._cache is not None:
+            if result is None and self._cache is not None:
                 try:
                     cached = ensure_text(self._cache.get(key))
                     if cached:
@@ -115,29 +118,32 @@ class DevicesStore(TenantAwareRepository[Device, str], TimestampedRepository[Dev
                             device = Device.from_dict(obj)
                             device.id = self._normalize_id(entity_id)
                             self._lru.set(key, obj)
-                            return OperationResult(success=True, data=device)
+                            result = OperationResult(success=True, data=device)
                 except Exception:
-                    pass
+                    result = None
 
-            doc_ref = self.collection.document(entity_id)
-            doc = doc_ref.get()
+            if result is None:
+                doc_ref = self.collection.document(entity_id)
+                doc = doc_ref.get()
 
-            if not doc.exists:
-                return OperationResult(success=False, error="Device not found", error_code="NOT_FOUND")
+                if not doc.exists:
+                    result = OperationResult(success=False, error="Device not found", error_code="NOT_FOUND")
+                else:
+                    data = doc.to_dict()
+                    device = Device.from_dict(data)
+                    device.id = doc.id
 
-            data = doc.to_dict()
-            device = Device.from_dict(data)
-            device.id = doc.id
+                    # Fill cache
+                    self._lru.set(key, data)
+                    if self._cache is not None:
+                        try:
+                            self._cache.setex(key, cap_ttl_seconds(self._ttl_s, self._ttl_s), json_dumps_compact(data))
+                        except Exception:
+                            pass
 
-            # Fill cache
-            self._lru.set(key, data)
-            if self._cache is not None:
-                try:
-                    self._cache.setex(key, cap_ttl_seconds(self._ttl_s, self._ttl_s), json_dumps_compact(data))
-                except Exception:
-                    pass
+                    result = OperationResult(success=True, data=device)
 
-            return OperationResult(success=True, data=device)
+            return result  # type: ignore[return-value]
 
         except PermissionDenied as e:
             self.logger.error(f"Permission denied getting device by id: {e}")
@@ -198,30 +204,32 @@ class DevicesStore(TenantAwareRepository[Device, str], TimestampedRepository[Dev
             OperationResult with success boolean
         """
         try:
+            result: OperationResult[bool]
             # Check if device exists first
             get_result = self.get_by_id(entity_id)
             if not get_result.success:
-                return OperationResult(success=False, error="Device not found", error_code="NOT_FOUND")
+                result = OperationResult(success=False, error="Device not found", error_code="NOT_FOUND")
+            else:
+                doc_ref = self.collection.document(entity_id)
+                doc_ref.delete()
 
-            doc_ref = self.collection.document(entity_id)
-            doc_ref.delete()
-
-            # Invalidate cache
-            key = self._cache_key_id(entity_id)
-            # 1) LRU
-            try:
-                self._lru.delete(key)
-            except Exception:
-                pass
-            # 2) Redis
-            if self._cache is not None:
+                # Invalidate cache
+                key = self._cache_key_id(entity_id)
+                # 1) LRU
                 try:
-                    self._cache.delete(key)
+                    self._lru.delete(key)
                 except Exception:
                     pass
+                # 2) Redis
+                if self._cache is not None:
+                    try:
+                        self._cache.delete(key)
+                    except Exception:
+                        pass
 
-            self.logger.info(f"Deleted device {entity_id}")
-            return OperationResult(success=True, data=True)
+                self.logger.info(f"Deleted device {entity_id}")
+                result = OperationResult(success=True, data=True)
+            return result
 
         except PermissionDenied as e:
             self.logger.error(f"Permission denied deleting device: {e}")

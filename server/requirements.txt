@@ -6,3 +6,4 @@ google-auth==2.34.0
 pytest-cov==5.0.0
 redis==5.0.7
 aioredis==2.0.1
+python-jose[cryptography]==3.3.0

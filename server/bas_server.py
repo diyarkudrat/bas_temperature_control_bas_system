@@ -1,7 +1,14 @@
 #!/usr/bin/env python3
 """
-BAS Server - Computer-based control system for Pico W clients
-Handles web interface, database, and control logic
+BAS Server - Flask application wiring for BAS (building automation system).
+
+This module composes:
+- Controller (hardware logic)
+- Auth (config, sessions, audit, provider)
+- Firestore service factory (optional)
+- HTTP routes and versioning headers
+
+Focus: keep orchestration and request hooks here; move logic to services.
 """
 
 import json
@@ -13,6 +20,7 @@ from flask import Flask, jsonify, request, g
 from flask_cors import CORS
 import logging
 import os as _os
+from typing import Optional
 
 # Authentication imports
 from auth import (
@@ -28,8 +36,12 @@ from http import routes as http_routes
 from errors import register_error_handlers
 from auth.tenant_middleware import TenantMiddleware
 from config.config import get_server_config
+from auth.metrics import AuthMetrics
+from auth.providers import MockAuth0Provider, AuthProvider, Auth0Provider, build_auth0_provider
+from auth.providers.deny_all import DenyAllAuthProvider
+from services.bas_hardware_controller import BASController
 
-# Configure logging
+# Configure logging early to ensure consistent format/level
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
@@ -39,110 +51,64 @@ CORS(app)
 # Default versioning applier; replaced during setup if build succeeds
 _apply_versioning = lambda resp: resp
 
-class BASController:
-    """Temperature control logic."""
-    
-    def __init__(self):
-        self.setpoint_tenths = 230  # 23.0°C
-        self.deadband_tenths = 10   # 1.0°C
-        self.min_on_time_ms = 10000  # 10 seconds
-        self.min_off_time_ms = 10000  # 10 seconds
-        
-        # State tracking
-        self.last_cool_on_time = 0
-        self.last_cool_off_time = 0
-        self.last_heat_on_time = 0
-        self.last_heat_off_time = 0
-        
-        # Current status
-        self.current_temp_tenths = 0
-        self.sensor_ok = False
-        self.cool_active = False
-        self.heat_active = False
-        self.state = "IDLE"
-    
-    def update_control(self, temp_tenths, sensor_ok):
-        """Update control logic based on sensor reading."""
-        self.current_temp_tenths = temp_tenths
-        self.sensor_ok = sensor_ok
-        
-        if not sensor_ok:
-            # Sensor fault - turn off all actuators
-            self.cool_active = False
-            self.heat_active = False
-            self.state = "FAULT"
-            return
-        
-        current_time = time.time() * 1000  # milliseconds
-        
-        # Determine if we should cool
-        should_cool = temp_tenths > (self.setpoint_tenths + self.deadband_tenths)
-        
-        # LED strips (heating relay) are always on
-        self.heat_active = True
-        
-        # Apply minimum on/off times for cooling only
-        if self.cool_active:
-            if not should_cool and (current_time - self.last_cool_on_time) >= self.min_on_time_ms:
-                self.cool_active = False
-                self.last_cool_off_time = current_time
-            elif should_cool:
-                # Keep cooling
-                pass
-        else:
-            if should_cool and (current_time - self.last_cool_off_time) >= self.min_off_time_ms:
-                self.cool_active = True
-                self.last_cool_on_time = current_time
-        
-        # Update state
-        if self.cool_active and self.heat_active:
-            self.state = "COOLING_WITH_LEDS"
-        elif self.cool_active:
-            self.state = "COOLING"
-        elif self.heat_active:
-            self.state = "IDLE_WITH_LEDS"
-        else:
-            self.state = "IDLE"
-    
-    def get_control_commands(self):
-        """Get current control commands for Pico client."""
-        return {
-            "cool_active": self.cool_active,
-            "heat_active": self.heat_active,
-            "setpoint_tenths": self.setpoint_tenths,
-            "deadband_tenths": self.deadband_tenths
-        }
-    
-    def set_setpoint(self, setpoint_tenths):
-        """Set temperature setpoint."""
-        if 100 <= setpoint_tenths <= 400:  # 10.0°C to 40.0°C
-            self.setpoint_tenths = setpoint_tenths
-            return True
-        return False
-    
-    def set_deadband(self, deadband_tenths):
-        """Set temperature deadband."""
-        if 0 <= deadband_tenths <= 50:  # 0.0°C to 5.0°C
-            self.deadband_tenths = deadband_tenths
-            return True
-        return False
-
-class BASDatabase:
-    """Placeholder database stub."""
-    def __init__(self):
-        pass
-
-# Global instances
+# ------------------------- Global singletons -------------------------
 controller = BASController()
-database = BASDatabase()
 server_config = get_server_config()
 
-# Authentication global variables
+# Authentication singletons (populated in init_auth)
 auth_config = None
 user_manager = None
 session_manager = None
 audit_logger = None
 rate_limiter = None
+auth_provider: Optional[AuthProvider] = None
+auth_metrics = AuthMetrics()
+
+
+def _build_auth_provider_from_env() -> AuthProvider:
+    """Create the authentication provider based on server configuration.
+
+    Phase 1:
+    - auth0: uses JWKS with strict validation
+    - mock: allowed only with emulators enabled; otherwise deny-all
+    - unknown or invalid config: deny-all
+    """
+    try:
+        provider_kind = (server_config.auth_provider or "mock").lower()
+        if provider_kind == "auth0":
+            # Strict env validation: issuer must be https and audience provided
+            domain = (server_config.auth0_domain or "").strip()
+            audience = (server_config.auth0_audience or "").strip()
+            if not domain or not audience:
+                raise ValueError("AUTH0_DOMAIN and AUTH0_AUDIENCE are required for auth0 provider")
+            issuer = f"https://{domain}/" if not domain.startswith("https://") else domain
+            provider = build_auth0_provider({
+                "issuer": issuer,
+                "audience": audience,
+            })
+            return provider
+        if provider_kind == "mock":
+            # Disallow mock in prod unless emulators explicitly enabled
+            if not server_config.use_emulators:
+                logger.error("Mock auth provider is not allowed without emulators enabled")
+                return DenyAllAuthProvider()
+            issuer = f"https://{server_config.auth0_domain}/" if server_config.auth0_domain else "https://mock.auth0/"
+            return MockAuth0Provider(
+                audience=str(server_config.auth0_audience or "bas-api"),
+                issuer=issuer,
+            )
+        logger.warning("Unknown AUTH_PROVIDER '%s'; using deny-all auth provider", provider_kind)
+        return DenyAllAuthProvider()
+    except Exception as e:
+        logger.error("Auth provider initialization failed: %s", e)
+        return DenyAllAuthProvider()
+
+
+## DenyAllAuthProvider moved to auth.providers.deny_all
+
+
+# Initialize provider at import so /api/health/auth is responsive early
+auth_provider = _build_auth_provider_from_env()
 
 # Firestore global variables
 firestore_factory = None
@@ -183,11 +149,13 @@ def init_auth():
             logger.info("Tenant middleware initialized")
         
         # Initialize managers (will use Firestore if enabled)
-        user_manager = UserManager(database.db_path, auth_config, firestore_factory)
-        session_manager = SessionManager(database.db_path, auth_config, firestore_factory)
+        # Use an ephemeral sqlite database file path when Firestore features are disabled.
+        db_path = 'bas.sqlite3'
+        user_manager = UserManager(db_path, auth_config, firestore_factory)
+        session_manager = SessionManager(db_path, auth_config, firestore_factory)
         
         # Initialize services
-        audit_logger = AuditLogger(database.db_path, firestore_factory)
+        audit_logger = AuditLogger(db_path, firestore_factory)
         rate_limiter = RateLimiter(auth_config)
         
         logger.info("Authentication system initialized successfully")
@@ -210,6 +178,10 @@ def auth_login_page():
 def health():
     return http_routes.health(auth_config, firestore_factory)
 
+@app.route('/api/health/auth')
+def auth_health():
+    return http_routes.auth_health(auth_provider)
+
 @app.route('/api/sensor_data', methods=['POST'])
 def receive_sensor_data():
     return http_routes.receive_sensor_data(controller, firestore_factory)
@@ -226,7 +198,7 @@ def set_setpoint():
 @app.route('/api/telemetry')
 @require_auth(required_role="read-only")
 def get_telemetry():
-    return http_routes.get_telemetry(database, firestore_factory)
+    return http_routes.get_telemetry(firestore_factory)
 
 @app.route('/api/config')
 def get_config():
@@ -367,11 +339,19 @@ def auth_status():
     })
 
 # Add request context setup
+# ---------------------- Request lifecycle hooks ----------------------
 @app.before_request
 def setup_auth_context():
     """Setup authentication context for each request."""
     # Always attach server_config for downstream components
     request.server_config = server_config
+    # Attach auth provider for routes and middleware
+    request.auth_provider = auth_provider
+    # Attach lightweight metrics aggregator
+    try:
+        request.auth_metrics = auth_metrics
+    except Exception:
+        pass
     if auth_config:
         request.auth_config = auth_config
         request.session_manager = session_manager

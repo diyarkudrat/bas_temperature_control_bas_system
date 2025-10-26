@@ -4,7 +4,7 @@ Integrate Auth0 for identity with server-controlled authorization and audit. Ver
 ### Decisions
 ID | statement | rationale | status | invariant? (Y/N)
 --- | --- | --- | --- | ---
-A1 | Use Auth0 OIDC; verify JWTs via JWKS; cache keys; dev mocks | Standards-based identity; avoids passwords; keeps demos working during outages | proposed | Y
+A1 | Use Auth0 OIDC; verify RS256 JWTs via JWKS; cache keys; dev mocks | Standards-based asymmetric identity; avoids passwords; keeps demos working during outages | proposed | Y
 A2 | Configure via env; never embed secrets; provide key rotation scripts | Reduces leakage risk; teaches IAM hygiene; works across dev and prod | proposed | Y
 A3 | Store roles in Auth0 metadata; mirror claims; maintain server revocation list | Metadata is source-of-truth; claims are fast; revocation prevents stale privileges | proposed | Y
 A4 | Authorize with JWT + metadata; short TTL cache; bust on changes; rate-limit/backoff | Balances freshness/latency; mitigates DoS; optional Redis cache for restart resilience | proposed | Y
