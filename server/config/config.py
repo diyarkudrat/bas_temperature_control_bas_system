@@ -5,142 +5,129 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass
 from typing import Optional
+import json
+import re
+import logging
+
+# Import split config components
+from .rate_limit import RateLimitConfig, MetadataFetchRateLimit
+from .breaker import BreakerConfig
+from .firestore_budgets import FirestoreBudgets
+from .redis_budgets import RedisBudgets
+from .sse_budgets import SSEBudgets
+from .cache_ttls import CacheTTLs
+from .auth0_configs import Auth0JWTBudgets, Auth0MgmtConfig
+
+logger = logging.getLogger(__name__)
 
 
-@dataclass
-class RateLimitConfig:
-    """Centralized request rate limit configuration with sane bounds."""
+def _validate_path_rules(rules):
+    """Validate path sensitivity rules: list of (pattern, level).
 
-    enabled: bool = False
-    shadow_mode: bool = False  # log-only
-    requests_per_second: float = 50.0
-    burst_capacity: int = 100
-
-    # Bounds to prevent extreme/unintended values
-    min_rps: float = 1.0
-    max_rps: float = 10000.0
-    min_burst: int = 1
-    max_burst: int = 100000
-
-    @classmethod
-    def from_env(cls) -> "RateLimitConfig":
-        enabled = os.getenv("BAS_REQ_RATE_LIMIT_ENABLED", "0").lower() in {"1", "true", "yes"}
-        shadow_mode = os.getenv("BAS_REQ_RATE_LIMIT_SHADOW", "0").lower() in {"1", "true", "yes"}
-        rps_raw = float(os.getenv("BAS_REQ_RATE_LIMIT_RPS", "50"))
-        burst_raw = int(os.getenv("BAS_REQ_RATE_LIMIT_BURST", "100"))
-
-        cfg = cls(enabled=enabled, shadow_mode=shadow_mode,
-                  requests_per_second=rps_raw, burst_capacity=burst_raw)
-        return cfg.clamped()
-
-    def clamped(self) -> "RateLimitConfig":
-        rps = max(self.min_rps, min(self.requests_per_second, self.max_rps))
-        burst = max(self.min_burst, min(self.burst_capacity, self.max_burst))
-        # Return a new instance to keep immutability semantics for callers
-        return RateLimitConfig(
-            enabled=self.enabled,
-            shadow_mode=self.shadow_mode,
-            requests_per_second=rps,
-            burst_capacity=burst,
-            min_rps=self.min_rps,
-            max_rps=self.max_rps,
-            min_burst=self.min_burst,
-            max_burst=self.max_burst,
-        )
+    Returns only valid entries; logs warnings for invalid patterns.
+    """
+    valid = []
+    if not isinstance(rules, (list, tuple)):
+        return valid
+    for item in rules:
+        try:
+            if isinstance(item, (list, tuple)) and len(item) == 2:
+                pattern, level = str(item[0]), str(item[1])
+            elif isinstance(item, dict) and 'pattern' in item and 'level' in item:
+                pattern, level = str(item['pattern']), str(item['level'])
+            else:
+                logger.warning(f"Invalid path rule entry (ignored): {item}")
+                continue
+            # Compile to validate regex; re has no timeout, but compile is quick for sane patterns
+            re.compile(pattern)
+            # Normalize level to lowercase tokens like 'critical'|'standard'|... (free-form)
+            valid.append((pattern, level.lower()))
+        except re.error as exc:
+            logger.warning(f"Invalid path rule regex '{item}': {exc}")
+        except Exception as exc:
+            logger.warning(f"Failed to parse path rule '{item}': {exc}")
+    if valid:
+        logger.info(f"Loaded {len(valid)} path sensitivity rules")
+    else:
+        logger.info("No path sensitivity rules configured; default fail-closed applies")
+    return valid
 
 
-@dataclass
-class BreakerConfig:
-    """Circuit breaker defaults (see DDR notes)."""
-
-    failure_threshold: int = 5            # trips after N failures
-    window_seconds: int = 30              # rolling window for failure count
-    half_open_after_seconds: int = 15     # time before trying half-open
-
-    @classmethod
-    def from_env(cls) -> "BreakerConfig":
-        return cls(
-            failure_threshold=int(os.getenv("BAS_BREAKER_FAILURES", "5")),
-            window_seconds=int(os.getenv("BAS_BREAKER_WINDOW_S", "30")),
-            half_open_after_seconds=int(os.getenv("BAS_BREAKER_HALF_OPEN_S", "15")),
-        )
+def _load_path_rules_from_env():
+    """Load path sensitivity rules from BAS_PATH_SENS_RULES (JSON)."""
+    raw = os.getenv("BAS_PATH_SENS_RULES", "").strip()
+    if not raw:
+        return []
+    try:
+        data = json.loads(raw)
+        return _validate_path_rules(data)
+    except Exception as exc:
+        logger.warning(f"Failed to parse BAS_PATH_SENS_RULES: {exc}")
+        return []
 
 
-@dataclass
-class FirestoreBudgets:
-    """Firestore timeouts and retries."""
-
-    read_timeout_ms: int = 50
-    write_timeout_ms: int = 70
-    retries: int = 2
-    base_backoff_ms: int = 10
-    max_backoff_ms: int = 100
-
-    @classmethod
-    def from_env(cls) -> "FirestoreBudgets":
-        return cls(
-            read_timeout_ms=int(os.getenv("BAS_FS_READ_TIMEOUT_MS", "50")),
-            write_timeout_ms=int(os.getenv("BAS_FS_WRITE_TIMEOUT_MS", "70")),
-            retries=int(os.getenv("BAS_FS_RETRIES", "2")),
-            base_backoff_ms=int(os.getenv("BAS_FS_BACKOFF_BASE_MS", "10")),
-            max_backoff_ms=int(os.getenv("BAS_FS_BACKOFF_MAX_MS", "100")),
-        )
+def _get_int_env(name: str, default: int, *, min_value: int | None = None, max_value: int | None = None) -> int:
+    try:
+        val = int(os.getenv(name, str(default)))
+        if min_value is not None and val < min_value:
+            raise ValueError(f"{name} must be >= {min_value}")
+        if max_value is not None and val > max_value:
+            raise ValueError(f"{name} must be <= {max_value}")
+        return val
+    except Exception as exc:
+        logger.warning(f"Invalid integer for {name}: {exc}; using default {default}")
+        return int(default)
 
 
-@dataclass
-class RedisBudgets:
-    """Redis connection pool and op timeouts."""
-
-    op_timeout_ms: int = 10
-    pool_max_connections: int = 64
-
-    @classmethod
-    def from_env(cls) -> "RedisBudgets":
-        return cls(
-            op_timeout_ms=int(os.getenv("BAS_REDIS_OP_TIMEOUT_MS", "10")),
-            pool_max_connections=int(os.getenv("BAS_REDIS_POOL_MAX", "64")),
-        )
-
-
-@dataclass
-class SSEBudgets:
-    """SSE service timings and retries."""
-
-    keepalive_seconds: int = 20
-    retry_base_ms: int = 250
-    retry_max_ms: int = 5000
-
-    @classmethod
-    def from_env(cls) -> "SSEBudgets":
-        return cls(
-            keepalive_seconds=int(os.getenv("BAS_SSE_KEEPALIVE_S", "20")),
-            retry_base_ms=int(os.getenv("BAS_SSE_RETRY_BASE_MS", "250")),
-            retry_max_ms=int(os.getenv("BAS_SSE_RETRY_MAX_MS", "5000")),
-        )
+def _load_per_user_limits_from_env() -> dict:
+    """Load USER_RATE_WINDOWS JSON mapping endpoint -> {window_s,max_req}."""
+    raw = os.getenv("USER_RATE_WINDOWS", "").strip()
+    if not raw:
+        return {}
+    try:
+        data = json.loads(raw)
+        if not isinstance(data, dict):
+            raise ValueError("must be a JSON object")
+        validated: dict[str, dict[str, int]] = {}
+        for ep, cfg in data.items():
+            if not isinstance(ep, str) or not ep.strip():
+                logger.warning(f"Invalid endpoint key in USER_RATE_WINDOWS: {ep}")
+                continue
+            if not isinstance(cfg, dict):
+                logger.warning(f"Invalid cfg for endpoint {ep} (not object)")
+                continue
+            ws = cfg.get("window_s")
+            mr = cfg.get("max_req")
+            if not isinstance(ws, int) or ws <= 0 or not isinstance(mr, int) or mr <= 0:
+                logger.warning(f"Invalid window/max for endpoint {ep}")
+                continue
+            validated[ep.strip()] = {"window_s": int(ws), "max_req": int(mr)}
+        return validated
+    except Exception as exc:
+        logger.warning(f"Failed to parse USER_RATE_WINDOWS: {exc}")
+        return {}
 
 
-@dataclass
-class CacheTTLs:
-    """Centralized cache TTLs. Some are upper bounds; services may clamp by domain rules."""
-
-    # Sessions: used as max TTL; services clamp to remaining expires_at
-    session_max_seconds: int = 1800  # 30 minutes
-    # Devices
-    device_by_id_seconds: int = 60
-    device_list_first_page_seconds: int = 60
-    device_count_seconds: int = 30
-    # Audit dashboard views
-    audit_dashboard_seconds: int = 20
-
-    @classmethod
-    def from_env(cls) -> "CacheTTLs":
-        return cls(
-            session_max_seconds=int(os.getenv("BAS_TTL_SESSION_MAX_S", "1800")),
-            device_by_id_seconds=int(os.getenv("BAS_TTL_DEVICE_BY_ID_S", "60")),
-            device_list_first_page_seconds=int(os.getenv("BAS_TTL_DEVICE_LIST_S", "60")),
-            device_count_seconds=int(os.getenv("BAS_TTL_DEVICE_COUNT_S", "30")),
-            audit_dashboard_seconds=int(os.getenv("BAS_TTL_AUDIT_DASHBOARD_S", "20")),
-        )
+def _load_breaker_thresholds_from_env() -> dict:
+    """Load BREAKER_THRESHOLDS JSON with optional keys: failure_threshold, window_seconds, half_open_after_seconds."""
+    raw = os.getenv("BREAKER_THRESHOLDS", "").strip()
+    if not raw:
+        return {}
+    try:
+        data = json.loads(raw)
+        if not isinstance(data, dict):
+            raise ValueError("must be a JSON object")
+        result: dict[str, int] = {}
+        for k in ("failure_threshold", "window_seconds", "half_open_after_seconds"):
+            if k in data:
+                v = int(data[k])
+                if v <= 0:
+                    raise ValueError(f"{k} must be positive")
+                result[k] = v
+        return result
+    except Exception as exc:
+        logger.warning(f"Failed to parse BREAKER_THRESHOLDS: {exc}")
+        return {}
 
 
 @dataclass
@@ -151,28 +138,86 @@ class ServerConfig:
     emulator_redis_url: Optional[str] = None
     firestore_emulator_host: Optional[str] = None
     gcp_project_id: Optional[str] = None
+    # Authentication
+    # Grouped under a dedicated dataclass for clarity and future growth
+    # (e.g., JWKS caching budgets, token TTL clamps, etc.).
+    # Added in Auth0 Phase 0.
+    #
+    # Defaults keep system functional in mock mode without external dependencies.
+    # - provider: "mock"
+    # - domain: dev placeholder
+    # - audience: service identifier
+    auth_provider: str = "mock"
+    auth0_domain: Optional[str] = "dev-tenant"
+    auth0_audience: Optional[str] = "bas-api"
     rate_limit: RateLimitConfig = RateLimitConfig()
     breaker: BreakerConfig = BreakerConfig()
     firestore: FirestoreBudgets = FirestoreBudgets()
     redis: RedisBudgets = RedisBudgets()
     sse: SSEBudgets = SSEBudgets()
     cache_ttl: CacheTTLs = CacheTTLs()
+    # Auth0 Phase 2 budgets and management config
+    auth0_jwt: Auth0JWTBudgets = Auth0JWTBudgets()
+    auth0_mgmt: Auth0MgmtConfig = Auth0MgmtConfig()
+    # Path sensitivity rules used by middleware.path_classify()
+    # List of (regex_pattern, level). Empty => default fail-closed to 'critical'.
+    PATH_SENSITIVITY_RULES: list[tuple[str, str]] = None  # type: ignore
+    # Metadata fetch rate limiting (global/per-user)
+    metadata_rate_limit: MetadataFetchRateLimit = MetadataFetchRateLimit()
+    # Phase 4 additions
+    revocation_ttl_s: Optional[int] = None
+    dynamic_limit_api_key: Optional[str] = None
 
     @classmethod
     def from_env(cls) -> "ServerConfig":
         """Create configuration from environment variables."""
         use_emulators = os.getenv("USE_EMULATORS", "0") in {"1", "true", "True"}
+        # Path rules from env (optional); default empty for fail-closed behavior
+        path_rules = _load_path_rules_from_env()
+        # Per-user limits seed from env
+        per_user_limits_env = _load_per_user_limits_from_env()
+        # Breaker thresholds optional overrides
+        breaker_over = _load_breaker_thresholds_from_env()
+
+        # Build sub-configs
+        rate_limit_cfg = RateLimitConfig.from_env()
+        if per_user_limits_env:
+            try:
+                rate_limit_cfg.update_per_user_limits(per_user_limits_env)
+            except Exception as exc:
+                logger.warning(f"Ignoring invalid USER_RATE_WINDOWS: {exc}")
+
+        breaker_cfg = BreakerConfig.from_env()
+        try:
+            if breaker_over.get("failure_threshold"):
+                breaker_cfg.failure_threshold = int(breaker_over["failure_threshold"])  # type: ignore[attr-defined]
+            if breaker_over.get("window_seconds"):
+                breaker_cfg.window_seconds = int(breaker_over["window_seconds"])  # type: ignore[attr-defined]
+            if breaker_over.get("half_open_after_seconds"):
+                breaker_cfg.half_open_after_seconds = int(breaker_over["half_open_after_seconds"])  # type: ignore[attr-defined]
+        except Exception as exc:
+            logger.warning(f"Ignoring invalid BREAKER_THRESHOLDS overrides: {exc}")
+
         return cls(
             use_emulators=use_emulators,
             emulator_redis_url=os.getenv("EMULATOR_REDIS_URL"),
             firestore_emulator_host=os.getenv("FIRESTORE_EMULATOR_HOST"),
             gcp_project_id=os.getenv("GOOGLE_CLOUD_PROJECT"),
-            rate_limit=RateLimitConfig.from_env(),
-            breaker=BreakerConfig.from_env(),
+            auth_provider=os.getenv("AUTH_PROVIDER", "mock").strip().lower(),
+            auth0_domain=os.getenv("AUTH0_DOMAIN", "dev-tenant"),
+            auth0_audience=os.getenv("AUTH0_AUDIENCE", "bas-api"),
+            rate_limit=rate_limit_cfg,
+            breaker=breaker_cfg,
             firestore=FirestoreBudgets.from_env(),
             redis=RedisBudgets.from_env(),
             sse=SSEBudgets.from_env(),
             cache_ttl=CacheTTLs.from_env(),
+            auth0_jwt=Auth0JWTBudgets.from_env(),
+            auth0_mgmt=Auth0MgmtConfig.from_env(),
+            PATH_SENSITIVITY_RULES=path_rules,
+            metadata_rate_limit=MetadataFetchRateLimit.from_env(),
+            revocation_ttl_s=_get_int_env("REVOCATION_TTL_S", 3600, min_value=1),
+            dynamic_limit_api_key=os.getenv("DYNAMIC_LIMIT_API_KEY"),
         )
 
 

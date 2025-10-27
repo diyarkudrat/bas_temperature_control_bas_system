@@ -9,7 +9,7 @@ from unittest.mock import Mock
 from typing import Dict, Any
 
 from auth.config import AuthConfig
-from auth.services import AuditLogger, RateLimiter
+from auth.services import AuditLogger, RateLimiter, RoleService
 
 # Contract testing imports
 from tests.contracts.base import AuditStoreProtocol, UsersStoreProtocol, SessionsStoreProtocol
@@ -897,6 +897,48 @@ class TestRateLimiter:
         
         count = rate_limiter.get_attempt_count("192.168.1.1", "testuser")
         assert_equals(count, 0)
+
+
+@pytest.mark.auth
+@pytest.mark.unit
+class TestRoleService:
+    def test_role_endpoint_limits_and_success(self, temp_db_file, auth_config):
+        # Build dependencies
+        audit = AuditLogger(temp_db_file)
+        limiter = RateLimiter(auth_config)
+
+        class UM:
+            def __init__(self):
+                self.set_calls = 0
+            def get_effective_user_roles(self, username, user_id=None):  # noqa: ARG002
+                return ["operator"]
+            def set_external_user_roles(self, user_id, roles, *, max_retries=3, initial_backoff_s=0.05):  # noqa: ARG002
+                self.set_calls += 1
+                return {"ok": True}
+
+        um = UM()
+        svc = RoleService(um, audit, limiter)
+
+        # Allowed get
+        roles = svc.get_roles("alice", "10.0.0.1", "uid-1")
+        assert roles == ["operator"]
+
+        # Allowed set
+        res = svc.set_roles("alice", "10.0.0.1", "uid-1", {"viewer": True})
+        assert res.get("success") is True
+        assert um.set_calls == 1
+
+        # Exhaust limits quickly: simulate many attempts
+        for _ in range(auth_config.auth_attempts_per_15min + 1):
+            limiter.record_attempt("10.0.0.2", "bob")
+
+        # Blocked get
+        roles_blocked = svc.get_roles("bob", "10.0.0.2", "uid-2")
+        assert roles_blocked == []
+
+        # Blocked set
+        res_blocked = svc.set_roles("bob", "10.0.0.2", "uid-2", {"admin": True})
+        assert res_blocked.get("success") is False
 
     def test_clear_attempts_no_user(self, auth_config):
         """Test clearing attempts when no user specified."""

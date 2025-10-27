@@ -7,6 +7,7 @@ import sqlite3
 from typing import Optional
 from .models import User, Session
 from .exceptions import AuthError
+from .role_service import RoleService
 
 logger = logging.getLogger(__name__)
 
@@ -67,7 +68,7 @@ class AuditLogger:
     def log_auth_success(self, username: str, ip_address: str, session_id: str):
         """Log successful authentication."""
         logger.info(f"Logging auth success for user: {username}")
-        
+        handled = False
         # Try Firestore first if available
         if self.firestore_audit:
             try:
@@ -77,24 +78,25 @@ class AuditLogger:
                     ip_address=ip_address,
                     details={"session_id": session_id, "ip_address": ip_address, "endpoint": "auth/login"}
                 )
-                return
+                handled = True
             except Exception as e:
                 logger.warning(f"Failed to log to Firestore: {e}")
         
-        # Fallback to SQLite
-        self._log_event(
-            username=username,
-            ip_address=ip_address,
-            action="LOGIN_SUCCESS",
-            session_id=session_id,
-            success=True,
-            details={"session_id": session_id, "ip_address": ip_address, "endpoint": "auth/login"}
-        )
+        # Fallback to SQLite if not handled above
+        if not handled:
+            self._log_event(
+                username=username,
+                ip_address=ip_address,
+                action="LOGIN_SUCCESS",
+                session_id=session_id,
+                success=True,
+                details={"session_id": session_id, "ip_address": ip_address, "endpoint": "auth/login"}
+            )
     
     def log_auth_failure(self, username: str, ip_address: str, reason: str):
         """Log failed authentication."""
         logger.warning(f"Logging auth failure for user: {username}, reason: {reason}")
-        
+        handled = False
         # Try Firestore first if available
         if self.firestore_audit:
             try:
@@ -104,18 +106,19 @@ class AuditLogger:
                     ip_address=ip_address,
                     details={"failure_reason": reason, "attempted_at": __import__('datetime').datetime.utcnow().isoformat() + 'Z', "endpoint": "auth/login"}
                 )
-                return
+                handled = True
             except Exception as e:
                 logger.warning(f"Failed to log to Firestore: {e}")
         
         # Fallback to SQLite
-        self._log_event(
-            username=username,
-            ip_address=ip_address,
-            action="LOGIN_FAILURE",
-            success=False,
-            details={"failure_reason": reason, "attempted_at": __import__('datetime').datetime.utcnow().isoformat() + 'Z', "endpoint": "auth/login"}
-        )
+        if not handled:
+            self._log_event(
+                username=username,
+                ip_address=ip_address,
+                action="LOGIN_FAILURE",
+                success=False,
+                details={"failure_reason": reason, "attempted_at": __import__('datetime').datetime.utcnow().isoformat() + 'Z', "endpoint": "auth/login"}
+            )
     
     def log_session_access(self, session_id: str, endpoint: str):
         """Log session access."""
@@ -180,7 +183,7 @@ class AuditLogger:
     def log_permission_denied(self, username: str, user_id: str, ip_address: str, endpoint: str, reason: str):
         """Log permission denied event."""
         logger.warning(f"Logging permission denied for user: {username}, reason: {reason}")
-        
+        handled = False
         # Try Firestore first if available
         if self.firestore_audit:
             try:
@@ -191,24 +194,25 @@ class AuditLogger:
                     ip_address=ip_address,
                     details={"endpoint": endpoint, "reason": reason}
                 )
-                return
+                handled = True
             except Exception as e:
                 logger.warning(f"Failed to log to Firestore: {e}")
         
         # Fallback to SQLite
-        self._log_event(
-            username=username,
-            ip_address=ip_address,
-            action="PERMISSION_DENIED",
-            endpoint=endpoint,
-            success=False,
-            details={"reason": reason}
-        )
+        if not handled:
+            self._log_event(
+                username=username,
+                ip_address=ip_address,
+                action="PERMISSION_DENIED",
+                endpoint=endpoint,
+                success=False,
+                details={"reason": reason}
+            )
     
     def log_tenant_violation(self, user_id: str, username: str, ip_address: str, attempted_tenant: str, allowed_tenant: str):
         """Log tenant access violation."""
         logger.warning(f"Logging tenant violation for user: {username}")
-        
+        handled = False
         # Try Firestore first if available
         if self.firestore_audit:
             try:
@@ -222,22 +226,23 @@ class AuditLogger:
                         "allowed_tenant": allowed_tenant
                     }
                 )
-                return
+                handled = True
             except Exception as e:
                 logger.warning(f"Failed to log to Firestore: {e}")
         
         # Fallback to SQLite
-        self._log_event(
-            username=username,
-            ip_address=ip_address,
-            action="TENANT_VIOLATION",
-            endpoint="tenant_access",
-            success=False,
-            details={
-                "attempted_tenant": attempted_tenant,
-                "allowed_tenant": allowed_tenant
-            }
-        )
+        if not handled:
+            self._log_event(
+                username=username,
+                ip_address=ip_address,
+                action="TENANT_VIOLATION",
+                endpoint="tenant_access",
+                success=False,
+                details={
+                    "attempted_tenant": attempted_tenant,
+                    "allowed_tenant": allowed_tenant
+                }
+            )
 
 class RateLimiter:
     """Rate limiting for authentication attempts."""
@@ -297,7 +302,7 @@ class RateLimiter:
         self.attempts[ip][username].append(now)
         logger.debug(f"Attempt recorded for IP: {ip}, user: {username}")
         self._save_state()
-    
+
     def clear_attempts(self, ip: str, username: str = None):
         """Clear attempt history for successful authentication."""
         logger.debug(f"Clearing attempts for IP: {ip}, user: {username}")
@@ -354,3 +359,6 @@ class RateLimiter:
             os.replace(tmp_path, self._state_path)
         except Exception as e:
             logger.debug(f"Rate limiter state not saved: {e}")
+
+
+from .revocation_service import RevocationService  # re-export for backward compatibility

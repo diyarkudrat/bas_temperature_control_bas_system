@@ -5,6 +5,7 @@ import os
 import sys
 import json
 import logging
+import hashlib
 
 # Add server directory to path
 sys.path.append(os.path.join(os.path.dirname(__file__), '..', 'server'))
@@ -63,6 +64,87 @@ def setup_auth_config():
     except Exception as e:
         logger.error(f"Failed to create auth config: {e}")
         return False
+
+
+def _action_code_default() -> str:
+    """Return default Auth0 Action JS to mirror app_metadata.bas_roles to claims.
+
+    The action copies roles from app_metadata.bas_roles.roles into a custom claim
+    namespace 'https://bas/roles'. It is safe and deterministic for idempotent
+    deployments.
+    """
+    # Keep as a raw string to avoid tooling dependencies
+    return (
+        "exports.onExecutePostLogin = async (event, api) => {\n"
+        "  try {\n"
+        "    const rolesObj = (((event.user || {}).app_metadata || {}).bas_roles || {}).roles;\n"
+        "    let roles = [];\n"
+        "    if (Array.isArray(rolesObj)) { roles = rolesObj.map(r => String(r)); }\n"
+        "    else if (rolesObj && typeof rolesObj === 'object') {\n"
+        "      roles = Object.keys(rolesObj).filter(k => rolesObj[k]).map(String);\n"
+        "    }\n"
+        "    if (roles.length > 0) { api.idToken.setCustomClaim('https://bas/roles', roles); }\n"
+        "  } catch (e) { /* fail-closed: do not set claim on error */ }\n"
+        "};\n"
+    )
+
+
+def _compute_checksum(content: str) -> str:
+    h = hashlib.sha256()
+    h.update(content.encode("utf-8"))
+    return h.hexdigest()
+
+
+def ensure_auth0_roles_action(
+    management_client: object,
+    *,
+    action_name: str = "BAS_RolesToClaims",
+    code_override: str | None = None,
+    trigger_id: str = "post-login",
+) -> dict:
+    """Idempotently ensure the Auth0 Action exists and is up to date.
+
+    management_client duck-typed API:
+      - get_action_by_name(name) -> {id, name, code, supported_triggers:[{id}] } | None
+      - create_action(payload: {name, code, supported_triggers}) -> action dict
+      - update_action(action_id, payload: {code}) -> action dict
+      - deploy_action(action_id) -> deployment dict (optional)
+    """
+    if not hasattr(management_client, "get_action_by_name"):
+        raise ValueError("management_client must provide get_action_by_name")
+
+    code = code_override if isinstance(code_override, str) else _action_code_default()
+    desired_checksum = _compute_checksum(code)
+
+    existing = management_client.get_action_by_name(action_name)
+    if existing is None:
+        payload = {
+            "name": action_name,
+            "code": code,
+            "supported_triggers": [{"id": trigger_id}],
+        }
+        created = management_client.create_action(payload)
+        # Deploy if supported
+        if hasattr(management_client, "deploy_action"):
+            try:
+                management_client.deploy_action(created.get("id"))
+            except Exception:
+                pass
+        return {"status": "created", "checksum": desired_checksum, "action": created}
+
+    # Compare and update only if code differs
+    existing_code = existing.get("code") if isinstance(existing, dict) else None
+    current_checksum = _compute_checksum(existing_code or "")
+    if current_checksum == desired_checksum:
+        return {"status": "unchanged", "checksum": current_checksum, "action": existing}
+
+    updated = management_client.update_action(existing.get("id"), {"code": code})
+    if hasattr(management_client, "deploy_action"):
+        try:
+            management_client.deploy_action(existing.get("id"))
+        except Exception:
+            pass
+    return {"status": "updated", "checksum": desired_checksum, "action": updated}
 
 def setup_database():
     """Setup authentication database tables."""

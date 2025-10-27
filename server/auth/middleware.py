@@ -5,11 +5,16 @@ import os
 import threading
 import time
 from functools import wraps
-from typing import Dict, Tuple
+from typing import Dict, Tuple, Optional, Any, List
 from flask import request, jsonify, g
 from .exceptions import AuthError
 from .tenant_middleware import TenantMiddleware
 from http.versioning import get_version_from_path
+import re
+from collections import defaultdict
+from .revocation_cache import RevocationCache
+from .revocation_service import RevocationService
+from .metadata_limiter import RateLimiter as RedisSlidingLimiter
 
 logger = logging.getLogger(__name__)
 
@@ -113,29 +118,279 @@ class _RequestRateLimiter:
 
 
 _request_rate_limiter = _RequestRateLimiter()
+_override_timeouts = defaultdict(float)
+_override_lock = threading.Lock()
 
 
-def require_auth(required_role="operator", require_tenant=False):
+def parse_authorization_header(authz_header: Optional[str]) -> Optional[str]:
+    """Extract Bearer token from Authorization header.
+
+    Returns the token string if present, else None. Robust to whitespace and case.
+    """
+    try:
+        if not isinstance(authz_header, str):
+            return None
+        parts = authz_header.strip().split()
+        if len(parts) == 2 and parts[0].lower() == 'bearer' and parts[1]:
+            return parts[1].strip()
+    except Exception:
+        pass
+    return None
+
+
+def classify_path(path: str) -> str:
+    """Public helper that delegates to internal classifier; kept for clarity."""
+    return path_classify(path)
+
+
+def check_rate_limit() -> Optional[Tuple[Any, int]]:
+    """Run request-level and per-user endpoint rate limits.
+
+    Returns Flask (response, status) when limited, or None when allowed.
+    Never raises and never blocks on limiter errors.
+    """
+    try:
+        allowed, _remaining, key = _request_rate_limiter.check()
+        if not allowed:
+            tenant_id, version = key
+            return jsonify({
+                "error": "Too many requests",
+                "code": "RATE_LIMITED",
+                "tenant": tenant_id,
+                "version": version
+            }), 429
+    except Exception:
+        # ignore limiter failures
+        pass
+
+    # Per-user dynamic endpoint limiter via Redis sliding window (if configured)
+    try:
+        # Prefer hot-reloaded snapshot if available; fall back to static config
+        cfg = getattr(request, 'rate_limit_snapshot', None)
+        if cfg is None:
+            cfg = getattr(getattr(request, 'server_config', None), 'rate_limit', None)
+        per_user_limits = getattr(cfg, 'per_user_limits', {}) if cfg else {}
+        if isinstance(per_user_limits, dict) and per_user_limits:
+            # Identify user by unverified JWT sub (if present) else IP
+            identity = request.remote_addr or 'anon'
+            token_str = parse_authorization_header(request.headers.get('Authorization', '') or '') or ''
+            try:
+                if token_str:
+                    from jose import jwt
+                    claims = jwt.get_unverified_claims(token_str)
+                    sub = str(claims.get('sub') or '').strip()
+                    if sub:
+                        identity = sub
+            except Exception:
+                pass
+            # Connect Redis best-effort
+            redis_client = None
+            try:
+                url = None
+                server_cfg = getattr(request, 'server_config', None)
+                if server_cfg and getattr(server_cfg, 'emulator_redis_url', None):
+                    url = server_cfg.emulator_redis_url
+                else:
+                    url = os.getenv('RATE_LIMIT_REDIS_URL')
+                if url:
+                    import redis  # type: ignore
+                    redis_client = redis.Redis.from_url(
+                        url,
+                        socket_timeout=1.0,
+                        socket_connect_timeout=1.0,
+                        retry_on_timeout=True,
+                    )
+            except Exception:
+                redis_client = None
+            if redis_client is not None:
+                limiter = getattr(request, '_per_user_limiter', None)
+                if limiter is None:
+                    limiter = RedisSlidingLimiter(redis_client, key_prefix='auth:rl')
+                    setattr(request, '_per_user_limiter', limiter)
+                endpoint_key = getattr(getattr(request, 'url_rule', None), 'rule', None) or request.path
+                ep_cfg = per_user_limits.get(endpoint_key) or per_user_limits.get('*')
+                if isinstance(ep_cfg, dict):
+                    window_s = int(ep_cfg.get('window_s', 60))
+                    max_req = int(ep_cfg.get('max_req', 100))
+                    ok, _ = limiter.check_limit(identity, endpoint_key, window_s, max_req, time.time())
+                    if not ok:
+                        retry_after = max(1, int(window_s / max(1, max_req)))
+                        resp = jsonify({
+                            "error": "Too many requests",
+                            "code": "RATE_LIMITED",
+                            "identity": identity,
+                            "endpoint": endpoint_key
+                        })
+                        resp.headers['Retry-After'] = str(retry_after)
+                        return resp, 429
+    except Exception:
+        pass
+    return None
+
+
+def enforce_revocation_check(token: str) -> Optional[Tuple[Any, int]]:
+    """Check local revocation cache backed by Redis. Returns a Flask response when revoked.
+
+    Initializes a short-TTL process-local cache backed by optional Redis. Never raises.
+    """
+    try:
+        cache = getattr(request, '_revocation_cache', None)
+        if cache is None:
+            # Best-effort Redis client from env (emulator or production wiring)
+            redis_client = None
+            try:
+                server_cfg = getattr(request, 'server_config', None)
+                url = None
+                if server_cfg and getattr(server_cfg, 'emulator_redis_url', None):
+                    url = server_cfg.emulator_redis_url
+                else:
+                    url = os.getenv('REVOCATION_REDIS_URL')
+                if url:
+                    import redis  # type: ignore
+                    redis_client = redis.Redis.from_url(
+                        url,
+                        socket_timeout=1.0,
+                        socket_connect_timeout=1.0,
+                        retry_on_timeout=True,
+                    )
+            except Exception:
+                redis_client = None
+            backend = None
+            ttl = float(os.getenv('REVOCATION_TTL_S', '3600'))
+            if redis_client is not None:
+                backend = RevocationService(redis_client, ttl_s=ttl).is_revoked
+            else:
+                # Fallback to in-memory revocation store to avoid fail-open
+                backend = RevocationService(None, ttl_s=ttl).is_revoked
+            cache = RevocationCache(backend, ttl_s=5.0)
+            setattr(request, '_revocation_cache', cache)
+        # Extract token id (prefer jti)
+        token_id = None
+        try:
+            from jose import jwt
+            unverified = jwt.get_unverified_claims(token)
+            token_id = str(unverified.get('jti') or '').strip() or None
+        except Exception:
+            token_id = None
+        if token_id and cache.get(token_id):
+            return jsonify({
+                "error": "Token revoked",
+                "code": "TOKEN_REVOKED"
+            }), 403
+    except Exception:
+        pass
+    return None
+
+
+def verify_and_decode_jwt(provider_obj: Any, token: str, metrics: Optional[Any]) -> Dict[str, Any]:
+    """Verify JWT with provider, record metrics, and return claims dict.
+
+    Raises ValueError on verification failure.
+    """
+    start_ms = time.time() * 1000.0
+    _log_jwt_attempt(metrics)
+    claims = provider_obj.verify_token(token)
+    if not isinstance(claims, dict):
+        raise ValueError("invalid claims")
+    setattr(request, 'user_claims', claims)
+    _log_jwt_success(metrics, start_ms)
+    return claims
+
+
+def authorize_roles(claims: Dict[str, Any], provider_obj: Any, required_role: str) -> Tuple[bool, Optional[Tuple[Any, int]]]:
+    """Authorize according to path sensitivity using claims-only or provider metadata.
+
+    Returns (True, None) on success; (False, (response, status)) when denied/unavailable.
+    """
+    classify = classify_path(request.path)
+    if classify != 'critical':
+        if claims_only_check(claims, required_role):
+            return True, None
+        return False, (jsonify({
+            "error": "Insufficient permissions",
+            "message": f"JWT roles missing permission: {required_role}",
+            "code": "PERMISSION_DENIED"
+        }), 403)
+
+    # critical: require provider metadata, allow admin outage override on failure
+    user_id = str(claims.get('sub', '') or '').strip()
+    try:
+        success = full_metadata_check(user_id, provider_obj, required_role)
+        if not success:
+            return False, (jsonify({
+                "error": "Insufficient permissions",
+                "message": f"JWT roles missing permission: {required_role}",
+                "code": "PERMISSION_DENIED"
+            }), 403)
+        return True, None
+    except Exception as exc:
+        if admin_outage_override(user_id, claims):
+            if claims_only_check(claims, required_role):
+                return True, None
+            return False, (jsonify({
+                "error": "Insufficient permissions",
+                "message": f"JWT roles missing permission: {required_role}",
+                "code": "PERMISSION_DENIED"
+            }), 403)
+        logger.warning(f"Full metadata check failed for critical path: {exc}")
+        return False, (jsonify({
+            "error": "Authorization service unavailable",
+            "code": "AUTH_UNAVAILABLE"
+        }), 503)
+
+
+def write_auth_audit(kind: str, **kwargs: Any) -> None:
+    """Unified audit writer wrapper around existing sinks.
+
+    kind in {"AUTH_FAILURE", "PERMISSION_DENIED", "TENANT_VIOLATION"}.
+    Remaining kwargs forwarded to specific audit helpers.
+    """
+    try:
+        if kind == "AUTH_FAILURE":
+            _audit_auth_failure(
+                kwargs.get('reason', ''),
+                kwargs.get('ip_address', request.remote_addr),
+                kwargs.get('endpoint', request.endpoint),
+            )
+        elif kind == "PERMISSION_DENIED":
+            _audit_permission_denied(
+                kwargs.get('username', ''),
+                kwargs.get('user_id', ''),
+                kwargs.get('ip_address', request.remote_addr),
+                kwargs.get('endpoint', request.endpoint),
+                kwargs.get('reason', ''),
+            )
+        elif kind == "TENANT_VIOLATION":
+            _audit_tenant_violation(
+                kwargs.get('user_id', ''),
+                kwargs.get('username', ''),
+                kwargs.get('ip_address', request.remote_addr),
+                kwargs.get('attempted_tenant', ''),
+                kwargs.get('allowed_tenant', ''),
+            )
+    except Exception:
+        # Never fail open/closed based on audit failures
+        pass
+
+
+def require_auth(required_role="operator", require_tenant=False, provider: Optional[Any] = None):
     """Decorator for protected endpoints with optional tenant enforcement."""
     def decorator(f):
         @wraps(f)
         def decorated_function(*args, **kwargs):
             logger.debug(f"Checking authentication for endpoint: {request.endpoint}")
-            # Fast-path rate limit by tenant + API version (if enabled)
+            # Non-invasive provider injection (Phase 0): allow caller to pass a provider
+            # or defer to request.auth_provider set by server wiring.
             try:
-                allowed, remaining, key = _request_rate_limiter.check()
-                if not allowed:
-                    tenant_id, version = key
-                    return jsonify({
-                        "error": "Too many requests",
-                        "code": "RATE_LIMITED",
-                        "tenant": tenant_id,
-                        "version": version
-                    }), 429
+                if provider is not None and not hasattr(request, 'auth_provider'):
+                    setattr(request, 'auth_provider', provider)
             except Exception:
-                # Never block on limiter errors
                 pass
-            
+            # Fast-path and per-user rate limits
+            limited = check_rate_limit()
+            if limited is not None:
+                return limited
+
             # Validate required_role parameter
             if required_role not in ['operator', 'admin', 'read-only']:
                 logger.error(f"Invalid required_role: {required_role}")
@@ -155,14 +410,76 @@ def require_auth(required_role="operator", require_tenant=False):
                     request.audit_logger.log_session_access(session_id, request.endpoint)
                 return f(*args, **kwargs)
             
-            # Enforced mode - require valid session
+            # Enforced mode - prefer JWT verification first if a provider and token are present
+            logger.debug("Authentication enforced, checking JWT or session")
+            token: Optional[str] = parse_authorization_header(request.headers.get('Authorization', '') or '')
+
+            provider_obj = getattr(request, 'auth_provider', None)
+            metrics = getattr(request, 'auth_metrics', None)
+            # Determine whether session fallback is allowed. If the flag is absent,
+            # maintain backward compatibility by allowing fallback.
+            try:
+                if hasattr(request, 'auth_config') and hasattr(request.auth_config, 'allow_session_fallback'):
+                    allow_fallback = bool(getattr(request.auth_config, 'allow_session_fallback'))
+                else:
+                    allow_fallback = True
+            except Exception:
+                allow_fallback = True
+
+            # If no Bearer token is provided and fallback is explicitly disabled,
+            # fail closed with 401 rather than attempting session auth.
+            if not token and not allow_fallback:
+                return jsonify({
+                    "error": "Authorization required",
+                    "message": "Bearer token required",
+                    "code": "AUTH_REQUIRED"
+                }), 401
+            if token and provider_obj is not None:
+                # Early revoked-token check with small local cache (5s TTL)
+                revoked = enforce_revocation_check(token)
+                if revoked is not None:
+                    return revoked
+                try:
+                    claims = verify_and_decode_jwt(provider_obj, token, metrics)
+                    allowed, denial = authorize_roles(claims, provider_obj, required_role)
+                    if not allowed:
+                        _log_jwt_failure(metrics)
+                        return denial  # type: ignore[return-value]
+                    if require_tenant:
+                        tenant_result = _enforce_tenant_isolation_jwt(request)
+                        if tenant_result is not True:
+                            return tenant_result
+                    user_id = str(claims.get('sub', '') or '').strip()
+                    logger.debug(f"JWT authentication successful for {user_id} accessing {request.endpoint}")
+                    return f(*args, **kwargs)
+                except ValueError as exc:
+                    logger.warning(f"JWT verification failed for endpoint {request.endpoint}: {exc}")
+                    _log_jwt_failure(metrics)
+                    if not allow_fallback:
+                        msg = str(exc).lower()
+                        code = 'INVALID_TOKEN'
+                        if 'exp' in msg or 'expired' in msg:
+                            code = 'TOKEN_EXPIRED'
+                        if 'claim' in msg:
+                            code = 'INVALID_CLAIMS'
+                        return jsonify({
+                            "error": "Invalid or expired token",
+                            "message": "JWT verification failed",
+                            "code": code
+                        }), 401
+                    # else fall through to session checks
+
+            # Fallback or legacy: require valid session
             logger.debug("Authentication enforced, checking session")
+            sess_start_ms = time.time() * 1000.0
+            _log_session_attempt(metrics)
             session_id = request.headers.get('X-Session-ID') or request.cookies.get('bas_session_id')
             
             # Validate session ID format
             if not session_id or not isinstance(session_id, str) or len(session_id) < 10:
                 logger.warning(f"Invalid session ID format for {request.endpoint}")
                 _audit_auth_failure("INVALID_SESSION_ID", request.remote_addr, request.endpoint)
+                _log_session_failure(metrics)
                 return jsonify({
                     "error": "Invalid session ID",
                     "message": "Please login again",
@@ -178,6 +495,7 @@ def require_auth(required_role="operator", require_tenant=False):
             if not session:
                 logger.warning(f"Invalid or expired session for {request.endpoint}")
                 _audit_auth_failure("SESSION_INVALID", request.remote_addr, request.endpoint)
+                _log_session_failure(metrics)
                 return jsonify({
                     "error": "Invalid or expired session",
                     "message": "Please login again",
@@ -211,6 +529,7 @@ def require_auth(required_role="operator", require_tenant=False):
                 request.audit_logger.log_session_access(session_id, request.endpoint)
             
             logger.debug(f"Authentication successful for {session.username} accessing {request.endpoint}")
+            _log_session_success(metrics, sess_start_ms)
             return f(*args, **kwargs)
         return decorated_function
     return decorator
@@ -231,6 +550,99 @@ def _has_permission(user_role: str, required_role: str) -> bool:
     has_permission = user_level >= required_level
     logger.debug(f"Permission check result: {has_permission}")
     return has_permission
+
+
+def _log_jwt_attempt(metrics: Optional[Any]) -> None:
+    try:
+        if metrics is not None:
+            metrics.inc_jwt_attempt()
+    except Exception:
+        pass
+
+
+def _log_jwt_failure(metrics: Optional[Any]) -> None:
+    try:
+        if metrics is not None:
+            metrics.inc_jwt_failure()
+    except Exception:
+        pass
+
+
+def _log_jwt_success(metrics: Optional[Any], start_ms: float) -> None:
+    try:
+        if metrics is not None:
+            metrics.observe_jwt_success(time.time() * 1000.0 - start_ms)
+    except Exception:
+        pass
+
+
+def _log_session_attempt(metrics: Optional[Any]) -> None:
+    try:
+        if metrics is not None:
+            metrics.inc_session_attempt()
+    except Exception:
+        pass
+
+
+def _log_session_failure(metrics: Optional[Any]) -> None:
+    try:
+        if metrics is not None:
+            metrics.inc_session_failure()
+    except Exception:
+        pass
+
+
+def _log_session_success(metrics: Optional[Any], start_ms: float) -> None:
+    try:
+        if metrics is not None:
+            metrics.observe_session_success(time.time() * 1000.0 - start_ms)
+    except Exception:
+        pass
+
+
+def _claims_has_permission(user_roles: List[str], required_role: str) -> bool:
+    """Check if any of the user's roles satisfies the required role using hierarchy."""
+    normalized = set(r.lower() for r in user_roles)
+    if required_role == 'read-only':
+        return bool(normalized & {'read-only', 'operator', 'admin'})
+    if required_role == 'operator':
+        return bool(normalized & {'operator', 'admin'})
+    if required_role == 'admin':
+        return 'admin' in normalized
+    return False
+
+def _extract_roles_from_claims_local(claims: Dict[str, Any]) -> List[str]:
+    """Extract roles from common claim keys with normalization and de-dupe.
+
+    Accepts any of:
+      - roles: [str]
+      - permissions: [str]
+      - any "*/roles": [str] (custom namespace)
+    """
+    roles: List[str] = []
+    try:
+        if not isinstance(claims, dict):
+            return []
+        direct = claims.get('roles')
+        if isinstance(direct, list):
+            roles.extend([str(x) for x in direct])
+        perms = claims.get('permissions')
+        if isinstance(perms, list):
+            roles.extend([str(x) for x in perms])
+        for k, v in claims.items():
+            if isinstance(k, str) and k.endswith('/roles') and isinstance(v, list):
+                roles.extend([str(x) for x in v])
+        # normalize and de-dupe
+        seen = set()
+        result: List[str] = []
+        for r in roles:
+            rl = r.strip()
+            if rl and rl not in seen:
+                seen.add(rl)
+                result.append(rl)
+        return result
+    except Exception:
+        return []
 
 def _enforce_tenant_isolation(session, request):
     """Enforce tenant isolation for the session."""
@@ -286,6 +698,27 @@ def _enforce_tenant_isolation(session, request):
         
     except Exception as e:
         logger.error(f"Error enforcing tenant isolation: {e}")
+        return jsonify({
+            'error': 'Tenant validation error',
+            'code': 'TENANT_VALIDATION_ERROR'
+        }), 500
+
+
+def _enforce_tenant_isolation_jwt(request):
+    """Enforce tenant isolation for JWT-authenticated requests using header only."""
+    try:
+        tenant_header = getattr(request.auth_config, 'tenant_id_header', 'X-BAS-Tenant') if hasattr(request, 'auth_config') else 'X-BAS-Tenant'
+        requested_tenant_id = request.headers.get(tenant_header)
+        if not requested_tenant_id:
+            logger.warning(f"Missing tenant ID in JWT request to {request.endpoint}")
+            return jsonify({
+                'error': 'Tenant ID required',
+                'code': 'MISSING_TENANT_ID'
+            }), 400
+        g.tenant_id = requested_tenant_id
+        return True
+    except Exception as e:
+        logger.error(f"Error enforcing tenant isolation (JWT): {e}")
         return jsonify({
             'error': 'Tenant validation error',
             'code': 'TENANT_VALIDATION_ERROR'
@@ -355,6 +788,41 @@ def _audit_tenant_violation(user_id: str, username: str, ip_address: str, attemp
                 request.audit_logger.log_tenant_violation(user_id, username, ip_address, attempted_tenant, allowed_tenant)
     except Exception as e:
         logger.error(f"Failed to audit tenant violation: {e}")
+
+def path_classify(path: str) -> str:
+    rules = getattr(request.server_config, 'PATH_SENSITIVITY_RULES', [])
+    for pattern, level in rules:
+        if re.match(pattern, path):
+            return level
+    return 'critical'  # fail-closed to full check
+
+def claims_only_check(claims: Dict[str, Any], required_role: str) -> bool:
+    roles = _extract_roles_from_claims_local(claims)
+    return _claims_has_permission(roles, required_role)
+
+def full_metadata_check(user_id: str, provider: Any, required_role: str) -> bool:
+    roles = provider.get_user_roles(user_id)
+    return _claims_has_permission(roles, required_role)
+
+def admin_outage_override(user_id: str, claims: Dict[str, Any]) -> bool:
+    roles = _extract_roles_from_claims_local(claims)
+    if 'admin' not in [r.lower() for r in roles]:
+        return False
+    with _override_lock:
+        now = time.time()
+        if now - _override_timeouts[user_id] < 300:
+            # Still within timeout, allow but log extension if needed
+            pass
+        else:
+            _override_timeouts[user_id] = now
+    audit_logger = getattr(request, 'audit_logger', None)
+    if audit_logger:
+        audit_logger.log_event(
+            event_type='ADMIN_OUTAGE_OVERRIDE',
+            user_id=user_id,
+            details={'reason': 'metadata outage', 'timestamp': time.time()}
+        )
+    return True
 
 def add_security_headers(response):
     """Add security headers to response."""
