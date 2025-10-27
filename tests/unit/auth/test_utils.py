@@ -30,7 +30,8 @@ import pytest
 
 from auth.utils import (
     hash_password, verify_password, create_session_fingerprint,
-    generate_session_id, validate_password_strength
+    generate_session_id, validate_password_strength,
+    normalize_utc_timestamp, parse_authorization_header, now_ms, monotonic_ms,
 )
 import uuid
 import time
@@ -205,7 +206,7 @@ class TestAuthUtils:
         current_time = time.time()
         
         # Test with current timestamp
-        utc_timestamp = datetime.utcfromtimestamp(current_time).isoformat() + 'Z'
+        utc_timestamp = normalize_utc_timestamp(current_time)
         
         assert_is_not_none(utc_timestamp)
         assert_true(utc_timestamp.endswith('Z'), "Should end with Z")
@@ -214,33 +215,63 @@ class TestAuthUtils:
         # Test with specific timestamp
         test_timestamp = 1640995200.0  # 2022-01-01 00:00:00 UTC
         expected_utc = "2022-01-01T00:00:00Z"
-        actual_utc = datetime.utcfromtimestamp(test_timestamp).isoformat() + 'Z'
+        actual_utc = normalize_utc_timestamp(test_timestamp)
         
         assert_equals(actual_utc, expected_utc)
         
         # Test with milliseconds
         test_timestamp_ms = 1640995200000  # 2022-01-01 00:00:00 UTC in milliseconds
         expected_utc_ms = "2022-01-01T00:00:00Z"
-        actual_utc_ms = datetime.utcfromtimestamp(test_timestamp_ms / 1000).isoformat() + 'Z'
+        actual_utc_ms = normalize_utc_timestamp(test_timestamp_ms)
         
         assert_equals(actual_utc_ms, expected_utc_ms)
     
     def test_normalize_utc_timestamp_edge_cases(self):
         """Test UTC timestamp normalization with edge cases."""
         # Test with epoch time
-        epoch_utc = datetime.utcfromtimestamp(0).isoformat() + 'Z'
+        epoch_utc = normalize_utc_timestamp(0)
         assert_equals(epoch_utc, "1970-01-01T00:00:00Z")
         
         # Test with future timestamp
         future_time = time.time() + 86400  # 1 day from now
-        future_utc = datetime.utcfromtimestamp(future_time).isoformat() + 'Z'
+        future_utc = normalize_utc_timestamp(future_time)
         
         assert_is_not_none(future_utc)
         assert_true(future_utc.endswith('Z'))
         
         # Test with very large timestamp
         large_timestamp = 4102444800  # Year 2100
-        large_utc = datetime.utcfromtimestamp(large_timestamp).isoformat() + 'Z'
+        large_utc = normalize_utc_timestamp(large_timestamp)
+
+    def test_parse_authorization_header(self):
+        scheme, token = parse_authorization_header("Bearer abc.def")
+        assert_equals(scheme, "bearer")
+        assert_equals(token, "abc.def")
+
+        s2, t2 = parse_authorization_header("Basic dXNlcjpwYXNz")
+        assert_equals(s2, "basic")
+        assert_equals(t2, "dXNlcjpwYXNz")
+
+        s3, t3 = parse_authorization_header(None)
+        assert_equals(s3, None)
+        assert_equals(t3, None)
+
+        s4, t4 = parse_authorization_header("badheader")
+        assert_equals(s4, None)
+        assert_equals(t4, None)
+
+    def test_time_helpers_ms(self):
+        # Provide deterministic time functions
+        fake_now = [1700000000.0]
+        def _t():
+            return fake_now[0]
+        def _m():
+            return fake_now[0]
+
+        ms1 = now_ms(_t)
+        ms2 = monotonic_ms(_m)
+        assert_equals(ms1, int(1700000000.0 * 1000))
+        assert_equals(ms2, int(1700000000.0 * 1000))
         
         assert_is_not_none(large_utc)
         assert_true(large_utc.startswith("2100-"))

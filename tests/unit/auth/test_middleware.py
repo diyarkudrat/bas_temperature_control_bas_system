@@ -7,6 +7,7 @@ import pytest
 from flask import Flask, request, jsonify
 
 from server.auth.middleware import require_auth
+from server.auth.revocation_service import RevocationService
 
 
 class _DummySession:
@@ -1101,3 +1102,220 @@ class TestAuthMiddleware:
             assert_equals(result, "success", "Should allow access with valid session")
             # Verify access was logged
             ctx.request.audit_logger.log_session_access.assert_called_once_with('test_session', 'test_endpoint')
+
+
+def test_path_sensitivity_standard_uses_claims_only_success():
+    app = _make_app()
+    # Claims include operator; provider roles not required for standard path
+    provider = _MockProvider(claims={"sub": "u_std", "roles": ["operator"]}, roles=[])
+
+    class SrvCfg:
+        PATH_SENSITIVITY_RULES = [(r"^/protected$", "standard")]
+
+    with app.test_client() as c:
+        @app.before_request
+        def _inject():
+            request.auth_provider = provider
+            request.server_config = SrvCfg()
+        rv = c.get("/protected", headers={"Authorization": "Bearer t", "X-BAS-Tenant": "t1"})
+        assert rv.status_code == 200
+
+
+def test_path_sensitivity_critical_metadata_failure_admin_override_allows():
+    app = _make_app()
+    provider = _MockProvider(claims={"sub": "u_admin", "roles": ["admin"]}, roles=[])
+
+    # Simulate metadata outage for roles lookup
+    def _raise_roles(uid):  # noqa: ARG001
+        raise RuntimeError("metadata down")
+
+    provider.get_user_roles = _raise_roles  # type: ignore
+
+    with app.test_client() as c:
+        @app.before_request
+        def _inject():
+            request.auth_provider = provider
+            # No PATH_SENSITIVITY_RULES => default fail-closed critical
+        rv = c.get("/protected", headers={"Authorization": "Bearer t", "X-BAS-Tenant": "t1"})
+        assert rv.status_code == 200
+
+
+def test_path_sensitivity_critical_metadata_failure_non_admin_503():
+    app = _make_app()
+    provider = _MockProvider(claims={"sub": "u_op", "roles": ["operator"]}, roles=[])
+
+    def _raise_roles(uid):  # noqa: ARG001
+        raise RuntimeError("metadata down")
+
+    provider.get_user_roles = _raise_roles  # type: ignore
+
+    with app.test_client() as c:
+        @app.before_request
+        def _inject():
+            request.auth_provider = provider
+        rv = c.get("/protected", headers={"Authorization": "Bearer t", "X-BAS-Tenant": "t1"})
+        assert rv.status_code == 503
+        data = rv.get_json()
+        assert data["code"] == "AUTH_UNAVAILABLE"
+
+
+def test_admin_override_timeout_window():
+    app = _make_app()
+    provider = _MockProvider(claims={"sub": "u_admin2", "roles": ["admin"]}, roles=[])
+
+    def _raise_roles(uid):  # noqa: ARG001
+        raise RuntimeError("metadata down")
+
+    provider.get_user_roles = _raise_roles  # type: ignore
+
+    with app.test_client() as c:
+        @app.before_request
+        def _inject():
+            request.auth_provider = provider
+        headers = {"Authorization": "Bearer t", "X-BAS-Tenant": "t1"}
+        rv1 = c.get("/protected", headers=headers)
+        rv2 = c.get("/protected", headers=headers)
+        assert rv1.status_code == 200
+        assert rv2.status_code == 200
+
+
+def _b64url(data: bytes) -> str:
+    import base64
+    return base64.urlsafe_b64encode(data).decode('ascii').rstrip('=')
+
+
+def _make_unsigned_jwt(payload: dict) -> str:
+    header = {"alg": "none", "typ": "JWT"}
+    import json
+    return f"{_b64url(json.dumps(header).encode())}.{_b64url(json.dumps(payload).encode())}."
+
+
+class _FakeRedisLimiter:
+    def __init__(self):
+        self._data = {}
+        self._sha = "sha1"
+
+    def script_load(self, script):  # noqa: ARG002
+        return self._sha
+
+    def evalsha(self, sha, numkeys, key, now, window_s, max_req, member):  # noqa: ARG002
+        # Very small sliding window: allow first, block subsequent within window
+        bucket = self._data.setdefault(key, [])
+        # prune
+        cutoff = float(now) - float(window_s)
+        bucket[:] = [t for t in bucket if t >= cutoff]
+        bucket.append(float(now))
+        return 1 if len(bucket) <= int(max_req) else 0
+
+
+class _FakeRedisRevocations:
+    def __init__(self):
+        self._z = {}
+        self._h = {}
+
+    def zadd(self, key, mapping, nx=False):
+        z = self._z.setdefault(key, {})
+        for m, s in mapping.items():
+            if nx and m in z:
+                continue
+            z[m] = float(s)
+
+    def zscore(self, key, member):
+        return self._z.get(key, {}).get(member)
+
+    def zrangebyscore(self, key, min="-inf", max="+inf"):
+        z = self._z.get(key, {})
+        lo = float("-inf") if min == "-inf" else float(min)
+        hi = float("inf") if max == "+inf" else float(max)
+        return [m for m, s in sorted(z.items(), key=lambda kv: kv[1]) if lo <= s <= hi]
+
+    def zremrangebyscore(self, key, min, max):  # noqa: A002
+        z = self._z.get(key, {})
+        lo = float("-inf") if min == "-inf" else float(min)
+        hi = float("inf") if max == "+inf" else float(max)
+        dels = [m for m, s in z.items() if lo <= s <= hi]
+        for m in dels:
+            del z[m]
+        return len(dels)
+
+    def hset(self, key, field, value):
+        self._h.setdefault(key, {})[field] = value
+
+    def hget(self, key, field):
+        return self._h.get(key, {}).get(field)
+
+    def hdel(self, key, *fields):
+        h = self._h.get(key, {})
+        c = 0
+        for f in fields:
+            if f in h:
+                del h[f]
+                c += 1
+        return c
+
+
+def test_revoked_token_returns_403(monkeypatch):
+    app = _make_app()
+    # Fake Redis for revocation service and monkeypatch redis client factory
+    fake = _FakeRedisRevocations()
+
+    class _RedisMod:
+        class Redis:
+            @staticmethod
+            def from_url(url):  # noqa: ARG002
+                return fake
+
+    monkeypatch.setenv("REVOCATION_REDIS_URL", "redis://local")
+    monkeypatch.setenv("EMULATOR_REDIS_URL", "")
+    import server.auth
+    monkeypatch.setitem(__import__('sys').modules, 'redis', _RedisMod)
+
+    # Preload revocation for jti "j1"
+    RevocationService(fake, ttl_s=60).add_revocation("j1", reason="user_request")
+
+    provider = _MockProvider(claims={"sub": "u1", "roles": ["operator"]})
+
+    with app.test_client() as c:
+        @app.before_request
+        def _set_provider():
+            request.auth_provider = provider
+        token = _make_unsigned_jwt({"sub": "u1", "jti": "j1"})
+        rv = c.get("/protected", headers={"Authorization": f"Bearer {token}", "X-BAS-Tenant": "t1"})
+        assert rv.status_code == 403
+        data = rv.get_json()
+        assert data["code"] == "TOKEN_REVOKED"
+
+
+def test_per_user_rate_limit_429(monkeypatch):
+    app = _make_app()
+
+    class SrvCfg:
+        class RL:
+            per_user_limits = {"/protected": {"window_s": 60, "max_req": 1}}
+        rate_limit = RL()
+        emulator_redis_url = None
+
+    limiter_client = _FakeRedisLimiter()
+
+    class _RedisMod:
+        class Redis:
+            @staticmethod
+            def from_url(url):  # noqa: ARG002
+                return limiter_client
+
+    monkeypatch.setenv("RATE_LIMIT_REDIS_URL", "redis://local")
+    monkeypatch.setitem(__import__('sys').modules, 'redis', _RedisMod)
+
+    provider = _MockProvider(claims={"sub": "u1"}, roles=["operator"])
+
+    with app.test_client() as c:
+        @app.before_request
+        def _inject():
+            request.server_config = SrvCfg()
+            request.auth_provider = provider
+        token = _make_unsigned_jwt({"sub": "u1"})
+        ok = c.get("/protected", headers={"Authorization": f"Bearer {token}", "X-BAS-Tenant": "t1"})
+        assert ok.status_code in {200, 401}  # first may pass or fail pre-auth
+        blocked = c.get("/protected", headers={"Authorization": f"Bearer {token}", "X-BAS-Tenant": "t1"})
+        assert blocked.status_code == 429
+        assert blocked.headers.get('Retry-After') is not None

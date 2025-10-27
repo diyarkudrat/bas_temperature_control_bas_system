@@ -78,6 +78,22 @@ def test_auth_provider_init_auth0(monkeypatch):
             assert snap_after["session_attempts"] >= snap_before["session_attempts"] + 1
 
 
+def test_dynamic_limit_hot_reload(monkeypatch):
+    # Ensure env provides API key and emulators so server loads
+    mod = _reload_server(monkeypatch, {
+        "AUTH_PROVIDER": "mock",
+        "USE_EMULATORS": "1",
+        "DYNAMIC_LIMIT_API_KEY": "k",
+    })
+    app = mod.app
+    app.config['TESTING'] = True
+    with app.test_client() as c:
+        rv = c.post('/auth/limits', json={"per_user_limits": {"/api/x": {"window_s": 60, "max_req": 5}}}, headers={"X-Limits-Key": "k"})
+        assert rv.status_code == 200
+        body = rv.get_json()
+        assert "/api/x" in body.get("per_user_limits", {})
+
+
 def test_auth_provider_init_invalid_env(monkeypatch):
     # Missing audience
     mod = _reload_server(monkeypatch, {

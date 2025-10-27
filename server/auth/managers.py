@@ -1,16 +1,87 @@
-"""Authentication manager classes."""
+"""Authentication manager classes and orchestration."""
 
 import sqlite3
 import time
 import threading
 import logging
 import json
-from typing import Optional, List, Any, Mapping, Dict
+from typing import Optional, List, Any, Mapping, Dict, Protocol, Tuple
 from .models import User, Session
 from .utils import hash_password, verify_password, generate_session_id, create_session_fingerprint
 from .exceptions import AuthError, SessionError
+from .circuit_breaker import CircuitBreaker
+from server.config.breaker import BreakerConfig
+from .revocation_service import RevocationService
 
 logger = logging.getLogger(__name__)
+
+
+class AuthProvider(Protocol):
+    def verify_token(self, token: str) -> Mapping[str, Any]: ...
+    def get_user_roles(self, uid: str) -> List[str]: ...
+
+
+class RateLimiterLike(Protocol):
+    def is_allowed(self, ip: str, username: Optional[str] = None) -> Tuple[bool, str]: ...
+    def record_attempt(self, ip: str, username: Optional[str] = None) -> None: ...
+
+
+class UserAuthManagerError(AuthError):
+    """Base error for UserAuthManager orchestration failures."""
+
+
+class RateLimitedError(UserAuthManagerError):
+    pass
+
+
+class TokenVerificationError(UserAuthManagerError):
+    pass
+
+
+class RevokedTokenError(UserAuthManagerError):
+    pass
+
+
+class UserAuthManager:
+    """Coordinates provider verification, revocation checks, and rate limits.
+
+    Dependencies are injected explicitly for testability and clarity.
+    """
+
+    def __init__(
+        self,
+        *,
+        provider: AuthProvider,
+        revocations: RevocationService,
+        limiter: RateLimiterLike,
+    ) -> None:
+        self._provider = provider
+        self._revocations = revocations
+        self._limiter = limiter
+
+    def verify_request_token(self, token: str, ip: str, username_hint: Optional[str] = None) -> Mapping[str, Any]:
+        """End-to-end verification with rate limit and revocation enforcement.
+
+        Raises RateLimitedError, TokenVerificationError, or RevokedTokenError.
+        Returns verified claims on success.
+        """
+        allowed, _ = self._limiter.is_allowed(ip, username_hint)
+        if not allowed:
+            self._limiter.record_attempt(ip, username_hint)
+            raise RateLimitedError("rate_limited")
+
+        self._limiter.record_attempt(ip, username_hint)
+
+        try:
+            claims = self._provider.verify_token(token)
+        except Exception as exc:  # noqa: BLE001 - caller expects wrapped errors
+            raise TokenVerificationError(str(exc)) from exc
+
+        jti = str(claims.get("jti", ""))
+        if jti and self._revocations.is_revoked(jti):
+            raise RevokedTokenError("token_revoked")
+
+        return claims
 
 class UserManager:
     """Manages user accounts and authentication."""
@@ -23,6 +94,12 @@ class UserManager:
         # Optional external auth integrations (Auth0, etc.)
         self._roles_provider: Optional[Any] = None
         self._management_client: Optional[Any] = None
+        # Circuit breaker for external roles provider
+        try:
+            breaker_cfg = getattr(getattr(config, 'breaker', None), '__class__', None)
+            self._roles_breaker = CircuitBreaker(getattr(config, 'breaker', None))
+        except Exception:
+            self._roles_breaker = CircuitBreaker(BreakerConfig())
         
         # Initialize Firestore users service if available
         if firestore_factory and firestore_factory.is_auth_enabled():
@@ -243,17 +320,22 @@ class UserManager:
         """Return effective roles for a user.
 
         Preference order:
-        1) External provider by user_id (if configured)
-        2) Local stored role in users table (single-role list)
+        1) External provider by user_id (if configured) with circuit breaker
+        2) Local stored role in users table (single-role list) as bounded fallback
         """
-        # Prefer external provider if available
+        # Prefer external provider if available and breaker allows
         if self._roles_provider and user_id:
-            try:
-                roles = self._roles_provider.get_user_roles(user_id)
-                if isinstance(roles, list):
-                    return [str(r) for r in roles]
-            except Exception as e:  # noqa: BLE001
-                logger.warning(f"get_effective_user_roles provider failure: {e}")
+            if self._roles_breaker.allow_request():
+                try:
+                    roles = self._roles_provider.get_user_roles(user_id)
+                    self._roles_breaker.record_success()
+                    if isinstance(roles, list):
+                        return [str(r) for r in roles]
+                except Exception as e:  # noqa: BLE001
+                    logger.warning(f"get_effective_user_roles provider failure: {e}")
+                    self._roles_breaker.record_failure()
+            else:
+                logger.debug("roles provider breaker open; skipping provider call")
 
         # Fallback to local single role
         local = self.get_user(username)

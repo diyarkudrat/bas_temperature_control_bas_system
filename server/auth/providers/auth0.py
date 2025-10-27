@@ -28,6 +28,10 @@ except Exception:  # pragma: no cover
     HTTPError = Exception  # type: ignore
 
 from .base import AuthProvider
+from ..circuit_breaker import CircuitBreaker
+from ..utils import rate_limit_metadata_fetch
+from .auth0_jwks import JWKSClient as _RealJWKSClient
+from .token_verifier import TokenVerifier as _RealTokenVerifier
 
 
 def _b64url_uint(data: int) -> str:
@@ -77,6 +81,10 @@ class _JwksCache:
             return max(0.0, time.time() - self._fetched_at)
 
 
+JWKSClient = _RealJWKSClient  # legacy alias
+TokenVerifier = _RealTokenVerifier  # legacy alias
+
+
 class Auth0Provider(AuthProvider):
     """Auth0 JWT verification using JWKS.
 
@@ -102,12 +110,24 @@ class Auth0Provider(AuthProvider):
         self.jwks_url = jwks_url or f"{self.issuer}.well-known/jwks.json"
         self.jwks_timeout_s = int(jwks_timeout_s)
         self.clock_skew_s = int(clock_skew_s)
-        self._jwks_cache = _JwksCache(int(jwks_cache_ttl_s))
+        # Breaker for network fetches
+        self._breaker = CircuitBreaker(
+            failure_threshold=5,
+            window_seconds=30,
+            half_open_after_s=15,
+            correlation_key_fn=lambda exc: getattr(exc, "__class__", type("")).__name__,
+        )
+        # JWKS client (keep legacy _jwks_cache alias for healthcheck/tests)
+        self._jwks = JWKSClient(url=self.jwks_url, timeout_s=self.jwks_timeout_s, cache_ttl_s=int(jwks_cache_ttl_s), breaker=self._breaker)
+        self._jwks_cache = self._jwks._cache  # type: ignore[attr-defined]
+        self._token_verifier = TokenVerifier()
         # Minimal last-claims cache to support get_user_roles until a real RBAC source exists
         self._last_claims_by_sub: Dict[str, Mapping[str, Any]] = {}
         # Roles cache seeded from management metadata with versioning
         self._roles_cache_ttl_s = int(roles_cache_ttl_s)
         self._roles_cache: Dict[str, Dict[str, Any]] = {}
+        self._cache_lock = threading.Lock()
+        self._max_cache_entries = 4096  # Bound memory to ~512KB (128B/entry est)
 
     # -------------------------- Public API --------------------------
     def verify_token(self, token: str) -> Mapping[str, Any]:
@@ -126,33 +146,22 @@ class Auth0Provider(AuthProvider):
         if not kid:
             raise ValueError("missing kid in token header")
 
-        key = self._jwks_cache.get(kid)
+        key = self._jwks.get_key(kid)
         if key is None or self._jwks_cache.is_expired():
             jwks = self._fetch_jwks()
             kid_to_key = self._prepare_keys(jwks)
-            self._jwks_cache.set_all(kid_to_key)
+            self._jwks.set_all(kid_to_key)
             key = kid_to_key.get(kid)
             if key is None:
                 raise ValueError("kid not found in JWKS")
 
-        try:
-            claims = jwt.decode(
-                token,
-                key.to_pem().decode("utf-8"),
-                algorithms=["RS256"],
-                audience=self.audience,
-                issuer=self.issuer,
-                options={
-                    "verify_signature": True,
-                    "verify_aud": True,
-                    "verify_iss": True,
-                    "verify_iat": True,
-                    "verify_exp": True,
-                },
-                leeway=self.clock_skew_s,
-            )
-        except JWTError as exc:
-            raise ValueError(f"invalid token: {exc}") from exc
+        claims = self._token_verifier.verify(
+            token=token,
+            key=key,
+            audience=self.audience,
+            issuer=self.issuer,
+            clock_skew_s=self.clock_skew_s,
+        )
 
         # Cache recent claims per subject for lightweight role access helpers
         sub = str(claims.get("sub", ""))
@@ -208,6 +217,49 @@ class Auth0Provider(AuthProvider):
         # Claims-based fallback
         claims = self._last_claims_by_sub.get(uid)
         return self._extract_roles_from_claims(claims) if claims else []
+
+    def cached_metadata_lookup(self, uid: str, force: bool = False) -> Dict[str, Any]:
+        with self._cache_lock:
+            if not force:
+                cached = self._roles_cache.get(uid)
+                if cached and time.time() - cached['ts'] < self._roles_cache_ttl_s:
+                    return cached
+            if len(self._roles_cache) >= self._max_cache_entries:
+                # Evict oldest
+                oldest = min(self._roles_cache, key=lambda k: self._roles_cache[k]['ts'])
+                del self._roles_cache[oldest]
+        for attempt in range(3):  # Simple retries
+            try:
+                # Apply gentle limiter to avoid bursty reads
+                allowed, backoff = rate_limit_metadata_fetch(uid)
+                if not allowed:
+                    time.sleep(backoff)
+                current = self._management_client.get_user_metadata(uid) or {}
+                with self._cache_lock:
+                    self._roles_cache[uid] = {'meta': current, 'ts': time.time()}
+                return current
+            except Exception as e:
+                if attempt == 2:
+                    raise
+                time.sleep(0.1 * (2 ** attempt))  # Expo backoff
+        raise ValueError("Metadata lookup failed")
+
+    def force_refresh(self, uid: str) -> None:
+        self.cached_metadata_lookup(uid, force=True)
+
+    def cache_bust_on_event(self, event_data: Dict[str, Any]) -> bool:
+        uid = event_data.get('user_id')
+        if uid:
+            with self._cache_lock:
+                if uid in self._roles_cache:
+                    del self._roles_cache[uid]
+            # Simple heartbeat: check if cache was busted by forcing a lookup
+            try:
+                self.force_refresh(uid)
+                return True
+            except Exception:
+                return False
+        return False
 
     def _normalize_roles(self, raw_roles: Any) -> List[str]:
         roles: List[str] = []
@@ -369,53 +421,11 @@ class Auth0Provider(AuthProvider):
                 backoff = min(backoff * 2.0, 1.0)
 
     def _fetch_jwks(self) -> Dict[str, Any]:
-        if urlopen is None:
-            raise ValueError("HTTP client unavailable for JWKS fetch")
-        try:
-            with urlopen(self.jwks_url, timeout=self.jwks_timeout_s) as resp:
-                body = resp.read()
-                data = json.loads(body.decode("utf-8"))
-                if not isinstance(data, dict) or "keys" not in data:
-                    raise ValueError("malformed JWKS document")
-                return data
-        except (URLError, HTTPError) as exc:
-            raise ValueError(f"failed to fetch JWKS: {exc}") from exc
-        except json.JSONDecodeError as exc:
-            raise ValueError("failed to parse JWKS JSON") from exc
+        # Delegate to JWKS client (keeps method for test compatibility)
+        return self._jwks.fetch_raw()
 
     def _prepare_keys(self, jwks: Mapping[str, Any]) -> Dict[str, Any]:
-        kid_to_key: Dict[str, Any] = {}
-        keys = jwks.get("keys")
-        if not isinstance(keys, list):
-            raise ValueError("JWKS keys must be a list")
-        for key_dict in keys:
-            if not isinstance(key_dict, dict):
-                continue
-            kty = key_dict.get("kty")
-            alg = key_dict.get("alg")
-            kid = key_dict.get("kid")
-            use = key_dict.get("use")
-            if kty != "RSA" or (alg and alg != "RS256"):
-                continue
-            if use and use != "sig":
-                continue
-            if not kid:
-                continue
-            try:
-                key = jwk.construct(key_dict, algorithm="RS256")
-            except (JWKError, Exception):
-                # Attempt to adapt if only n/e provided
-                n = key_dict.get("n")
-                e = key_dict.get("e")
-                if not (isinstance(n, str) and isinstance(e, str)):
-                    continue
-                try:
-                    key = jwk.construct({"kty": "RSA", "n": n, "e": e}, algorithm="RS256")
-                except Exception:
-                    continue
-            kid_to_key[str(kid)] = key
-        if not kid_to_key:
-            raise ValueError("no usable RSA keys in JWKS")
-        return kid_to_key
+        # Delegate to JWKS client (keeps method for test compatibility)
+        return self._jwks.prepare_keys(jwks)
 
 

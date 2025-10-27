@@ -3,9 +3,29 @@
 from __future__ import annotations
 
 import logging
-from typing import Any, Mapping, Optional, Tuple
+from typing import Any, Mapping, Optional, Tuple, List, Dict
 
 logger = logging.getLogger(__name__)
+
+
+def _roles_to_set(roles: List[str]) -> set[str]:
+    return {str(r).strip().lower() for r in roles if isinstance(r, str) and r.strip()}
+
+
+def _is_role_authorized(user_roles: List[str], required_role: str) -> bool:
+    required = (required_role or "").strip().lower()
+    if not required:
+        return True
+    have = _roles_to_set(user_roles)
+    # Strict hierarchy: admin >= operator >= read-only
+    if required == "read-only":
+        return bool(have & {"read-only", "operator", "admin"})
+    if required == "operator":
+        return bool(have & {"operator", "admin"})
+    if required == "admin":
+        return "admin" in have
+    # Unknown required role: deny by default
+    return False
 
 
 class RoleService:
@@ -96,5 +116,28 @@ class RoleService:
         except Exception as e:
             logger.warning(f"set_roles failed: {e}")
             return {"success": False, "error": str(e)}
+
+    # --------------------- Authorization Utilities ---------------------
+    def is_authorized_for_path(
+        self,
+        user_roles: List[str],
+        required_role: str,
+        *,
+        debug: bool = False,
+    ) -> Tuple[bool, Optional[Dict[str, Any]]]:
+        """Strict hierarchy authorization with optional debug info.
+
+        Returns (authorized, debug_info?). When debug=True, debug_info contains
+        normalized roles and the evaluated requirement for diagnostics.
+        """
+        ok = _is_role_authorized(user_roles, required_role)
+        if not debug:
+            return ok, None
+        info = {
+            "required": (required_role or "").strip().lower(),
+            "normalized_roles": sorted(list(_roles_to_set(user_roles))),
+            "authorized": ok,
+        }
+        return ok, info
 
 

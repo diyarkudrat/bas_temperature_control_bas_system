@@ -40,6 +40,7 @@ from auth.metrics import AuthMetrics
 from auth.providers import MockAuth0Provider, AuthProvider, Auth0Provider, build_auth0_provider
 from auth.providers.deny_all import DenyAllAuthProvider
 from services.bas_hardware_controller import BASController
+from config.rate_limit import RateLimitConfig, AtomicRateLimitConfig
 
 # Configure logging early to ensure consistent format/level
 logging.basicConfig(level=logging.INFO)
@@ -62,10 +63,11 @@ session_manager = None
 audit_logger = None
 rate_limiter = None
 auth_provider: Optional[AuthProvider] = None
-auth_metrics = AuthMetrics()
+auth_metrics = None
+_rate_limit_holder = AtomicRateLimitConfig(server_config.rate_limit)
 
 
-def _build_auth_provider_from_env() -> AuthProvider:
+def _build_auth_provider(cfg) -> AuthProvider:
     """Create the authentication provider based on server configuration.
 
     Phase 1:
@@ -74,11 +76,11 @@ def _build_auth_provider_from_env() -> AuthProvider:
     - unknown or invalid config: deny-all
     """
     try:
-        provider_kind = (server_config.auth_provider or "mock").lower()
+        provider_kind = (cfg.auth_provider or "mock").lower()
         if provider_kind == "auth0":
             # Strict env validation: issuer must be https and audience provided
-            domain = (server_config.auth0_domain or "").strip()
-            audience = (server_config.auth0_audience or "").strip()
+            domain = (cfg.auth0_domain or "").strip()
+            audience = (cfg.auth0_audience or "").strip()
             if not domain or not audience:
                 raise ValueError("AUTH0_DOMAIN and AUTH0_AUDIENCE are required for auth0 provider")
             issuer = f"https://{domain}/" if not domain.startswith("https://") else domain
@@ -89,12 +91,12 @@ def _build_auth_provider_from_env() -> AuthProvider:
             return provider
         if provider_kind == "mock":
             # Disallow mock in prod unless emulators explicitly enabled
-            if not server_config.use_emulators:
+            if not cfg.use_emulators:
                 logger.error("Mock auth provider is not allowed without emulators enabled")
                 return DenyAllAuthProvider()
-            issuer = f"https://{server_config.auth0_domain}/" if server_config.auth0_domain else "https://mock.auth0/"
+            issuer = f"https://{cfg.auth0_domain}/" if cfg.auth0_domain else "https://mock.auth0/"
             return MockAuth0Provider(
-                audience=str(server_config.auth0_audience or "bas-api"),
+                audience=str(cfg.auth0_audience or "bas-api"),
                 issuer=issuer,
             )
         logger.warning("Unknown AUTH_PROVIDER '%s'; using deny-all auth provider", provider_kind)
@@ -107,8 +109,15 @@ def _build_auth_provider_from_env() -> AuthProvider:
 ## DenyAllAuthProvider moved to auth.providers.deny_all
 
 
-# Initialize provider at import so /api/health/auth is responsive early
-auth_provider = _build_auth_provider_from_env()
+def _build_auth_runtime(cfg):
+    """Compose DI-friendly auth runtime components."""
+    provider = _build_auth_provider(cfg)
+    metrics = AuthMetrics()
+    return provider, metrics
+
+
+# Initialize provider/metrics at import so /api/health/auth is responsive early
+auth_provider, auth_metrics = _build_auth_runtime(server_config)
 
 # Firestore global variables
 firestore_factory = None
@@ -338,6 +347,32 @@ def auth_status():
         "expires_in": int(session.expires_at - time.time())
     })
 
+# ---------------- Admin API: Dynamic per-user limits ----------------
+@app.route('/auth/limits', methods=['POST'])
+@require_auth(required_role="admin")
+def update_per_user_limits():
+    try:
+        api_key = _os.getenv("DYNAMIC_LIMIT_API_KEY", "").strip()
+        # Optional secondary guard: allow if key is unset, else require match
+        if api_key:
+            provided = (request.headers.get("X-Limits-Key") or "").strip()
+            if provided != api_key:
+                return jsonify({"error": "Forbidden", "code": "FORBIDDEN"}), 403
+        body = request.get_json() or {}
+        # Expect {endpoint: {window_s:int, max_req:int}}
+        limits = body.get("per_user_limits") if isinstance(body, dict) else None
+        if not isinstance(limits, dict):
+            return jsonify({"error": "Invalid payload", "code": "INVALID_ARGUMENT"}), 400
+        # Update runtime config snapshot atomically
+        try:
+            snap = _rate_limit_holder.update(per_user_limits=limits)
+        except Exception as exc:
+            return jsonify({"error": str(exc), "code": "INVALID_ARGUMENT"}), 400
+        snapshot = snap.get_per_user_limits_snapshot()
+        return jsonify({"per_user_limits": snapshot}), 200
+    except Exception as e:
+        return jsonify({"error": "Internal server error"}), 500
+
 # Add request context setup
 # ---------------------- Request lifecycle hooks ----------------------
 @app.before_request
@@ -345,6 +380,11 @@ def setup_auth_context():
     """Setup authentication context for each request."""
     # Always attach server_config for downstream components
     request.server_config = server_config
+    # Attach rate limit snapshot for per-user dynamic limits (hot-reloaded)
+    try:
+        request.rate_limit_snapshot = _rate_limit_holder.get_snapshot()
+    except Exception:
+        request.rate_limit_snapshot = getattr(server_config, 'rate_limit', None)
     # Attach auth provider for routes and middleware
     request.auth_provider = auth_provider
     # Attach lightweight metrics aggregator

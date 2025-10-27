@@ -359,3 +359,6 @@ class RateLimiter:
             os.replace(tmp_path, self._state_path)
         except Exception as e:
             logger.debug(f"Rate limiter state not saved: {e}")
+
+
+from .revocation_service import RevocationService  # re-export for backward compatibility

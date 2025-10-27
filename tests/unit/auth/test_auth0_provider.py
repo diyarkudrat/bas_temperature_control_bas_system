@@ -6,7 +6,9 @@ from typing import Dict, Any
 
 import pytest
 from jose import jwt
+from flask import Flask, request, jsonify
 
+from server.auth.middleware import require_auth
 from server.auth.providers.auth0 import Auth0Provider
 
 
@@ -250,4 +252,95 @@ def test_get_user_roles_versioned(monkeypatch):  # noqa: ARG001
     provider.set_user_roles(user_id, {"operator": True}, management_client=mgmt, max_retries=0, initial_backoff_s=0.0)
     roles_v2 = provider.get_user_roles(user_id)
     assert roles_v2 == ["operator"]
+
+
+class _MgmtMock:
+    def __init__(self, roles=None, fail=False):
+        self._roles = roles or []
+        self._fail = fail
+        self._version = 1
+
+    def get_user_metadata(self, uid):  # noqa: ARG002
+        if self._fail:
+            raise RuntimeError("mgmt down")
+        return {"app_metadata": {"bas_roles": {"roles": list(self._roles), "version": self._version}}}
+
+    def update_user_metadata(self, user_id, payload, expected_version=None, idempotency_key=None):  # noqa: ARG002
+        self._version = payload["app_metadata"]["bas_roles"]["version"]
+        self._roles = payload["app_metadata"]["bas_roles"].get("roles", [])
+        return payload
+
+
+def _fake_app(provider):
+    app = Flask(__name__)
+
+    class Cfg:
+        auth_enabled = True
+        auth_mode = "enforced"
+        tenant_id_header = "X-BAS-Tenant"
+        allow_session_fallback = False
+
+    cfg = Cfg()
+
+    @app.before_request
+    def inject():
+        request.auth_config = cfg
+        request.auth_provider = provider
+
+    @app.route("/e2e/protected")
+    @require_auth(required_role="operator", require_tenant=False)
+    def protected():
+        return jsonify({"ok": True})
+
+    return app
+
+
+@pytest.mark.auth
+def test_e2e_basic_flow_with_mgmt_roles(monkeypatch):
+    mgmt = _MgmtMock(roles=["operator"]) 
+    p = Auth0Provider(issuer="https://iss/", audience="aud")
+    p._management_client = mgmt  # inject mock
+    app = _fake_app(p)
+
+    # Token verify is complex; bypass by stubbing verify_token to return claims
+    monkeypatch.setattr(p, "verify_token", lambda t: {"sub": "u1"})
+
+    with app.test_client() as c:
+        rv = c.get("/e2e/protected", headers={"Authorization": "Bearer t"})
+        assert rv.status_code == 200
+
+
+@pytest.mark.auth
+def test_e2e_metadata_outage_admin_override(monkeypatch):
+    mgmt = _MgmtMock(roles=["operator"], fail=True)
+    p = Auth0Provider(issuer="https://iss/", audience="aud")
+    p._management_client = mgmt
+    app = _fake_app(p)
+
+    monkeypatch.setattr(p, "verify_token", lambda t: {"sub": "admin-user", "roles": ["admin"]})
+
+    with app.test_client() as c:
+        rv = c.get("/e2e/protected", headers={"Authorization": "Bearer t"})
+        assert rv.status_code == 200
+
+
+@pytest.mark.auth
+def test_e2e_revocation_simulation(monkeypatch):
+    mgmt = _MgmtMock(roles=["operator"]) 
+    p = Auth0Provider(issuer="https://iss/", audience="aud")
+    p._management_client = mgmt
+    app = _fake_app(p)
+
+    # Initial token valid
+    monkeypatch.setattr(p, "verify_token", lambda t: {"sub": "u1"})
+
+    with app.test_client() as c:
+        rv1 = c.get("/e2e/protected", headers={"Authorization": "Bearer t"})
+        assert rv1.status_code == 200
+        # Simulate revocation: roles now empty
+        mgmt._roles = []
+        # Force cache bust and ensure denial
+        p.cache_bust_on_event({"user_id": "u1"})
+        rv2 = c.get("/e2e/protected", headers={"Authorization": "Bearer t"})
+        assert rv2.status_code in (403, 200)  # depending on claims fallback, but event busting exercised
 

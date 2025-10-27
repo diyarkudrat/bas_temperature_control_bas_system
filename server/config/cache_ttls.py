@@ -16,6 +16,9 @@ class CacheTTLs:
     device_count_seconds: int = 30
     # Audit dashboard views
     audit_dashboard_seconds: int = 20
+    # Auth metadata tiered TTLs
+    auth_metadata_ttl_critical_seconds: int = 60
+    auth_metadata_ttl_standard_seconds: int = 300
 
     @classmethod
     def from_env(cls) -> "CacheTTLs":
@@ -25,6 +28,8 @@ class CacheTTLs:
             device_list_first_page_seconds=int(os.getenv("BAS_TTL_DEVICE_LIST_S", "60")),
             device_count_seconds=int(os.getenv("BAS_TTL_DEVICE_COUNT_S", "30")),
             audit_dashboard_seconds=int(os.getenv("BAS_TTL_AUDIT_DASHBOARD_S", "20")),
+            auth_metadata_ttl_critical_seconds=int(os.getenv("BAS_TTL_AUTH_META_CRITICAL_S", "60")),
+            auth_metadata_ttl_standard_seconds=int(os.getenv("BAS_TTL_AUTH_META_STANDARD_S", "300")),
         )
 
 
