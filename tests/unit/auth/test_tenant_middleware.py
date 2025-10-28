@@ -4,12 +4,12 @@ import pytest
 from unittest.mock import Mock, patch, MagicMock
 from flask import Flask, g, request, jsonify
 
-from server.auth.tenant_middleware import (
+from apps.api.http.middleware import (
     TenantMiddleware, setup_tenant_middleware,
     require_tenant, enforce_tenant_isolation, require_device_access
 )
-from server.auth.config import AuthConfig
-from tests.utils.assertions import assert_equals, assert_not_equals, assert_true, assert_false, assert_is_not_none, assert_is_instance, assert_raises
+from app_platform.config.auth import AuthConfig
+from tests.utils.assertions import assert_equals, assert_not_equals, assert_true, assert_false, assert_is_none, assert_is_not_none, assert_is_instance, assert_raises
 
 
 @pytest.mark.auth
@@ -67,7 +67,7 @@ class TestTenantMiddleware:
         """Test extracting tenant ID from request header."""
         mock_request.headers = {"X-BAS-Tenant": "e6f7a8b9-c0d1-4e2f-3a4b-5c6d7e8f9a0b"}
         
-        with patch('server.auth.tenant_middleware.request', mock_request):
+        with patch('apps.api.http.middleware.tenant.request', mock_request):
             result = tenant_middleware.extract_tenant_id(mock_request)
             
             assert_equals(result, "e6f7a8b9-c0d1-4e2f-3a4b-5c6d7e8f9a0b", "Should extract tenant ID from header")
@@ -78,7 +78,7 @@ class TestTenantMiddleware:
         mock_request.session = Mock()
         mock_request.session.tenant_id = "tenant_456"
         
-        with patch('server.auth.tenant_middleware.request', mock_request):
+        with patch('apps.api.http.middleware.tenant.request', mock_request):
             result = tenant_middleware.extract_tenant_id(mock_request)
             
             assert_equals(result, "tenant_456", "Should extract tenant ID from session")
@@ -89,7 +89,7 @@ class TestTenantMiddleware:
         mock_request.session = Mock()
         mock_request.session.tenant_id = "tenant_456"
         
-        with patch('server.auth.tenant_middleware.request', mock_request):
+        with patch('apps.api.http.middleware.tenant.request', mock_request):
             result = tenant_middleware.extract_tenant_id(mock_request)
             
             assert_equals(result, "e6f7a8b9-c0d1-4e2f-3a4b-5c6d7e8f9a0b", "Should prioritize header over session")
@@ -99,7 +99,7 @@ class TestTenantMiddleware:
         mock_request.headers = {}  # No header
         mock_request.session = None  # No session
         
-        with patch('server.auth.tenant_middleware.request', mock_request):
+        with patch('apps.api.http.middleware.tenant.request', mock_request):
             result = tenant_middleware.extract_tenant_id(mock_request)
             
             assert_is_none(result, "Should return None when tenant ID not found")
@@ -110,7 +110,7 @@ class TestTenantMiddleware:
         mock_request.session = Mock()
         mock_request.session.tenant_id = None  # No tenant_id in session
         
-        with patch('server.auth.tenant_middleware.request', mock_request):
+        with patch('apps.api.http.middleware.tenant.request', mock_request):
             result = tenant_middleware.extract_tenant_id(mock_request)
             
             assert_is_none(result, "Should return None when session has no tenant_id")
@@ -213,8 +213,8 @@ class TestTenantMiddleware:
         def test_func():
             return "success"
         
-        with patch('server.auth.tenant_middleware.request', mock_request):
-            with patch('server.auth.tenant_middleware.g') as mock_g:
+        with patch('apps.api.http.middleware.tenant.request', mock_request):
+            with patch('apps.api.http.middleware.tenant.g') as mock_g:
                 result = test_func()
                 
                 assert_equals(result, "success", "Should call decorated function")
@@ -229,8 +229,8 @@ class TestTenantMiddleware:
         def test_func():
             return "success"
         
-        with patch('server.auth.tenant_middleware.request', mock_request):
-            with patch('server.auth.tenant_middleware.jsonify') as mock_jsonify:
+        with patch('apps.api.http.middleware.tenant.request', mock_request):
+            with patch('apps.api.http.middleware.tenant.jsonify') as mock_jsonify:
                 mock_jsonify.return_value = ({"error": "Tenant ID required"}, 400)
                 
                 result = test_func()
@@ -248,8 +248,8 @@ class TestTenantMiddleware:
         def test_func():
             return "success"
         
-        with patch('server.auth.tenant_middleware.request', mock_request):
-            with patch('server.auth.tenant_middleware.jsonify') as mock_jsonify:
+        with patch('apps.api.http.middleware.tenant.request', mock_request):
+            with patch('apps.api.http.middleware.tenant.jsonify') as mock_jsonify:
                 mock_jsonify.return_value = ({"error": "Tenant ID required"}, 400)
                 
                 result = test_func()
@@ -268,8 +268,8 @@ class TestTenantMiddleware:
         def test_func():
             return "success"
         
-        with patch('server.auth.tenant_middleware.request', mock_request):
-            with patch('server.auth.tenant_middleware.g') as mock_g:
+        with patch('apps.api.http.middleware.tenant.request', mock_request):
+            with patch('apps.api.http.middleware.tenant.g') as mock_g:
                 result = test_func()
                 
                 assert_equals(result, "success", "Should call decorated function")
@@ -284,8 +284,8 @@ class TestTenantMiddleware:
         def test_func():
             return "success"
         
-        with patch('server.auth.tenant_middleware.request', mock_request):
-            with patch('server.auth.tenant_middleware.jsonify') as mock_jsonify:
+        with patch('apps.api.http.middleware.tenant.request', mock_request):
+            with patch('apps.api.http.middleware.tenant.jsonify') as mock_jsonify:
                 mock_jsonify.return_value = ({"error": "Tenant ID required"}, 400)
                 
                 result = test_func()
@@ -301,8 +301,8 @@ class TestTenantMiddleware:
         def test_func():
             return "success"
         
-        with patch('server.auth.tenant_middleware.request', mock_request):
-            with patch('server.auth.tenant_middleware.g') as mock_g:
+        with patch('apps.api.http.middleware.tenant.request', mock_request):
+            with patch('apps.api.http.middleware.tenant.g') as mock_g:
                 result = test_func()
                 
                 assert_equals(result, "success", "Should allow access for public endpoints")
@@ -320,8 +320,8 @@ class TestTenantMiddleware:
         def test_func():
             return "success"
         
-        with patch('server.auth.tenant_middleware.request', mock_request):
-            with patch('server.auth.tenant_middleware.jsonify') as mock_jsonify:
+        with patch('apps.api.http.middleware.tenant.request', mock_request):
+            with patch('apps.api.http.middleware.tenant.jsonify') as mock_jsonify:
                 mock_jsonify.return_value = ({"error": "Access denied to tenant"}, 403)
                 
                 result = test_func()
@@ -344,8 +344,8 @@ class TestTenantMiddleware:
         def test_func():
             return "success"
         
-        with patch('server.auth.tenant_middleware.request', mock_request):
-            with patch('server.auth.tenant_middleware.g') as mock_g:
+        with patch('apps.api.http.middleware.tenant.request', mock_request):
+            with patch('apps.api.http.middleware.tenant.g') as mock_g:
                 mock_g.tenant_id = "e6f7a8b9-c0d1-4e2f-3a4b-5c6d7e8f9a0b"
                 
                 result = test_func()
@@ -355,7 +355,7 @@ class TestTenantMiddleware:
     
     def test_setup_tenant_context_outside_app_sets_module_g(self, tenant_middleware, mock_request):
         """setup_tenant_context should set module g when no Flask context."""
-        from server.auth import tenant_middleware as tm
+        from apps.api.http.middleware import tenant as tm
         if hasattr(tm.g, 'tenant_id'):
             delattr(tm.g, 'tenant_id')
 
@@ -378,18 +378,18 @@ class TestTenantMiddleware:
 
     def test_setup_tenant_context_get_request_exception(self, tenant_middleware):
         """setup_tenant_context should handle get_request exceptions gracefully."""
-        from server.auth import tenant_middleware as tm
+        from apps.api.http.middleware import tenant as tm
         if hasattr(tm.g, 'tenant_id'):
             delattr(tm.g, 'tenant_id')
 
-        with patch('server.auth.tenant_middleware.get_request', side_effect=Exception("boom")):
+        with patch('apps.api.http.middleware.tenant.get_request', side_effect=Exception("boom")):
             tenant_id = tenant_middleware.setup_tenant_context()
             assert_is_none(tenant_id, "Should return None when get_request fails")
             assert_false(hasattr(tm.g, 'tenant_id'), "Should not set module g when no tenant")
 
     def test_setup_tenant_context_extract_exception(self, tenant_middleware, mock_request):
         """setup_tenant_context should handle extract_tenant_id exceptions gracefully."""
-        from server.auth import tenant_middleware as tm
+        from apps.api.http.middleware import tenant as tm
         if hasattr(tm.g, 'tenant_id'):
             delattr(tm.g, 'tenant_id')
 
@@ -409,8 +409,8 @@ class TestTenantMiddleware:
         def test_func():
             return "success"
 
-        with patch('server.auth.tenant_middleware.request', mock_request):
-            with patch('server.auth.tenant_middleware.jsonify', side_effect=lambda d: {"payload": d}):
+        with patch('apps.api.http.middleware.tenant.request', mock_request):
+            with patch('apps.api.http.middleware.tenant.jsonify', side_effect=lambda d: {"payload": d}):
                 result = test_func()
                 assert_equals(result, ({"payload": {'error': 'Tenant ID required', 'code': 'MISSING_TENANT_ID'}}, 400), "Should wrap jsonify result with 400")
 
@@ -424,8 +424,8 @@ class TestTenantMiddleware:
         def test_func():
             return "success"
 
-        with patch('server.auth.tenant_middleware.request', mock_request):
-            with patch('server.auth.tenant_middleware.jsonify', side_effect=lambda d: d):
+        with patch('apps.api.http.middleware.tenant.request', mock_request):
+            with patch('apps.api.http.middleware.tenant.jsonify', side_effect=lambda d: d):
                 result = test_func()
                 assert_equals(result, ({'error': 'Tenant ID required', 'code': 'MISSING_TENANT_ID'}, 400), "Should wrap with 400")
 
@@ -442,8 +442,8 @@ class TestTenantMiddleware:
         def test_func():
             return "success"
 
-        with patch('server.auth.tenant_middleware.request', mock_request):
-            with patch('server.auth.tenant_middleware.jsonify', side_effect=lambda d: d):
+        with patch('apps.api.http.middleware.tenant.request', mock_request):
+            with patch('apps.api.http.middleware.tenant.jsonify', side_effect=lambda d: d):
                 result = test_func()
                 assert_equals(result, ({'error': 'Access denied to tenant', 'code': 'TENANT_ACCESS_DENIED'}, 403), "Should wrap with 403")
 
@@ -453,10 +453,10 @@ class TestTenantMiddleware:
         def test_func():
             return "success"
 
-        with patch('server.auth.tenant_middleware.request', mock_request):
-            with patch('server.auth.tenant_middleware.g') as mock_g:
+        with patch('apps.api.http.middleware.tenant.request', mock_request):
+            with patch('apps.api.http.middleware.tenant.g') as mock_g:
                 mock_g.tenant_id = None
-                with patch('server.auth.tenant_middleware.jsonify', side_effect=lambda d: d):
+                with patch('apps.api.http.middleware.tenant.jsonify', side_effect=lambda d: d):
                     result = test_func()
                     assert_equals(result, ({'error': 'Tenant ID not available', 'code': 'TENANT_ID_MISSING'}, 400), "Should wrap with 400")
 
@@ -471,10 +471,10 @@ class TestTenantMiddleware:
         def test_func():
             return "success"
 
-        with patch('server.auth.tenant_middleware.request', mock_request):
-            with patch('server.auth.tenant_middleware.g') as mock_g:
+        with patch('apps.api.http.middleware.tenant.request', mock_request):
+            with patch('apps.api.http.middleware.tenant.g') as mock_g:
                 mock_g.tenant_id = "tenant"
-                with patch('server.auth.tenant_middleware.jsonify', side_effect=lambda d: d):
+                with patch('apps.api.http.middleware.tenant.jsonify', side_effect=lambda d: d):
                     result = test_func()
                     assert_equals(result, ({'error': 'Device ID required', 'code': 'MISSING_DEVICE_ID'}, 400), "Should wrap with 400")
 
@@ -484,9 +484,9 @@ class TestTenantMiddleware:
         def test_func():
             return "success"
         
-        with patch('server.auth.tenant_middleware.request', mock_request):
-            with patch('server.auth.tenant_middleware.g') as mock_g:
-                with patch('server.auth.tenant_middleware.jsonify') as mock_jsonify:
+        with patch('apps.api.http.middleware.tenant.request', mock_request):
+            with patch('apps.api.http.middleware.tenant.g') as mock_g:
+                with patch('apps.api.http.middleware.tenant.jsonify') as mock_jsonify:
                     mock_g.tenant_id = None  # No tenant context
                     mock_jsonify.return_value = ({"error": "Tenant ID not available"}, 400)
                     
@@ -504,9 +504,9 @@ class TestTenantMiddleware:
         def test_func():
             return "success"
         
-        with patch('server.auth.tenant_middleware.request', mock_request):
-            with patch('server.auth.tenant_middleware.g') as mock_g:
-                with patch('server.auth.tenant_middleware.jsonify') as mock_jsonify:
+        with patch('apps.api.http.middleware.tenant.request', mock_request):
+            with patch('apps.api.http.middleware.tenant.g') as mock_g:
+                with patch('apps.api.http.middleware.tenant.jsonify') as mock_jsonify:
                     mock_g.tenant_id = "e6f7a8b9-c0d1-4e2f-3a4b-5c6d7e8f9a0b"
                     mock_jsonify.return_value = ({"error": "Device ID required"}, 400)
                     
@@ -524,8 +524,8 @@ class TestTenantMiddleware:
         def test_func():
             return "success"
         
-        with patch('server.auth.tenant_middleware.request', mock_request):
-            with patch('server.auth.tenant_middleware.g') as mock_g:
+        with patch('apps.api.http.middleware.tenant.request', mock_request):
+            with patch('apps.api.http.middleware.tenant.g') as mock_g:
                 mock_g.tenant_id = "e6f7a8b9-c0d1-4e2f-3a4b-5c6d7e8f9a0b"
                 
                 result = test_func()
@@ -613,8 +613,8 @@ class TestConvenienceDecorators:
             return "success"
         
         with app.app_context():
-            with patch('server.auth.tenant_middleware.request') as mock_request:
-                with patch('server.auth.tenant_middleware.g') as mock_g:
+            with patch('apps.api.http.middleware.tenant.request') as mock_request:
+                with patch('apps.api.http.middleware.tenant.g') as mock_g:
                     mock_request.headers = {"X-BAS-Tenant": "e6f7a8b9-c0d1-4e2f-3a4b-5c6d7e8f9a0b"}
                     
                     result = test_route()
@@ -629,7 +629,7 @@ class TestConvenienceDecorators:
             return "success"
         
         with app.app_context():
-            with patch('server.auth.tenant_middleware.jsonify') as mock_jsonify:
+            with patch('apps.api.http.middleware.tenant.jsonify') as mock_jsonify:
                 mock_jsonify.return_value = ({"error": "Tenant middleware not configured"}, 500)
                 
                 result = test_route()
@@ -645,8 +645,8 @@ class TestConvenienceDecorators:
             return "success"
         
         with app.app_context():
-            with patch('server.auth.tenant_middleware.request') as mock_request:
-                with patch('server.auth.tenant_middleware.g') as mock_g:
+            with patch('apps.api.http.middleware.tenant.request') as mock_request:
+                with patch('apps.api.http.middleware.tenant.g') as mock_g:
                     mock_request.headers = {"X-BAS-Tenant": "e6f7a8b9-c0d1-4e2f-3a4b-5c6d7e8f9a0b"}
                     mock_request.session = None  # No session (public endpoint)
                     
@@ -662,7 +662,7 @@ class TestConvenienceDecorators:
             return "success"
         
         with app.app_context():
-            with patch('server.auth.tenant_middleware.jsonify') as mock_jsonify:
+            with patch('apps.api.http.middleware.tenant.jsonify') as mock_jsonify:
                 mock_jsonify.return_value = ({"error": "Tenant middleware not configured"}, 500)
                 
                 result = test_route()
@@ -678,8 +678,8 @@ class TestConvenienceDecorators:
             return "success"
         
         with app.app_context():
-            with patch('server.auth.tenant_middleware.request') as mock_request:
-                with patch('server.auth.tenant_middleware.g') as mock_g:
+            with patch('apps.api.http.middleware.tenant.request') as mock_request:
+                with patch('apps.api.http.middleware.tenant.g') as mock_g:
                     mock_request.is_json = True
                     mock_request.json = {"device_id": "device_123"}
                     mock_g.tenant_id = "e6f7a8b9-c0d1-4e2f-3a4b-5c6d7e8f9a0b"
@@ -696,7 +696,7 @@ class TestConvenienceDecorators:
             return "success"
         
         with app.app_context():
-            with patch('server.auth.tenant_middleware.jsonify') as mock_jsonify:
+            with patch('apps.api.http.middleware.tenant.jsonify') as mock_jsonify:
                 mock_jsonify.return_value = ({"error": "Tenant middleware not configured"}, 500)
                 
                 result = test_route()

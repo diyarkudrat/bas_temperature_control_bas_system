@@ -90,28 +90,7 @@ done
 # Function to start server in background
 start_server() {
     print_server "Starting BAS Server..."
-    
-    if [ ! -d "server" ]; then
-        print_error "Server directory not found"
-        print_info "Please run ./setup.sh first"
-        return 1
-    fi
-    
-    cd server
-    
-    # Check if virtual environment exists
-    if [ ! -d "venv" ]; then
-        print_warning "Virtual environment not found, running setup..."
-        if [ -f "setup_server.sh" ]; then
-            chmod +x setup_server.sh
-            ./setup_server.sh
-        else
-            print_error "Server setup script not found"
-            cd ..
-            return 1
-        fi
-    fi
-    
+
     # Check if port 8080 is available
     if lsof -i :8080 >/dev/null 2>&1; then
         print_warning "Port 8080 is already in use"
@@ -119,28 +98,25 @@ start_server() {
         sleep 2
         print_status "Port 8080 freed"
     fi
-    
-    # Start server in background
-    source venv/bin/activate
+
+    # Start server in background using new entrypoint
     mkdir -p logs
-    nohup python bas_server.py > logs/server.log 2>&1 &
+    PYTHONPATH=. nohup python apps/api/main.py > logs/server.log 2>&1 &
     SERVER_PID=$!
-    
-    cd ..
-    
+
     # Wait a moment for server to start
     sleep 3
-    
+
     # Check if server started successfully
     if kill -0 $SERVER_PID 2>/dev/null; then
         print_status "Server started successfully (PID: $SERVER_PID)"
         print_info "Dashboard: http://localhost:8080"
-        print_info "Logs: tail -f server/logs/server.log"
+        print_info "Logs: tail -f logs/server.log"
         echo $SERVER_PID > server.pid
         return 0
     else
         print_error "Failed to start server"
-        print_info "Check server/logs/server.log for details"
+        print_info "Check logs/server.log for details"
         return 1
     fi
 }

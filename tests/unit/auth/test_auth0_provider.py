@@ -8,8 +8,8 @@ import pytest
 from jose import jwt
 from flask import Flask, request, jsonify
 
-from server.auth.middleware import require_auth
-from server.auth.providers.auth0 import Auth0Provider
+from apps.api.http.middleware import require_auth
+from adapters.providers.auth0 import Auth0Provider
 
 
 def _generate_rsa_keypair():
@@ -73,7 +73,7 @@ def test_fetch_jwks_success(monkeypatch):
     def fake_urlopen(url, timeout=5):  # noqa: ARG001
         return _FakeHTTPResponse(jwks)
 
-    monkeypatch.setattr("server.auth.providers.auth0.urlopen", fake_urlopen)
+    monkeypatch.setattr("adapters.providers.auth0.urlopen", fake_urlopen)
 
     provider = Auth0Provider(issuer="https://tenant.auth0.com/", audience="bas-api")
     fetched = provider._fetch_jwks()  # type: ignore[attr-defined]
@@ -87,7 +87,7 @@ def test_fetch_jwks_failure(monkeypatch):
     def fake_urlopen(url, timeout=5):  # noqa: ARG001
         raise FakeError("boom")
 
-    monkeypatch.setattr("server.auth.providers.auth0.urlopen", fake_urlopen)
+    monkeypatch.setattr("adapters.providers.auth0.urlopen", fake_urlopen)
     provider = Auth0Provider(issuer="https://tenant.auth0.com/", audience="bas-api")
     with pytest.raises(ValueError):
         provider._fetch_jwks()  # type: ignore[attr-defined]
@@ -103,7 +103,7 @@ def test_verify_valid_jwt(monkeypatch):
     def fake_urlopen(url, timeout=5):  # noqa: ARG001
         return _FakeHTTPResponse(jwks)
 
-    monkeypatch.setattr("server.auth.providers.auth0.urlopen", fake_urlopen)
+    monkeypatch.setattr("adapters.providers.auth0.urlopen", fake_urlopen)
     provider = Auth0Provider(issuer=issuer, audience=audience)
 
     token = _mint_token(private_pem, issuer, audience, subject="user123", kid=kid, extra={"roles": ["operator"]})
@@ -122,7 +122,7 @@ def test_verify_invalid_alg(monkeypatch):
     def fake_urlopen(url, timeout=5):  # noqa: ARG001
         return _FakeHTTPResponse(jwks)
 
-    monkeypatch.setattr("server.auth.providers.auth0.urlopen", fake_urlopen)
+    monkeypatch.setattr("adapters.providers.auth0.urlopen", fake_urlopen)
     provider = Auth0Provider(issuer=issuer, audience=audience)
 
     # Create HS256 token to trigger alg rejection
@@ -143,7 +143,7 @@ def test_verify_expired_jwt(monkeypatch):
     def fake_urlopen(url, timeout=5):  # noqa: ARG001
         return _FakeHTTPResponse(jwks)
 
-    monkeypatch.setattr("server.auth.providers.auth0.urlopen", fake_urlopen)
+    monkeypatch.setattr("adapters.providers.auth0.urlopen", fake_urlopen)
     provider = Auth0Provider(issuer=issuer, audience=audience)
 
     token = _mint_token(private_pem, issuer, audience, subject="userZ", kid=kid, expires_in_s=-10)
@@ -161,7 +161,7 @@ def test_cache_invalidation(monkeypatch):
     def fake_urlopen_ok(url, timeout=5):  # noqa: ARG001
         return _FakeHTTPResponse(jwks)
 
-    monkeypatch.setattr("server.auth.providers.auth0.urlopen", fake_urlopen_ok)
+    monkeypatch.setattr("adapters.providers.auth0.urlopen", fake_urlopen_ok)
     provider = Auth0Provider(issuer=issuer, audience=audience)
 
     token = _mint_token(private_pem, issuer, audience, subject="userC", kid=kid)
@@ -175,7 +175,7 @@ def test_cache_invalidation(monkeypatch):
     def fake_urlopen_fail(url, timeout=5):  # noqa: ARG001
         raise RuntimeError("network down")
 
-    monkeypatch.setattr("server.auth.providers.auth0.urlopen", fake_urlopen_fail)
+    monkeypatch.setattr("adapters.providers.auth0.urlopen", fake_urlopen_fail)
     with pytest.raises(ValueError):
         provider.verify_token(token)
 

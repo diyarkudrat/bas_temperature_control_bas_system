@@ -20,13 +20,21 @@ def setup_auth_config():
     """Setup authentication configuration."""
     logger.info("Setting up authentication configuration")
     
-    # Check if we're in the server directory or project root
-    if os.path.exists('config/auth_config.json'):
-        config_path = 'config/auth_config.json'
-    elif os.path.exists('../config/auth_config.json'):
-        config_path = '../config/auth_config.json'
-    else:
-        config_path = 'config/auth_config.json'  # Default
+    # Resolve config path with preference for new location under configs/app/
+    candidates = [
+        'configs/app/auth_config.json',
+        '../configs/app/auth_config.json',
+        'config/auth_config.json',
+        '../config/auth_config.json',
+    ]
+    config_path = None
+    for p in candidates:
+        if os.path.exists(p):
+            config_path = p
+            break
+    if config_path is None:
+        # Default to new source-of-truth location
+        config_path = 'configs/app/auth_config.json'
     
     # Check if config already exists
     if os.path.exists(config_path):

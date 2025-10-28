@@ -18,7 +18,7 @@ from tests.unit.firestore.mock import (
     validate_mock_role as validate_role
 )
 # Firestore models under test (server/services/firestore/models.py)
-from server.services.firestore import models as fs_models
+from adapters.db.firestore import models as fs_models
 from tests.utils.assertions import assert_equals, assert_not_equals, assert_true, assert_false, assert_is_not_none, assert_is_none, assert_is_instance, assert_raises
 
 # Contract testing imports
@@ -26,7 +26,7 @@ from tests.contracts.firestore import ContractValidator
 from tests.utils.business_rules import BusinessRules
 
 # Auth models under test (server/auth/models.py)
-from server.auth.models import User as AuthUser, Session as AuthSession
+from domains.auth.models import User as AuthUser, Session as AuthSession
 
 
 @pytest.mark.auth

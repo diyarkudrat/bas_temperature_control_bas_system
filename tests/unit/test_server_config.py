@@ -1,7 +1,7 @@
 import json
 from unittest.mock import patch
 
-from server.config.config import ServerConfig
+from app_platform.config.config import ServerConfig
 
 
 def test_path_rules_env_parsing_valid_regex():

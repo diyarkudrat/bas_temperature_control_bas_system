@@ -6,7 +6,7 @@ from unittest.mock import Mock, patch, MagicMock
 from google.cloud import firestore
 from google.auth import default
 
-from server.auth.firestore_client import FirestoreClientFactory, get_firestore_client
+from adapters.db.firestore.client import FirestoreClientFactory, get_firestore_client
 from tests.utils.assertions import assert_equals, assert_not_equals, assert_true, assert_false, assert_is_none, assert_is_not_none, assert_is_instance, assert_raises
 
 
@@ -20,7 +20,7 @@ class TestFirestoreClientFactory:
         original_env = os.environ.get('FIRESTORE_EMULATOR_HOST')
         os.environ['FIRESTORE_EMULATOR_HOST'] = 'localhost:9999'
         try:
-            with patch('server.auth.firestore_client.firestore.Client') as mock_client_class:
+            with patch('adapters.db.firestore.client.firestore.Client') as mock_client_class:
                 mock_client = Mock()
                 mock_client_class.return_value = mock_client
                 result = FirestoreClientFactory.create_client(project_id="prod-project")
@@ -41,7 +41,7 @@ class TestFirestoreClientFactory:
         emulator_host = "127.0.0.1:8080"
         project_id = "test-project"
         
-        with patch('server.auth.firestore_client.firestore.Client') as mock_client_class:
+        with patch('adapters.db.firestore.client.firestore.Client') as mock_client_class:
             mock_client = Mock()
             mock_client_class.return_value = mock_client
             
@@ -61,7 +61,7 @@ class TestFirestoreClientFactory:
         """Test creating client with emulator host but no project ID."""
         emulator_host = "127.0.0.1:8080"
         
-        with patch('server.auth.firestore_client.firestore.Client') as mock_client_class:
+        with patch('adapters.db.firestore.client.firestore.Client') as mock_client_class:
             mock_client = Mock()
             mock_client_class.return_value = mock_client
             
@@ -78,7 +78,7 @@ class TestFirestoreClientFactory:
         """Test creating client with project ID but no emulator."""
         project_id = "production-project"
         
-        with patch('server.auth.firestore_client.firestore.Client') as mock_client_class:
+        with patch('adapters.db.firestore.client.firestore.Client') as mock_client_class:
             mock_client = Mock()
             mock_client_class.return_value = mock_client
             
@@ -93,8 +93,8 @@ class TestFirestoreClientFactory:
     
     def test_create_client_with_adc_credentials(self):
         """Test creating client using Application Default Credentials."""
-        with patch('server.auth.firestore_client.default') as mock_default:
-            with patch('server.auth.firestore_client.firestore.Client') as mock_client_class:
+        with patch('adapters.db.firestore.client.default') as mock_default:
+            with patch('adapters.db.firestore.client.firestore.Client') as mock_client_class:
                 # Mock ADC credentials
                 mock_credentials = Mock()
                 mock_project_id = "adc-project"
@@ -114,8 +114,8 @@ class TestFirestoreClientFactory:
     
     def test_create_client_adc_fallback(self):
         """Test creating client with ADC fallback to default client."""
-        with patch('server.auth.firestore_client.default') as mock_default:
-            with patch('server.auth.firestore_client.firestore.Client') as mock_client_class:
+        with patch('adapters.db.firestore.client.default') as mock_default:
+            with patch('adapters.db.firestore.client.firestore.Client') as mock_client_class:
                 # Mock ADC failure
                 mock_default.side_effect = Exception("ADC failed")
                 
@@ -133,7 +133,7 @@ class TestFirestoreClientFactory:
     
     def test_create_client_exception_handling(self):
         """Test exception handling in client creation."""
-        with patch('server.auth.firestore_client.firestore.Client') as mock_client_class:
+        with patch('adapters.db.firestore.client.firestore.Client') as mock_client_class:
             mock_client_class.side_effect = Exception("Client creation failed")
             
             with assert_raises(Exception) as exc_info:
@@ -148,7 +148,7 @@ class TestFirestoreClientFactory:
         try:
             emulator_host = "127.0.0.1:8080"
             
-            with patch('server.auth.firestore_client.firestore.Client') as mock_client_class:
+            with patch('adapters.db.firestore.client.firestore.Client') as mock_client_class:
                 mock_client = Mock()
                 mock_client_class.return_value = mock_client
                 
@@ -193,7 +193,7 @@ class TestGetFirestoreClient:
         mock_config.use_firestore_telemetry = True
         mock_config.gcp_project_id = "test-project"
         
-        with patch('server.auth.firestore_client.FirestoreClientFactory.create_client') as mock_create:
+        with patch('adapters.db.firestore.client.FirestoreClientFactory.create_client') as mock_create:
             mock_client = Mock()
             mock_create.return_value = mock_client
             
@@ -210,7 +210,7 @@ class TestGetFirestoreClient:
         mock_config.use_firestore_auth = True
         mock_config.gcp_project_id = "test-project"
         
-        with patch('server.auth.firestore_client.FirestoreClientFactory.create_client') as mock_create:
+        with patch('adapters.db.firestore.client.FirestoreClientFactory.create_client') as mock_create:
             mock_client = Mock()
             mock_create.return_value = mock_client
             
@@ -227,7 +227,7 @@ class TestGetFirestoreClient:
         mock_config.use_firestore_audit = True
         mock_config.gcp_project_id = "test-project"
         
-        with patch('server.auth.firestore_client.FirestoreClientFactory.create_client') as mock_create:
+        with patch('adapters.db.firestore.client.FirestoreClientFactory.create_client') as mock_create:
             mock_client = Mock()
             mock_create.return_value = mock_client
             
@@ -246,7 +246,7 @@ class TestGetFirestoreClient:
         mock_config.use_firestore_audit = True
         mock_config.gcp_project_id = "test-project"
         
-        with patch('server.auth.firestore_client.FirestoreClientFactory.create_client') as mock_create:
+        with patch('adapters.db.firestore.client.FirestoreClientFactory.create_client') as mock_create:
             mock_client = Mock()
             mock_create.return_value = mock_client
             
@@ -263,7 +263,7 @@ class TestGetFirestoreClient:
         mock_config.use_firestore_telemetry = True
         mock_config.firestore_emulator_host = "127.0.0.1:8080"
         
-        with patch('server.auth.firestore_client.FirestoreClientFactory.create_client') as mock_create:
+        with patch('adapters.db.firestore.client.FirestoreClientFactory.create_client') as mock_create:
             mock_client = Mock()
             mock_create.return_value = mock_client
             
@@ -289,7 +289,7 @@ class TestGetFirestoreClient:
         mock_config.use_firestore_telemetry = True
         mock_config.gcp_project_id = "test-project"
         
-        with patch('server.auth.firestore_client.FirestoreClientFactory.create_client') as mock_create:
+        with patch('adapters.db.firestore.client.FirestoreClientFactory.create_client') as mock_create:
             mock_create.side_effect = Exception("Factory failed")
             
             result = get_firestore_client(mock_config)
@@ -319,7 +319,7 @@ class TestGetFirestoreClient:
         mock_config.gcp_project_id = "production-project"
         mock_config.firestore_emulator_host = "127.0.0.1:8080"
         
-        with patch('server.auth.firestore_client.FirestoreClientFactory.create_client') as mock_create:
+        with patch('adapters.db.firestore.client.FirestoreClientFactory.create_client') as mock_create:
             mock_client = Mock()
             mock_create.return_value = mock_client
             
@@ -340,7 +340,7 @@ class TestGetFirestoreClient:
         mock_config.gcp_project_id = "test-project"
         mock_config.firestore_emulator_host = None
         
-        with patch('server.auth.firestore_client.FirestoreClientFactory.create_client') as mock_create:
+        with patch('adapters.db.firestore.client.FirestoreClientFactory.create_client') as mock_create:
             mock_client = Mock()
             mock_create.return_value = mock_client
             
@@ -355,13 +355,13 @@ class TestGetFirestoreClient:
     
     def test_get_firestore_client_real_config_object(self):
         """Test get_firestore_client with real config object."""
-        from server.auth.config import AuthConfig
+        from app_platform.config.auth import AuthConfig
         
         config = AuthConfig()
         config.use_firestore_telemetry = True
         config.gcp_project_id = "test-project"
         
-        with patch('server.auth.firestore_client.FirestoreClientFactory.create_client') as mock_create:
+        with patch('adapters.db.firestore.client.FirestoreClientFactory.create_client') as mock_create:
             mock_client = Mock()
             mock_create.return_value = mock_client
             

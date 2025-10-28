@@ -830,7 +830,7 @@ class TestDataClasses:
 
 
 # ======================= Server base.py coverage tests =======================
-from server.services.firestore.base import (
+from adapters.db.firestore.base import (
     BaseRepository as SBaseRepository,
     TenantAwareRepository as STenantAwareRepository,
     TimestampedRepository as STimestampedRepository,
@@ -897,7 +897,7 @@ class TestServerBaseRepository:
         assert_equals(result["utc_timestamp"], datetime.fromtimestamp(ts).isoformat(), "local isoformat")
 
     def test_server_normalize_timestamp_without_timestamp(self, s_repo):
-        with patch("server.services.firestore.base.datetime") as mock_dt:
+        with patch("adapters.db.firestore.base.datetime") as mock_dt:
             mock_dt.utcnow.return_value.timestamp.return_value = 1640995200.0
             mock_iso_obj = Mock()
             mock_iso_obj.isoformat.return_value = "2022-01-01T00:00:00"
@@ -1042,7 +1042,7 @@ class TestServerTimestampedRepository:
         return _Repo(s_client, "c")
 
     def test_add_timestamps_includes_updated(self, repo):
-        with patch("server.services.firestore.base.datetime") as mock_dt:
+        with patch("adapters.db.firestore.base.datetime") as mock_dt:
             mock_dt.utcnow.return_value.timestamp.return_value = 1640995200.0
             mock_iso_obj = Mock()
             mock_iso_obj.isoformat.return_value = "2022-01-01T00:00:00"
@@ -1053,7 +1053,7 @@ class TestServerTimestampedRepository:
             assert_equals(out["updated_at"], 1640995200000, "updated_at added")
 
     def test_add_timestamps_without_updated(self, repo):
-        with patch("server.services.firestore.base.datetime") as mock_dt:
+        with patch("adapters.db.firestore.base.datetime") as mock_dt:
             mock_dt.utcnow.return_value.timestamp.return_value = 1640995200.0
             mock_iso_obj = Mock()
             mock_iso_obj.isoformat.return_value = "2022-01-01T00:00:00"

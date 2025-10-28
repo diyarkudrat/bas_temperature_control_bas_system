@@ -699,9 +699,9 @@ class TestTelemetryRepository:
 
 import types
 
-from server.services.firestore.telemetry_store import TelemetryRepository as ServerTelemetryRepository
-from server.services.firestore.models import TelemetryRecord as ServerTelemetryRecord, create_telemetry_record as server_create_telemetry_record
-from server.services.firestore.base import OperationResult as ServerOperationResult, PaginatedResult as ServerPaginatedResult, PermissionError as ServerPermissionError
+from adapters.db.firestore.telemetry_store import TelemetryRepository as ServerTelemetryRepository
+from adapters.db.firestore.models import TelemetryRecord as ServerTelemetryRecord, create_telemetry_record as server_create_telemetry_record
+from adapters.db.firestore.base import OperationResult as ServerOperationResult, PaginatedResult as ServerPaginatedResult, PermissionError as ServerPermissionError
 from google.api_core.exceptions import PermissionDenied as GAPermissionDenied
 
 

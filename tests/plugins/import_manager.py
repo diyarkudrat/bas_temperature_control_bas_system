@@ -132,8 +132,7 @@ def validate_imports(import_paths):
 
     # Test critical imports
     test_imports = [
-        ('server.auth.services', 'Authentication service'),
-        ('server.services.firestore.base', 'Firestore base service'),
+        ('adapters.db.firestore.base', 'Firestore base service'),
         ('src.bas.controller', 'BAS controller'),
         ('src.bas.services', 'BAS services'),
         ('tests.contracts.firestore', 'Contract validator'),

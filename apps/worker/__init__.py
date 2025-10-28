@@ -1,0 +1,3 @@
+"""Worker app entrypoint placeholder."""
+
+

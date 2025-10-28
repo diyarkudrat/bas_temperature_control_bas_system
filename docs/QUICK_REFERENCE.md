@@ -98,9 +98,9 @@ curl "http://localhost:8080/api/telemetry?limit=50" \
 - **Database**: `server/bas_telemetry.db`
 
 ### Key Configuration Files
-- **Auth Config**: `config/auth_config.json`
+- **Auth Config**: `configs/app/auth_config.json`
 - **Secrets**: `config/secrets.json` (Twilio credentials)
-- **Server Config**: `server/config/auth_config.json`
+- **Server Config**: `configs/app/auth_config.json`
 
 ### Environment Variables
 ```bash

@@ -289,7 +289,7 @@ def runtime_contract_enforcement(service_name: str, enabled: bool = True):
     try:
         # Monkey patch service initialization to wrap instances
         if service_name == 'audit_store':
-            from server.services.firestore.audit_store import AuditRepository
+            from adapters.db.firestore.audit_store import AuditRepository
             original_init = AuditRepository.__init__
 
             def wrapped_init(self, client):
@@ -303,7 +303,7 @@ def runtime_contract_enforcement(service_name: str, enabled: bool = True):
             AuditRepository.__init__ = wrapped_init
 
         elif service_name == 'sessions_store':
-            from server.services.firestore.sessions_store import SessionsStore
+            from adapters.db.firestore.sessions_store import SessionsStore
             original_init = SessionsStore.__init__
 
             def wrapped_init(self, client):
@@ -320,10 +320,10 @@ def runtime_contract_enforcement(service_name: str, enabled: bool = True):
         # Restore original initialization
         if original_init:
             if service_name == 'audit_store':
-                from server.services.firestore.audit_store import AuditRepository
+                from adapters.db.firestore.audit_store import AuditRepository
                 AuditRepository.__init__ = original_init
             elif service_name == 'sessions_store':
-                from server.services.firestore.sessions_store import SessionsStore
+                from adapters.db.firestore.sessions_store import SessionsStore
                 SessionsStore.__init__ = original_init
 
 

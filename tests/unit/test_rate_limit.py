@@ -1,4 +1,4 @@
-from server.config.rate_limit import RateLimitConfig, AtomicRateLimitConfig
+from app_platform.config.rate_limit import RateLimitConfig, AtomicRateLimitConfig
 
 
 def test_clamps_and_minima():

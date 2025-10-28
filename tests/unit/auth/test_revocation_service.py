@@ -1,6 +1,6 @@
 import time
 
-from server.auth.revocation_service import RevocationService
+from adapters.cache.redis.revocation_service import RevocationService
 
 
 class FakeRedis:

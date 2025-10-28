@@ -6,8 +6,8 @@ from typing import Dict, Any
 import pytest
 from flask import Flask, request, jsonify
 
-from server.auth.middleware import require_auth
-from server.auth.revocation_service import RevocationService
+from apps.api.http.middleware import require_auth
+from adapters.cache.redis.revocation_service import RevocationService
 
 
 class _DummySession:
@@ -1267,7 +1267,6 @@ def test_revoked_token_returns_403(monkeypatch):
 
     monkeypatch.setenv("REVOCATION_REDIS_URL", "redis://local")
     monkeypatch.setenv("EMULATOR_REDIS_URL", "")
-    import server.auth
     monkeypatch.setitem(__import__('sys').modules, 'redis', _RedisMod)
 
     # Preload revocation for jti "j1"

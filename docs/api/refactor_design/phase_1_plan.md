@@ -7,7 +7,7 @@ Set up local development environment with Redis and Firestore emulators, update 
 
 | file | op | functions/APIs | tests | perf/mem budget | risk |
 |------|----|----------------|-------|-----------------|------|
-| server/requirements.txt | modify | Add 'redis' and 'google-cloud-firestore' dependencies | N/A | N/A | Low - Dependency updates may require version checks |
+| apps/api/requirements.txt | modify | Add 'redis' and 'google-cloud-firestore' dependencies | N/A | N/A | Low - Dependency updates may require version checks |
 | scripts/setup_emulators.sh | add | Bash script to launch local Redis server and Firestore emulator | N/A | Startup &lt;60s, Mem &lt;500MB | Medium - Local env variations may affect reliability |
 | server/config/config.py | modify | Add config vars for emulator hosts/ports (e.g., EMULATOR_REDIS_URL) | N/A | Load time &lt;5ms | Low - Simple config extension |
 | docs/api/refactor_design/existing_services_refactoring.md | modify | Refine Decisions table and Multi-Phase Plan based on reviews | N/A | N/A | Low - Doc updates only |

@@ -41,7 +41,7 @@ def temp_db_file(tmp_path):
 
 ```python
 import pytest
-from server.auth.services import UserManager
+from application.auth.managers import UserManager
 
 @pytest.fixture
 def user_manager(auth_config):

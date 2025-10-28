@@ -99,7 +99,7 @@ The system includes a complete authentication system:
 - **Default admin user**: `admin` / `Admin123!@#X` (change immediately!)
 - **User management**: `python3 scripts/auth_admin.py --help`
 - **Login page**: http://localhost:8080/auth/login
-- **Configuration**: JSON files in `config/` or environment variables
+- **Configuration**: `configs/app/auth_config.json` or environment variables
 
 ## 🔄 Setup & Daily Operations
 
@@ -183,7 +183,8 @@ For server management and development:
 tail -f server/logs/server.log
 
 # Manual server startup (for debugging)
-cd server && source venv/bin/activate && python3 bas_server.py
+cd server && source venv/bin/activate && python3 bas_server.py  # legacy shim
+cd .. && PYTHONPATH=. source server/venv/bin/activate && python apps/api/main.py  # preferred
 ```
 
 ### Local Emulators (Redis + Firestore)
@@ -318,24 +319,25 @@ For advanced hardware control and troubleshooting:
 
 ```
 BAS System Project/
-├── pico_client.py          # Minimal Pico W client (11.4KB)
-├── server/                 # Computer-based server
-│   ├── bas_server.py       # Flask web server
-│   ├── bas_telemetry.db    # SQLite database
-│   ├── templates/          # Web dashboard
-│   ├── requirements.txt    # Python dependencies
-│   └── setup_server.sh     # Server setup script
-├── scripts/                # System control scripts
-│   ├── start_bas.sh        # 🚀 Complete system startup
-│   ├── status_bas.sh       # 📊 System status checker
-│   ├── stop_bas.sh         # 🛑 System shutdown
-│   ├── start_hardware.sh   # 🔧 Hardware startup (Pico W)
-│   ├── status_hardware.sh  # 📊 Hardware status checker
-│   ├── stop_hardware.sh    # 🛑 Hardware shutdown
-│   └── auth_admin.py       # 👤 User management tool
-├── setup.sh               # Complete system setup
-├── verify_system.sh       # System verification
-└── README.md              # This file
+├── apps/
+│   └── api/
+│       ├── main.py              # Flask app entrypoint (server)
+│       └── http/                # Routes, middleware, versioning
+├── application/                 # Domain/application layer
+│   ├── auth/                    # Users, sessions, audit, rate limiter
+│   └── hardware/                # BASController
+├── adapters/                    # Infrastructure adapters
+│   ├── db/firestore/            # Repositories + factory (optional)
+│   ├── cache/redis/             # Revocations, sliding window RL
+│   └── messaging/sse/           # SSE hub + optional Redis fan-out
+├── app_platform/                # Config, budgets, errors, observability
+│   └── config/                  # ServerConfig, rate limit, budgets
+├── configs/app/auth_config.json # Auth/session config + Firestore flags
+├── scripts/                     # Start/stop/status/auth tooling
+├── bas_server.py                # Legacy shim → runs apps/api/main.py
+├── setup.sh                     # Complete system setup
+├── verify_system.sh             # System verification
+└── README.md                    # This file
 ```
 
 ## 🌐 API Endpoints
@@ -343,6 +345,20 @@ BAS System Project/
 The BAS system provides a comprehensive REST API for temperature control, telemetry data, and system management.
 
 📚 **Complete API Documentation**: See [API Documentation](docs/api/README.md) for detailed endpoint documentation, request/response formats, error codes, authentication requirements, and client examples.
+
+## 🧩 Backend Architecture (Developers)
+
+- **Entrypoint**: `apps/api/main.py` creates the Flask app, loads `ServerConfig`, wires auth provider/metrics, optional Firestore factory, registers routes and error handlers.
+- **Request lifecycle**: `before_request` attaches `server_config`, dynamic rate-limit snapshot, `auth_provider`, and metrics; optional tenant context. `after_request` applies security + versioning headers.
+- **Authentication**: `apps/api/http/middleware/require_auth` supports modes: disabled, shadow, enforced. Enforced prefers JWT via provider (`Auth0Provider` or `MockAuth0Provider`), then falls back to session cookies.
+- **Providers**: configured via `app_platform/config/config.py` (`auth_provider`, `auth0_domain`, `auth0_audience`). Mock permitted with emulators; otherwise deny-all.
+- **Sessions & users**: default SQLite (`bas.sqlite3`) via `application/auth/managers.py`. Firestore repositories are used when enabled in `configs/app/auth_config.json`.
+- **Rate limiting**: per-IP/user auth attempts in `application/auth/services`. Sliding-window request limiting uses Redis (`app_platform/rate_limit/sliding_window_limiter.py`). Metadata limiter protects JWKS/roles.
+- **Token revocation**: Redis-backed revocation store (`adapters/cache/redis/revocation_service.py`) with a small in-process TTL cache used by auth middleware.
+- **Storage**: Firestore repos under `adapters/db/firestore/*` via `FirestoreServiceFactory`. Defaults operate without Firestore when flags are off.
+- **SSE**: `adapters/messaging/sse` provides an in-process hub (heartbeats) with optional Redis pub/sub mirroring for fan-out.
+- **Configuration**: `app_platform/config/config.py` loads env + emulator URLs; `configs/app/auth_config.json` controls features like Firestore-backed auth/audit.
+- **Emulators**: `scripts/setup_emulators.sh` exports `USE_EMULATORS=1`, `EMULATOR_REDIS_URL`, `FIRESTORE_EMULATOR_HOST` for local dev.
 
 ## 🐛 Troubleshooting
 

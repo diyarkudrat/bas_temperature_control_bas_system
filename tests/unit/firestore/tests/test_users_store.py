@@ -719,7 +719,7 @@ class TestUsersRepository:
 
     @pytest.fixture
     def real_repo(self):
-        from server.services.firestore.users_store import UsersRepository
+        from adapters.db.firestore.users_store import UsersRepository
         from unittest.mock import MagicMock
         client = MagicMock()
         return UsersRepository(client)
@@ -753,7 +753,7 @@ class TestUsersRepository:
         doc_ref = MagicMock()
         coll.document.return_value = doc_ref
 
-        from server.services.firestore.models import User
+        from adapters.db.firestore.models import User
         user = User(username='newuser', password_hash='h', salt='s')
 
         # Act
@@ -773,7 +773,7 @@ class TestUsersRepository:
         q.stream.return_value = [doc]
         coll.where.return_value.limit.return_value = q
 
-        from server.services.firestore.models import User
+        from adapters.db.firestore.models import User
         user = User(username='dup', password_hash='h', salt='s')
         result = real_repo.create(user)
         assert result.success is False
@@ -781,8 +781,8 @@ class TestUsersRepository:
 
     def test_create_invalid_username_raises_real(self, real_repo):
         import pytest
-        from server.services.firestore.models import User
-        from server.services.firestore.base import FirestoreError
+        from adapters.db.firestore.models import User
+            from adapters.db.firestore.base import FirestoreError
         user = User(username='bad space', password_hash='h', salt='s')
         with pytest.raises(FirestoreError):
             real_repo.create(user)
@@ -821,8 +821,8 @@ class TestUsersRepository:
         # Mock get_by_id result
         doc, _ = self._make_user_doc()
         def _get_by_id(_id):
-            from server.services.firestore.base import OperationResult
-            from server.services.firestore.models import create_user
+            from adapters.db.firestore.base import OperationResult
+            from adapters.db.firestore.models import create_user
             user = create_user(doc.to_dict())
             user.id = doc.id
             return OperationResult(success=True, data=user)
@@ -934,7 +934,7 @@ class TestUsersRepository:
         res = real_repo.list_users_by_role('operator')
         assert len(res.items)==2 and res.has_more is False
         # has_more True when equal to limit
-        from server.services.firestore.base import QueryOptions
+        from adapters.db.firestore.base import QueryOptions
         q.stream.return_value = [d1]
         res2 = real_repo.list_users_by_role('operator', QueryOptions(limit=1))
         assert res2.has_more is True

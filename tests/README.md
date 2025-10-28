@@ -1,8 +1,32 @@
-# BAS System Testing Framework Docs
+# BAS System Testing Framework
 
-Welcome to the documentation for the BAS System testing framework.
+This repository is migrating to a layered test layout (Phase 8). Existing tests remain in-place; we add the new structure now to minimize future churn.
 
-## Index
+## Structure (target)
+
+```
+tests/
+  unit/
+    application/
+    domains/
+    platform/
+  integration/
+    adapters/
+  contracts/
+    providers/
+    db/
+  fixtures/
+  plugins/
+  utils/
+```
+
+Notes:
+- Unit tests align with layers: `application`, `domains`, `platform`.
+- Integration tests focus on IO adapters and emulators.
+- Contract tests capture behavioral expectations for providers and datastores.
+- We keep legacy folders (e.g., `unit/auth`, `unit/http`, `unit/firestore`) until Phase 10 import rewrites complete.
+
+## Documentation Index
 
 - [01 — Overview](./docs/01-overview.md)
 - [02 — Testing Framework](./docs/02-testing-framework.md)

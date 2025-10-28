@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import time
 
-from server.services.firestore.telemetry_store import TelemetryRepository
+from adapters.db.firestore.telemetry_store import TelemetryRepository
 
 
 class _NoopDoc:

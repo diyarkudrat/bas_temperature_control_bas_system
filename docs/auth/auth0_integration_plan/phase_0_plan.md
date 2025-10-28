@@ -15,7 +15,7 @@ Summary (<=100w): Establish a minimal, testable baseline: provider interface, en
 | `tests/fixtures/auth/mock_tokens.py` | add | helpers to mint/expire RS256 tokens for MockAuth0 | used by provider/http tests | n/a | low |
 | `tests/unit/auth/test_mock_auth0_provider.py` | add | success/expiry/bad-aud/bad-iss/key mismatch; roles; healthcheck | asserts and edge cases including key rotation | test runtime <200ms total | low |
 | `tests/unit/http/test_health_auth.py` | add | `/health/auth` returns expected schema/status even without network | latency assert p95<20ms | low |
-| `server/requirements.txt` | update | add `python-jose[cryptography]` for local JWT RS256 support | import smoke test | +<10MB install; no runtime cost | medium: dep bloat |
+| `apps/api/requirements.txt` | update | add `python-jose[cryptography]` for local JWT RS256 support | import smoke test | +<10MB install; no runtime cost | medium: dep bloat |
 
 Notes (<=50w each):
 - MockAuth0 should default to RS256 with generated dev key pair from env/files; never for prod.

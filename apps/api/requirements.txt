@@ -1,0 +1,15 @@
+Flask==2.3.3
+Flask-CORS==4.0.0
+twilio==8.10.0
+google-cloud-firestore==2.16.0
+google-auth==2.34.0
+pytest-cov==5.0.0
+redis==5.0.7
+aioredis==2.0.1
+python-jose[cryptography]==3.3.0
+freezegun==1.4.0
+# Pin protobuf stack for compatibility (esp. avoid Python 3.14 issues)
+protobuf<5
+proto-plus<2.0.0
+
+

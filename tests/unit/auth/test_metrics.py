@@ -5,7 +5,7 @@ import builtins
 
 
 def test_batching_and_snapshot(monkeypatch):
-    metrics_mod = importlib.import_module('server.auth.metrics')
+    metrics_mod = importlib.import_module('app_platform.observability.metrics')
     m = metrics_mod.MetricsRecorder()
 
     # Below flush threshold; snapshot should still reflect increments due to forced flush
@@ -23,7 +23,7 @@ def test_batching_and_snapshot(monkeypatch):
 
 
 def test_observe_success_and_flush(monkeypatch):
-    metrics_mod = importlib.import_module('server.auth.metrics')
+    metrics_mod = importlib.import_module('app_platform.observability.metrics')
     m = metrics_mod.MetricsRecorder()
 
     m.observe_jwt_success(4.0)
@@ -39,7 +39,7 @@ def test_observe_success_and_flush(monkeypatch):
 
 
 def test_sampling_bounds_with_time_mock(monkeypatch):
-    metrics_mod = importlib.import_module('server.auth.metrics')
+    metrics_mod = importlib.import_module('app_platform.observability.metrics')
 
     # Control time to trigger sampler adjustment without sleeping
     now_ms = [1_000_000_000_000]
@@ -68,7 +68,7 @@ def test_sampling_bounds_with_time_mock(monkeypatch):
 
 
 def test_no_module_level_globals_created():
-    metrics_mod = importlib.import_module('server.auth.metrics')
+    metrics_mod = importlib.import_module('app_platform.observability.metrics')
     # Ensure no obvious instance singletons are created at import time
     # We allow class names, but not lowercase instance-like objects
     disallowed_names = [

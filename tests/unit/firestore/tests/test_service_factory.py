@@ -3,8 +3,8 @@
 import pytest
 from unittest.mock import Mock, patch
 
-from server.services.firestore.base import FirestoreError
-from server.services.firestore.service_factory import (
+from adapters.db.firestore.base import FirestoreError
+from adapters.db.firestore.service_factory import (
     FirestoreServiceFactory,
     get_service_factory,
     reset_service_factory,
@@ -57,7 +57,7 @@ class TestFirestoreServiceFactory:
         factory = FirestoreServiceFactory(simple_config)
         assert_is_not_none(factory.config, "Config should be stored")
         # client created lazily
-        with patch('server.services.firestore.service_factory.get_firestore_client', return_value=Mock()) as p:
+        with patch('adapters.db.firestore.service_factory.get_firestore_client', return_value=Mock()) as p:
             _ = factory.client
             assert_true(p.called, "Client should be created lazily from config")
 
@@ -69,7 +69,7 @@ class TestFirestoreServiceFactory:
         config = SimpleConfig()
         fake_client = Mock()
         factory = FirestoreServiceFactory(config)
-        with patch('server.services.firestore.service_factory.get_firestore_client', return_value=fake_client):
+        with patch('adapters.db.firestore.service_factory.get_firestore_client', return_value=fake_client):
             assert_equals(factory.client, fake_client, "Should use client returned by factory")
 
     def test_client_property_uses_noop_when_config_is_mock_and_factory_returns_none(self):
@@ -78,7 +78,7 @@ class TestFirestoreServiceFactory:
         mock_config.use_firestore_auth = True
         mock_config.use_firestore_audit = True
         factory = FirestoreServiceFactory(mock_config)
-        with patch('server.services.firestore.service_factory.get_firestore_client', return_value=None):
+        with patch('adapters.db.firestore.service_factory.get_firestore_client', return_value=None):
             client = factory.client
             # Noop client exposes collections() -> iterator
             assert_true(hasattr(client, 'collections'))
@@ -88,7 +88,7 @@ class TestFirestoreServiceFactory:
     def test_client_property_raises_when_no_client_and_non_mock_config(self):
         config = SimpleConfig()
         factory = FirestoreServiceFactory(config)
-        with patch('server.services.firestore.service_factory.get_firestore_client', return_value=None):
+        with patch('adapters.db.firestore.service_factory.get_firestore_client', return_value=None):
             with pytest.raises(FirestoreError):
                 _ = factory.client
 
@@ -137,7 +137,7 @@ class TestFirestoreServiceFactory:
         cfg = SimpleConfig(use_firestore_telemetry=False, use_firestore_auth=True, use_firestore_audit=False)
         factory = FirestoreServiceFactory(cfg)
         # Patch client creation to avoid real init
-        with patch('server.services.firestore.service_factory.get_firestore_client', return_value=Mock()):
+        with patch('adapters.db.firestore.service_factory.get_firestore_client', return_value=Mock()):
             _ = factory.client
         assert_false(factory.is_telemetry_enabled())
         assert_true(factory.is_auth_enabled())

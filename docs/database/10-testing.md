@@ -26,7 +26,7 @@ import time
 import pytest
 from google.cloud import firestore
 
-from server.services.firestore.telemetry_store import TelemetryRepository
+from adapters.db.firestore.telemetry_store import TelemetryRepository
 
 @pytest.fixture(scope="module")
 def fs_client():

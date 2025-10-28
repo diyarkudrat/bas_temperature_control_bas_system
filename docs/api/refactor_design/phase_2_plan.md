@@ -15,7 +15,7 @@ This patch plan implements core prototypes for Phase 2: Refactor SSE service to 
 | server/services/firestore/base.py | modify | Add interfaces only for injectable I/O (e.g., IClient); no interfaces for helpers | Repository method tests with injected mocks | p99 &lt;20ms per op; mem &lt;2MB | Overhead from DI layers |
 | server/services/firestore/telemetry_store.py | modify | Use constructor injection for client; singleton lifetime | Telemetry CRUD tests with DI | p99 &lt;40ms query; mem &lt;3MB | Data consistency in injected ops |
 | server/services/firestore/users_store.py | modify | Refactor for constructor DI; validate injections in create/update | User management tests with mocks | p99 &lt;30ms; mem &lt;2MB | Security risks if injections bypassed |
-| server/requirements.txt | modify | Add aioredis and injector dependencies | n/a | n/a | Dependency conflicts |
+| apps/api/requirements.txt | modify | Add aioredis and injector dependencies | n/a | n/a | Dependency conflicts |
 | server/bas_server.py | modify | Set up composition root for manual wiring of services and repositories | End-to-end async SSE tests | p99 &lt;50ms e2e; mem &lt;50MB total | App startup failures with async init |
 | docs/api/refactor_design/phase_2_plan.md | create | Document patch plan (this file) | n/a | n/a | Documentation drift |
 

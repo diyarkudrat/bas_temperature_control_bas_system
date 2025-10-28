@@ -88,30 +88,24 @@ else
 fi
 
 echo ""
-print_info "Setting up server components..."
+print_info "Setting up server components (apps/api)..."
 
-# Setup server
-if [ -d "server" ]; then
-    cd server
-    
-    # Run server setup script
-    if [ -f "setup_server.sh" ]; then
-        chmod +x setup_server.sh
-        ./setup_server.sh
-        if [ $? -eq 0 ]; then
-            print_status "Server setup completed"
-        else
-            print_error "Server setup failed"
-            exit 1
-        fi
-    else
-        print_error "Server setup script not found"
-        exit 1
-    fi
-    
-    cd ..
+# Create and activate a virtual environment at repo root (optional but recommended)
+if [ ! -d ".venv" ]; then
+    print_info "Creating Python virtual environment (.venv)..."
+    python3 -m venv .venv
+fi
+
+source .venv/bin/activate || true
+
+# Install API requirements
+if [ -f "apps/api/requirements.txt" ]; then
+    print_info "Installing API dependencies from apps/api/requirements.txt..."
+    pip install --upgrade pip
+    pip install -r apps/api/requirements.txt
+    print_status "API dependencies installed"
 else
-    print_error "Server directory not found"
+    print_error "apps/api/requirements.txt not found"
     exit 1
 fi
 
@@ -122,24 +116,9 @@ print_info "Setting up authentication system..."
 if [ -f "scripts/setup_auth.py" ]; then
     print_info "Configuring authentication system..."
     
-    # Check if virtual environment exists
-    if [ ! -d "server/venv" ]; then
-        print_error "Server virtual environment not found"
-        print_info "Please run server setup first"
-        exit 1
-    fi
-    
-    # Activate virtual environment and run auth setup
-    cd server
-    source venv/bin/activate
-    
-    # Run authentication setup from server directory
-    python ../scripts/setup_auth.py
+    # Run authentication setup using current environment
+    python scripts/setup_auth.py
     AUTH_SETUP_RESULT=$?
-    
-    # Deactivate virtual environment
-    deactivate
-    cd ..
     
     if [ $AUTH_SETUP_RESULT -eq 0 ]; then
         print_status "Authentication setup completed"
@@ -225,7 +204,7 @@ echo ""
 print_info "Setup Summary"
 echo "==============="
 print_status "✅ System requirements checked"
-print_status "✅ Server environment configured"
+print_status "✅ API environment configured"
 print_status "✅ Authentication system configured"
 print_status "✅ Network configuration detected"
 print_status "✅ Scripts prepared for execution"

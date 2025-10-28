@@ -70,8 +70,9 @@ ESSENTIAL_FILES=(
     "pico_client.py"
     "setup.sh"
     "server/bas_server.py"
-    "server/requirements.txt"
-    "server/templates/dashboard.html"
+    "apps/api/main.py"
+    "apps/api/requirements.txt"
+    "apps/api/templates/dashboard.html"
     "scripts/start_bas.sh"
     "scripts/start_hardware.sh"
 )
@@ -122,33 +123,15 @@ fi
 
 echo ""
 
-# Check server configuration
-print_info "Checking server configuration..."
+# Check API configuration
+print_info "Checking API configuration..."
 
-if [ -d "server" ]; then
-    cd server
-    
-    # Check virtual environment
-    if [ -d "venv" ]; then
-        print_status "Virtual environment exists"
-    else
-        print_warning "Virtual environment not found"
-        print_info "Run: ./setup.sh or cd server && ./setup_server.sh"
-    fi
-    
-    # Check requirements
-    if [ -f "requirements.txt" ]; then
-        print_status "Requirements file found"
-        DEPENDENCIES=$(wc -l < requirements.txt)
-        print_status "Dependencies: $DEPENDENCIES packages"
-    else
-        print_error "requirements.txt not found"
-        VERIFICATION_PASSED=false
-    fi
-    
-    cd ..
+if [ -f "apps/api/requirements.txt" ]; then
+    print_status "API requirements found (apps/api/requirements.txt)"
+    DEPENDENCIES=$(wc -l < apps/api/requirements.txt)
+    print_status "Dependencies: $DEPENDENCIES packages"
 else
-    print_error "Server directory not found"
+    print_error "apps/api/requirements.txt not found"
     VERIFICATION_PASSED=false
 fi
 

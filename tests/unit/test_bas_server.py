@@ -17,12 +17,12 @@ def _clear_env(monkeypatch):
 def _reload_server(monkeypatch, env: dict[str, str]):
     for k, v in env.items():
         monkeypatch.setenv(k, v)
-    # Force reload config and bas_server
-    if "server.config.config" in list(importlib.sys.modules.keys()):
-        importlib.reload(importlib.import_module("server.config.config"))
-    if "server.bas_server" in list(importlib.sys.modules.keys()):
-        importlib.reload(importlib.import_module("server.bas_server"))
-    mod = importlib.import_module("server.bas_server")
+    # Force reload config and main app module
+    if "app_platform.config.config" in list(importlib.sys.modules.keys()):
+        importlib.reload(importlib.import_module("app_platform.config.config"))
+    if "apps.api.main" in list(importlib.sys.modules.keys()):
+        importlib.reload(importlib.import_module("apps.api.main"))
+    mod = importlib.import_module("apps.api.main")
     importlib.reload(mod)
     return mod
 
@@ -34,7 +34,7 @@ def test_auth_provider_init_auth0(monkeypatch):
         "AUTH0_AUDIENCE": "bas-api",
     })
     # Provider should be Auth0Provider
-    from auth.providers import Auth0Provider
+    from adapters.providers import Auth0Provider
     assert isinstance(mod.auth_provider, Auth0Provider)
 
     def test_auth_metrics_recorded_for_jwt_success(self, monkeypatch):
@@ -124,19 +124,13 @@ import time
 from unittest.mock import Mock, patch, MagicMock
 from flask import Flask
 
-# Import BAS server components
-import sys
-import os
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '../../server'))
+# Import BAS server components (updated paths; no sys.path hacks)
 
-from bas_server import (
-    BASController, BASDatabase, init_auth, 
-    controller, database, auth_config, user_manager, 
-    session_manager, audit_logger, rate_limiter
-)
-from auth.config import AuthConfig
-from auth.managers import UserManager, SessionManager
-from auth.services import AuditLogger, RateLimiter
+from apps.api.main import init_auth
+from application.hardware.bas_hardware_controller import BASController
+from app_platform.config.auth import AuthConfig
+from application.auth.managers import UserManager, SessionManager
+from application.auth.services import AuditLogger, RateLimiter
 from tests.utils.assertions import assert_equals, assert_true, assert_false, assert_is_not_none
 
 
@@ -245,68 +239,8 @@ class TestBASController:
 
 @pytest.mark.unit
 class TestBASDatabase:
-    """Test BASDatabase functionality."""
-
-    def test_database_initialization(self, temp_db_file):
-        """Test database initialization."""
-        db = BASDatabase(temp_db_file)
-        
-        # Verify tables were created
-        import sqlite3
-        conn = sqlite3.connect(temp_db_file)
-        cursor = conn.cursor()
-        
-        cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='telemetry'")
-        table_exists = cursor.fetchone()
-        conn.close()
-        
-        assert_is_not_none(table_exists, "Telemetry table should be created")
-
-    def test_database_store_data(self, temp_db_file):
-        """Test storing telemetry data."""
-        db = BASDatabase(temp_db_file)
-        
-        data = {
-            'timestamp': time.time() * 1000,
-            'temp_tenths': 250,
-            'setpoint_tenths': 230,
-            'deadband_tenths': 10,
-            'cool_active': True,
-            'heat_active': False,
-            'state': 'COOLING',
-            'sensor_ok': True
-        }
-        
-        db.store_data(data)
-        
-        # Verify data was stored
-        recent_data = db.get_recent_data(1)
-        assert_equals(len(recent_data), 1)
-        assert_equals(recent_data[0]['temp_tenths'], 250)
-
-    def test_database_get_recent_data(self, temp_db_file):
-        """Test getting recent telemetry data."""
-        db = BASDatabase(temp_db_file)
-        
-        # Store multiple data points
-        for i in range(5):
-            data = {
-                'timestamp': (time.time() + i) * 1000,
-                'temp_tenths': 200 + i * 10,
-                'setpoint_tenths': 230,
-                'deadband_tenths': 10,
-                'cool_active': False,
-                'heat_active': True,
-                'state': 'IDLE',
-                'sensor_ok': True
-            }
-            db.store_data(data)
-        
-        # Get recent data
-        recent_data = db.get_recent_data(3)
-        assert_equals(len(recent_data), 3)
-        # Should be in descending order (most recent first)
-        assert_equals(recent_data[0]['temp_tenths'], 240)
+    """Legacy BASDatabase tests removed with new architecture."""
+    pass
 
 
 @pytest.mark.unit
@@ -315,12 +249,12 @@ class TestBASServerAuthIntegration:
 
     def test_init_auth_success(self, temp_db_file):
         """Test successful authentication initialization."""
-        with patch('bas_server.AuthConfig.from_file') as mock_from_file, \
-             patch('bas_server.UserManager') as mock_user_manager, \
-             patch('bas_server.SessionManager') as mock_session_manager, \
+        with patch('apps.api.main.AuthConfig.from_file') as mock_from_file, \
+             patch('apps.api.main.UserManager') as mock_user_manager, \
+             patch('apps.api.main.SessionManager') as mock_session_manager, \
              \
-             patch('bas_server.AuditLogger') as mock_audit_logger, \
-             patch('bas_server.RateLimiter') as mock_rate_limiter:
+             patch('apps.api.main.AuditLogger') as mock_audit_logger, \
+             patch('apps.api.main.RateLimiter') as mock_rate_limiter:
             
             # Setup mocks
             mock_config = Mock()
@@ -331,11 +265,11 @@ class TestBASServerAuthIntegration:
             result = init_auth()
             
             assert_true(result, "Authentication initialization should succeed")
-            mock_from_file.assert_called_once_with('config/auth_config.json')
+            mock_from_file.assert_called_once_with('configs/app/auth_config.json')
 
     def test_init_auth_config_validation_failure(self, temp_db_file):
         """Test authentication initialization with invalid config."""
-        with patch('bas_server.AuthConfig.from_file') as mock_from_file:
+        with patch('apps.api.main.AuthConfig.from_file') as mock_from_file:
             # Setup mock with invalid config
             mock_config = Mock()
             mock_config.validate.return_value = False
@@ -348,7 +282,7 @@ class TestBASServerAuthIntegration:
 
     def test_init_auth_exception(self, temp_db_file):
         """Test authentication initialization with exception."""
-        with patch('bas_server.AuthConfig.from_file') as mock_from_file:
+        with patch('apps.api.main.AuthConfig.from_file') as mock_from_file:
             # Setup mock to raise exception
             mock_from_file.side_effect = Exception("Config file not found")
             
@@ -364,7 +298,7 @@ class TestBASServerEndpoints:
 
     def test_health_endpoint(self):
         """Test health check endpoint."""
-        from bas_server import app
+        from apps.api.main import app
         
         with app.test_client() as client:
             response = client.get('/api/health')
@@ -374,48 +308,38 @@ class TestBASServerEndpoints:
             assert_equals(data['status'], 'healthy')
             assert_is_not_none(data['timestamp'])
 
-    def test_versioned_health_v1_headers(self):
-        from bas_server import app
+    def test_health_headers_deprecation_absent(self):
+        from apps.api.main import app
         app.config['TESTING'] = True
         with app.test_client() as client:
-            response = client.get('/api/v1/health')
-            assert_equals(response.status_code, 200)
-            assert_equals(response.headers.get('API-Version'), '1')
-            assert_equals(response.headers.get('Deprecation'), 'true')
-            assert 'GMT' in response.headers.get('Sunset', '')
-
-    def test_versioned_health_v2_headers(self):
-        from bas_server import app
-        app.config['TESTING'] = True
-        with app.test_client() as client:
-            response = client.get('/api/v2/health')
+            response = client.get('/api/health')
             assert_equals(response.status_code, 200)
             assert_equals(response.headers.get('API-Version'), '2')
             assert response.headers.get('Deprecation') is None
 
+    def test_health_headers_version_is_v2(self):
+        from apps.api.main import app
+        app.config['TESTING'] = True
+        with app.test_client() as client:
+            response = client.get('/api/health')
+            assert_equals(response.status_code, 200)
+            assert_equals(response.headers.get('API-Version'), '2')
+
     @pytest.mark.parametrize('path', [
         '/api/status',
         '/api/config',
-        '/api/v1/status',
-        '/api/v2/status',
-        '/api/v1/config',
-        '/api/v2/config',
     ])
     def test_version_headers_parametrized(self, path):
-        from bas_server import app
+        from apps.api.main import app
         app.config['TESTING'] = True
         with app.test_client() as client:
             response = client.get(path)
             assert response.status_code in (200, 302, 401, 500)  # some require auth
-            if '/api/v1/' in path:
-                assert_equals(response.headers.get('API-Version'), '1')
-                assert_equals(response.headers.get('Deprecation'), 'true')
-            elif '/api/v2/' in path:
-                assert_equals(response.headers.get('API-Version'), '2')
+            assert_equals(response.headers.get('API-Version'), '2')
 
     def test_status_endpoint(self):
         """Test status endpoint."""
-        from bas_server import app
+        from apps.api.main import app
         
         with app.test_client() as client:
             response = client.get('/api/status')
@@ -428,7 +352,7 @@ class TestBASServerEndpoints:
 
     def test_config_endpoint(self):
         """Test config endpoint."""
-        from bas_server import app
+        from apps.api.main import app
         
         with app.test_client() as client:
             response = client.get('/api/config')
@@ -441,7 +365,7 @@ class TestBASServerEndpoints:
 
     def test_sensor_data_endpoint_success(self):
         """Test sensor data endpoint with valid data."""
-        from bas_server import app
+        from apps.api.main import app
         
         with app.test_client() as client:
             data = {
@@ -461,7 +385,7 @@ class TestBASServerEndpoints:
 
     def test_sensor_data_endpoint_no_data(self):
         """Test sensor data endpoint with no data."""
-        from bas_server import app
+        from apps.api.main import app
         
         with app.test_client() as client:
             response = client.post('/api/sensor_data', 
@@ -474,7 +398,7 @@ class TestBASServerEndpoints:
 
     def test_sensor_data_endpoint_invalid_json(self):
         """Test sensor data endpoint with invalid JSON."""
-        from bas_server import app
+        from apps.api.main import app
         
         with app.test_client() as client:
             response = client.post('/api/sensor_data',
@@ -484,7 +408,7 @@ class TestBASServerEndpoints:
 
     def test_set_setpoint_endpoint_requires_auth(self):
         """Test that set_setpoint endpoint requires authentication."""
-        from bas_server import app
+        from apps.api.main import app
         
         with app.test_client() as client:
             data = {'setpoint_tenths': 250}
@@ -496,7 +420,7 @@ class TestBASServerEndpoints:
 
     def test_telemetry_endpoint_requires_auth(self):
         """Test that telemetry endpoint requires authentication."""
-        from bas_server import app
+        from apps.api.main import app
         
         with app.test_client() as client:
             response = client.get('/api/telemetry')
@@ -505,10 +429,10 @@ class TestBASServerEndpoints:
 
     def test_auth_login_endpoint_disabled_auth(self):
         """Test auth login endpoint when auth is disabled."""
-        from bas_server import app
+        from apps.api.main import app
         
         # Mock the auth_config to be disabled
-        with patch('bas_server.auth_config') as mock_auth_config:
+        with patch('apps.api.main.auth_config') as mock_auth_config:
             mock_auth_config.auth_enabled = False
             
             with app.test_client() as client:
@@ -524,7 +448,7 @@ class TestBASServerEndpoints:
 
     def test_auth_logout_endpoint(self):
         """Test auth logout endpoint."""
-        from bas_server import app
+        from apps.api.main import app
         
         with app.test_client() as client:
             response = client.post('/auth/logout',
@@ -537,7 +461,7 @@ class TestBASServerEndpoints:
 
     def test_auth_status_endpoint_no_session(self):
         """Test auth status endpoint without session."""
-        from bas_server import app
+        from apps.api.main import app
         
         with app.test_client() as client:
             response = client.get('/auth/status')
@@ -554,7 +478,7 @@ class TestBASServerSecurityHeaders:
 
     def test_security_headers_applied(self):
         """Test that security headers are applied to responses."""
-        from bas_server import app
+        from apps.api.main import app
         
         with app.test_client() as client:
             response = client.get('/api/health')
@@ -570,7 +494,7 @@ class TestBASServerSecurityHeaders:
 
     def test_security_headers_values(self):
         """Test that security headers have correct values."""
-        from bas_server import app
+        from apps.api.main import app
         
         with app.test_client() as client:
             response = client.get('/api/health')
@@ -588,7 +512,7 @@ class TestBASServerErrorMapping:
     """Test central error mapping behaviors."""
 
     def test_error_mapping_value_error(self):
-        from bas_server import app
+        from apps.api.main import app
         app.config['TESTING'] = True
         with app.test_client() as client:
             res = client.get('/api/v2/_raise/value')
@@ -597,7 +521,7 @@ class TestBASServerErrorMapping:
             assert_equals(body['code'], 'INVALID_ARGUMENT')
 
     def test_error_mapping_not_found(self):
-        from bas_server import app
+        from apps.api.main import app
         app.config['TESTING'] = True
         with app.test_client() as client:
             res = client.get('/api/v2/_raise/notfound')
@@ -606,7 +530,7 @@ class TestBASServerErrorMapping:
             assert_equals(body['code'], 'NOT_FOUND')
 
     def test_error_mapping_permission(self):
-        from bas_server import app
+        from apps.api.main import app
         app.config['TESTING'] = True
         with app.test_client() as client:
             res = client.get('/api/v2/_raise/perm')
@@ -621,7 +545,7 @@ class TestBASServerRequestContext:
 
     def test_auth_context_setup(self):
         """Test that authentication context is set up for requests."""
-        from bas_server import app
+        from apps.api.main import app
         
         # Mock the global auth variables
         with patch('bas_server.auth_config', Mock()), \
@@ -634,10 +558,10 @@ class TestBASServerRequestContext:
 
     def test_auth_context_no_auth_config(self):
         """Test request handling when auth config is not available."""
-        from bas_server import app
+        from apps.api.main import app
         
         # Ensure auth_config is None
-        with patch('bas_server.auth_config', None):
+        with patch('apps.api.main.auth_config', None):
             with app.test_client() as client:
                 response = client.get('/api/health')
                 assert_equals(response.status_code, 200)

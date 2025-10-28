@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from server.auth.providers import build_auth0_provider, Auth0Provider
+from adapters.providers import build_auth0_provider, Auth0Provider
 
 
 def test_auth0_factory_valid():

@@ -8,7 +8,7 @@ from datetime import datetime
 from typing import Dict, Any
 
 # Real server implementation and exceptions
-from server.services.firestore.sessions_store import SessionsStore
+from adapters.db.firestore.sessions_store import SessionsStore
 from google.api_core.exceptions import PermissionDenied
 
 # Contract testing imports

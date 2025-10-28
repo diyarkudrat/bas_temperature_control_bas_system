@@ -6,9 +6,9 @@ from unittest.mock import Mock, patch
 import pytest
 from google.api_core.exceptions import PermissionDenied
 
-from server.services.firestore.devices_store import DevicesStore
-from server.services.firestore.models import Device
-from server.services.firestore.base import OperationResult, QueryOptions
+from adapters.db.firestore.devices_store import DevicesStore
+from adapters.db.firestore.models import Device
+from adapters.db.firestore.base import OperationResult, QueryOptions
 
 
 @pytest.mark.unit

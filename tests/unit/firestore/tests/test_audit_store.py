@@ -7,7 +7,7 @@ from datetime import datetime
 from typing import Dict, Any
 
 # Legacy mock imports (to be phased out)
-from server.services.firestore.audit_store import AuditLogStore
+from adapters.db.firestore.audit_store import AuditLogStore
 from google.api_core.exceptions import PermissionDenied
 
 # Contract testing imports
@@ -19,7 +19,7 @@ from tests.utils.assertions import assert_equals, assert_not_equals, assert_true
 
 # E2E testing imports
 import os
-from server.auth.firestore_client import FirestoreClientFactory
+from adapters.db.firestore.client import FirestoreClientFactory
 
 
 @pytest.mark.auth
