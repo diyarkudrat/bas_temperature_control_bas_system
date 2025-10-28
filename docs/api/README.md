@@ -27,7 +27,6 @@ The BAS system includes a comprehensive authentication system with session-based
 - **`GET /auth/status`** - Check session validity
 
 ### **Protected Endpoints**
-- **`POST /set`** - Temperature control (requires operator+ role)
 - **`POST /api/set_setpoint`** - Set temperature setpoint (requires operator+ role)
 - **`GET /api/telemetry`** - Access telemetry data (requires read-only+ role)
 
@@ -36,7 +35,7 @@ The BAS system includes a comprehensive authentication system with session-based
 - **Operator** - Temperature control and telemetry access
 - **Read-Only** - View-only access to system data
 
-📚 **Complete Authentication API Documentation**: See [Authentication API Endpoints](../auth/06-api-endpoints.md) for detailed authentication endpoints, request/response formats, and protected endpoint usage.
+📚 **Complete Authentication API Documentation**: See [Authentication API Endpoints](../auth/06-api-endpoints.md) for detailed authentication endpoints, request/response formats, and protected endpoint usage. Also see health: `GET /api/health` (public) and `GET /api/health/auth` (auth provider status).
 
 📚 **Complete Authentication System Documentation**: See [Authentication Documentation](../auth/README.md) for detailed authentication system design, security features, user management, and implementation details.
 

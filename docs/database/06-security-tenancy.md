@@ -16,7 +16,7 @@
 ## Sessions
 
 - Opaque DB-backed sessions (no JWT)
-- Cookies: Secure, HttpOnly, SameSite=Lax
+- Cookies: Secure, HttpOnly, SameSite=Strict
 - Idle timeout 30m, absolute TTL 12h; rotate on privilege changes
 - Session bound to fingerprint (UA/IP); purge via TTL/sweeper
 

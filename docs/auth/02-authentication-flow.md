@@ -27,21 +27,34 @@ Successful login → SessionManager.create_session()
                 Return session to user
 ```
 
-### Step 3: Using Protected Endpoints
+### Step 3: Using Protected Endpoints (JWT preferred)
 ```
 User request → @require_auth decorator
                     ↓
-            Extract session token from header/cookie
+            Parse Authorization: Bearer <JWT>
                     ↓
-            SessionManager.validate_session()
+            Verify & decode JWT with provider
                     ↓
-            Check: valid? expired? fingerprint match?
+            Role check (claims-only or provider metadata)
                     ↓
-            If valid: Allow access
-            If invalid: Return 401 error
+            If ok: Allow access
+            If invalid & fallback disabled: 401
+            If invalid & fallback enabled: try session
 ```
 
-### Step 4: Session Cleanup
+### Step 4: Session Fallback (if enabled)
+```
+Extract X-Session-ID header or bas_session_id cookie
+        ↓
+Validate via SessionManager.validate_session()
+        ↓
+Role check → optional tenant enforcement (X-BAS-Tenant)
+        ↓
+If valid: Allow access
+If invalid: 401
+```
+
+### Step 5: Session Cleanup
 ```
 Background thread → Clean up expired sessions
                         ↓

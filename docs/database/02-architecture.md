@@ -3,17 +3,18 @@
 ## 🧱 Components
 
 - Flask app (server) with feature flags
-- Firestore client factory (emulator vs ADC)
-- DAL (Data Access Layer) repositories (Telemetry, Users, Sessions, Audit, Devices)
-- Tenant middleware enforcing isolation
+- Firestore client via `auth.firestore_client.get_firestore_client()` (emulator vs ADC)
+- Service factory `adapters/db/firestore/service_factory.py` wiring repositories
+- DAL repositories: Telemetry, Users, Sessions, Audit, Devices
+- Tenant middleware enforcing isolation (`apps/api/http/middleware/tenant.py`)
 - Monitoring/logging
 
 ---
 
 ## 🔌 Client Initialization
 
-- Single client via factory; reused across repositories.
-- Emulator if `FIRESTORE_EMULATOR_HOST` is set; otherwise ADC in GCP.
+- Single Firestore client created once; reused across repositories.
+- Emulator if `FIRESTORE_EMULATOR_HOST` is set; otherwise ADC in GCP using service account.
 
 ```text
 App Startup → Service Factory → Firestore Client → Repos (cached)
@@ -42,7 +43,7 @@ Client → /api/telemetry → Auth + Tenant middleware → TelemetryRepository.q
 
 ## 🧭 Flags and Routing
 
-- Telemetry/Auth/Audit paths gated by flags.
+- Telemetry/Auth/Audit stores gated by flags (see server config → `build_firestore_factory`).
 - Rollout sequence: telemetry → audit → auth.
 - Health checks and readiness gates ensure index readiness before read flip.
 

@@ -26,7 +26,7 @@
     }
 }
 ```
-*Also sets an HttpOnly cookie with the session token*
+*Also sets an HttpOnly cookie `bas_session_id` with the session token*
 
 - **401 (AUTH_FAILED)**: wrong credentials
 - **423 (USER_LOCKED)**: account locked
@@ -80,59 +80,39 @@
 
 #### `GET /api/health/auth`
 - Returns provider health.
-- Example:
+- Example (fields vary by provider):
 ```json
 {
   "provider": "Auth0Provider",
-  "status": "ok",
-  "issuer": "https://example.auth0.com/",
-  "audience": "bas-api",
-  "jwks_url": "https://example.auth0.com/.well-known/jwks.json",
-  "jwks_age_s": 12.345
+  "status": "ok"
 }
 ```
 
-### Protected Endpoints
+### Protected Endpoint Examples
 
-#### `POST /set` (Temperature Control)
-**Purpose**: Change temperature setpoint (requires operator+ role)
+#### `POST /api/set_setpoint` (requires operator+)
+Headers (one of):
+- `Authorization: Bearer <JWT>` (preferred)
+- `X-Session-ID: <session>` or `bas_session_id` cookie
 
-**Headers**:
-```
-X-Session-ID: sess_abc123def456...
-Content-Type: application/json
-```
-
-**Request**:
+Body:
 ```json
 {
-    "sp": 250,    // Setpoint in tenths of degrees (25.0°C)
-    "db": 10      // Deadband in tenths (1.0°C)
+  "setpoint_tenths": 250,
+  "deadband_tenths": 10
 }
 ```
 
-**Response**:
-```json
-{
-    "status": "success",
-    "updated": {
-        "setpoint_tenths": 250,
-        "deadband_tenths": 10
-    },
-    "updated_by": "john_operator",
-    "timestamp": 1700000000
-}
-```
-
-- **401**: missing/invalid session
-- **403 (FORBIDDEN)**: lacks required role
-- **429 (RATE_LIMITED)**: per-user or global rate limit
+#### `GET /api/telemetry?limit=50` (requires read-only+)
+Headers (one of):
+- `Authorization: Bearer <JWT>`
+- `X-Session-ID: <session>` or `bas_session_id` cookie
 
 ### Authorization Sensitivity and Overrides
 
 #### Path Sensitivity Rules
-- Configure via `BAS_PATH_SENS_RULES` env as JSON list of rules.
-- Each rule: `{ "pattern": "^/api/v1/admin/.*", "level": "critical" }` or `["^/api/v1/public/.*", "standard"]`.
+- Configured via server configuration (`PATH_SENSITIVITY_RULES`)
+- Each rule: `{ "pattern": "^/api/v1/admin/.*", "level": "critical" }` or `["^/api/telemetry/.*", "standard"]`.
 - Matching is first-match; non-matching paths default to `critical` (fail-closed).
 - Levels:
   - `critical`: requires full metadata role check from provider.

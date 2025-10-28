@@ -251,39 +251,6 @@
 
 ---
 
-## 📚 Key Design Patterns
-
-### **1. State Machine Pattern**
-```python
-# Controller FSM
-IDLE → COOLING → IDLE
-  ↓       ↓
-FAULT ← FAULT
-```
-
-### **2. Observer Pattern**
-```python
-# Event-driven updates
-Controller → Display → Network → Telemetry
-```
-
-### **3. Strategy Pattern**
-```python
-# Configurable algorithms
-TemperatureSensor → DS18B20Sensor
-Actuator → Relay
-Clock → SystemClock
-```
-
-### **4. Factory Pattern**
-```python
-# Component creation
-LoggerFactory.get_logger("Component")
-ConfigManager.create_profile("production")
-```
-
----
-
 ## 🔄 Data Flow Summary
 
 1. **Sensor Reading** → Temperature data from DS18B20

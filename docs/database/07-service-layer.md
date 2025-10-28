@@ -15,9 +15,9 @@ Benefits: separation of concerns, consistent error mapping, built-in security an
 
 ## Key Building Blocks
 
-- `server/services/firestore/base.py`: Base + mixins + results
-- `server/services/firestore/models.py`: Dataclasses for entities
-- `server/services/firestore/service_factory.py`: Client + repo singletons
+- `adapters/db/firestore/base.py`: Base + mixins + results
+- `adapters/db/firestore/models.py`: Dataclasses for entities
+- `adapters/db/firestore/service_factory.py`: Client + repo singletons
 
 ---
 
@@ -39,7 +39,7 @@ class Alert(BaseEntity):
     message: str
 ```
 
-### 2) Repository (server/services/firestore/alerts_store.py)
+### 2) Repository (adapters/db/firestore/alerts_store.py)
 
 ```python
 from google.cloud import firestore

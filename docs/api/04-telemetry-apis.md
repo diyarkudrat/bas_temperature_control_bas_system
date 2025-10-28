@@ -5,8 +5,11 @@
 ### **GET /api/telemetry**
 Get time-series telemetry data
 
+**Authentication:** Required (read-only or higher)
+
 **Parameters:**
 - `limit` (integer): Maximum number of points (default: 100)
+- `device_id` (string): Device identifier (optional; defaults to `unknown`)
 
 **Example:**
 ```bash

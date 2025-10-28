@@ -13,7 +13,9 @@ Update temperature setpoint and deadband
 
 **Request Headers:**
 - `Content-Type: application/json` (required)
-- `X-Session-ID: your_session_token` (required for authentication)
+- One of:
+  - `Authorization: Bearer <JWT>` (preferred)
+  - `X-Session-ID: <session_token>` or `bas_session_id` cookie (if session fallback enabled)
 
 **Request Body:**
 ```json
@@ -27,7 +29,18 @@ Update temperature setpoint and deadband
 - `setpoint_tenths` (integer, optional): Setpoint in tenths of °C (250 = 25.0°C)
 - `deadband_tenths` (integer, optional): Deadband in tenths of °C (10 = 1.0°C)
 
-**Example Request:**
+**Example Request (Bearer token):**
+```bash
+curl -X POST "http://localhost:8080/api/set_setpoint" \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer eyJhbGci..." \
+  -d '{
+    "setpoint_tenths": 250,
+    "deadband_tenths": 10
+  }'
+```
+
+**Example Request (Session):**
 ```bash
 curl -X POST "http://localhost:8080/api/set_setpoint" \
   -H "Content-Type: application/json" \

@@ -8,12 +8,13 @@ http://localhost:8080/
 ```
 ### **API Versioning**
 
-- Preferred: `/api/v2/*` (stable)
+- Preferred: `/api/*` (v2 semantics; versioning sent via headers)
+- Supported: `/api/v2/*` (same semantics as `/api/*`)
 - Deprecated: `/api/v1/*` (responses include `Deprecation: true` and `Sunset` headers)
 
-Clients SHOULD migrate to `/api/v2/*`. Responses include `API-Version: 1|2`.
+All `/api/*` responses include `API-Version: 1|2`. Unversioned `/api/*` defaults to `API-Version: 2`.
 
-**Example**: `http://localhost:8080/`
+**Example**: `http://localhost:8080/api/`
 
 > **Note**: This API runs on the computer-based server, not on the Pico W device. The Pico W connects to this server via WiFi.
 
@@ -30,7 +31,11 @@ Clients SHOULD migrate to `/api/v2/*`. Responses include `API-Version: 1|2`.
 - **Shadow**: Log authentication attempts but don't block (testing mode)  
 - **Enabled**: Full authentication required (production mode)
 
-**Default Configuration**: Authentication is **enabled** in production. Some endpoints require authentication while others are public.
+**Default Configuration**: Authentication is **enabled** in production. Some endpoints are public while others require authentication.
+
+**Auth methods on protected endpoints:**
+- `Authorization: Bearer <JWT>` (preferred)
+- `X-Session-ID: <session_token>` header or `bas_session_id` cookie (fallback if enabled)
 
 See [Configuration](../auth/05-configuration.md) for details on authentication modes.
 

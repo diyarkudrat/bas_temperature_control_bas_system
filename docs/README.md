@@ -1,4 +1,4 @@
-# BAS Temperature Controller
+# Distributed backend system for BAS (building automation system).
 
 **Production-grade Building Automation System (BAS) for Raspberry Pi Pico W with MicroPython**
 
@@ -289,106 +289,6 @@ scripts/verify.sh          # Verify installation
 
 ---
 
-### Telemetry System
-
-**Fully integrated production telemetry with extensibility!** See `TELEMETRY.md` for complete documentation.
-
-Core Features:
-- Ring buffer with 1000-point capacity (~33 minutes @ 2s interval)
-- Real-time graphs with Chart.js
-- Temperature history, actuator activity, statistics
-- Optional CSV export for long-term analysis
-- Memory-bounded, non-blocking design
-- Performance metrics and state transition logging
-
-**Extensibility Features:**
-- **Custom collectors**: Add humidity, pressure, energy monitoring without modifying core
-- **Multi-zone support**: Built-in zone_id for multiple control zones
-- **Custom metrics**: Extensible `custom_data` dict for arbitrary telemetry
-- **Non-intrusive**: Extend functionality without changing core code
-
-See `EXTENSIBILITY_GUIDE.md` for practical extension patterns including:
-- Adding additional sensors (humidity, pressure, light, outdoor temp)
-- Multi-zone aggregation
-- Energy/power monitoring
-- MQTT integration for cloud monitoring
-- Alarm systems with custom thresholds
-- SD card storage for long-term data
-- Occupancy detection integration
-
-Access via web dashboard at `http://<pico-ip>/` or API:
-```bash
-# Get 10 minutes of telemetry data
-curl http://<pico-ip>/telemetry?duration_ms=600000
-
-# Get statistics for last hour
-curl http://<pico-ip>/telemetry/stats?duration_ms=3600000
-
-# Extension example: add custom humidity sensor
-def collect_humidity():
-    return {'humidity_pct': read_sensor()}
-telemetry.register_custom_collector('humidity', collect_humidity)
-```
-
----
-
-## 📁 Project Structure
-
-```
-BAS System Project/
-├── README.md                    ← Start here
-├── pico_client.py              ← Main entry point
-├── multi_zone.py               ← Multi-zone controller
-│
-├── src/bas/                    ← Core BAS system
-│   ├── main.py                 ← System orchestrator
-│   ├── controller.py           ← Control logic
-│   ├── display.py              ← OLED interface
-│   ├── config/                 ← Configuration management
-│   ├── hardware/               ← Hardware drivers
-│   │   ├── sensors/            ← Temperature sensors (DS18B20)
-│   │   ├── actuators/          ← Relay controls
-│   │   ├── displays/           ← OLED display drivers
-│   │   └── interfaces/         ← Hardware abstractions
-│   ├── network/                ← WiFi & API
-│   │   └── api/                ← REST API server
-│   ├── services/               ← Core services
-│   │   ├── config_manager.py   ← Configuration service
-│   │   ├── telemetry.py        ← Data collection
-│   │   ├── logging.py          ← Logging service
-│   │   └── error_handler.py    ← Error management
-│   ├── plugins/                ← Extension system (empty)
-│   ├── tools/                  ← Development utilities
-│   └── utils/                  ← Common utilities
-│
-├── server/                     ← Python server (optional)
-│   ├── bas_server.py          ← Flask web server
-│   ├── templates/              ← Web dashboard
-│   └── requirements.txt        ← Server dependencies
-│
-├── config/                     ← System configuration
-│   ├── config.py              ← Configuration settings
-│   └── templates/              ← Config templates
-│
-├── scripts/                    ← Deployment tools
-│   ├── start_bas.sh           ← Start system
-│   ├── stop_bas.sh            ← Stop system
-│   └── status_bas.sh          ← Check status
-│
-├── tests/                      ← Test suite
-│   └── unit/                  ← Unit tests
-│
-├── docs/                       ← Documentation
-│   ├── README.md              ← This file
-│   ├── SYSTEM_OVERVIEW.md     ← Architecture docs
-│   ├── api/                   ← API documentation
-│   └── SECURITY_AUTH_PLAN.md  ← Security documentation
-│
-└── deploy_pico.sh             ← Deployment script
-```
-
----
-
 ## 🌐 API Reference
 
 ### Endpoints
@@ -432,78 +332,15 @@ scripts/repl.sh
 python3 tools/test_api.py
 ```
 
----
-
-## 🔒 Security
-
-- Rate limiting: 100 requests/minute
-- Token authentication (timing-safe comparison)
-- Input validation & size limits
-- Connection limits (5 concurrent max)
-
-**⚠️ Important**: Change your API token in `config/config.py` before production use!
-
-### **Enhanced Authentication (Coming Soon)**
-- **User/Password + SMS MFA**: Modern two-factor authentication
-- **Session-based Access**: Secure session management with automatic expiration
-- **Audit Logging**: Complete tracking of authentication events
-- **Role-based Access**: Granular permission control
-
-📖 **Detailed Security Documentation:**
-- **[AUTH_ENHANCEMENTS.md](./AUTH_ENHANCEMENTS.md)** - Security enhancements and best practices
-- **[SECURITY_AUTH_PLAN.md](./SECURITY_AUTH_PLAN.md)** - Complete authentication system design
-
----
-
-## 📊 Performance
-
-- Control loop: 2000ms period, <50ms execution
-- API response: <200ms typical
-- Memory: ~20KB used / 264KB total (7.5%)
-- Boot time: ~10 seconds
-
----
-
-## 🛡️ Features
-
-- ✅ Closed-loop temperature control with hysteresis
-- ✅ Anti-short-cycle protection
-- ✅ Fail-safe sensor fault handling
-- ✅ Web API with live updates (SSE)
-- ✅ OLED display with status icons
-- ✅ Structured logging with fault codes
-- ✅ **Production telemetry system with time-series storage**
-- ✅ **Interactive web dashboard with real-time graphs**
-- ✅ **Performance metrics and state transition logging**
-- ✅ Dependency injection for testability
-- ✅ Cooperative scheduling (no threading)
-- ✅ WiFi auto-reconnect with retry
-- ✅ Configuration profiles with validation
-
----
-
-## 🐛 Troubleshooting
-
-| Issue | Solution |
-|-------|----------|
-| Won't boot | `scripts/repl.sh` to see errors |
-| No WiFi | `scripts/wifi_debug.sh` |
-| Display blank | Check I2C wiring (GP0, GP1) |
-| API errors | Check `./monitor` for logs |
-
----
-
 ## 📚 Detailed Documentation
 
 ### **System Architecture & Design**
 - **[SYSTEM_OVERVIEW.md](./SYSTEM_OVERVIEW.md)** - Complete system architecture, component diagrams, and design principles
+- **[BACKEND_ONBOARDING.md](./BACKEND_ONBOARDING.md)** - Backend onboarding: server architecture, auth/tenancy, rate limits, caching, deployment, testing
 - **[API Documentation](./api/README.md)** - Complete REST API documentation with examples and error codes
-- **[TELEMETRY.md](./TELEMETRY.md)** - Production telemetry system with time-series storage and real-time graphs
-- **[EXTENSIBILITY_GUIDE.md](./EXTENSIBILITY_GUIDE.md)** - Advanced extension patterns for multi-zone, sensors, and integrations
 
 ### **Security & Authentication**
-- **[AUTH_ENHANCEMENTS.md](./AUTH_ENHANCEMENTS.md)** - Comprehensive security enhancements and modern authentication best practices
-- **[SECURITY_AUTH_PLAN.md](./SECURITY_AUTH_PLAN.md)** - Complete authentication system design and implementation plan
+- **[docs/auth/README.md](./auth/README.md)** - Complete authentication system design + overview.
 
 ---
 

@@ -1,6 +1,4 @@
-# BAS System Project
-
-## Key Features
+# Key Features
 
 ### 🏭 Industrial-Grade Control
 - Closed-loop temperature control with hysteresis and anti-short-cycle protection
@@ -49,12 +47,3 @@
 - Audit Logging: Complete event tracking and compliance
 - Standards: SOC 2, ISO 27001, PCI DSS, HIPAA ready
 - Rate Limiting: 100 requests/minute, 5 concurrent connections
-
----
-
-Full documentation: [docs/backend_system_overview/README.md](docs/backend_system_overview/README.md)
-
-Additional documentation:
-- API: [docs/api/README.md](docs/api/README.md)
-- Database: [docs/database/README.md](docs/database/README.md)
-- Authentication: [docs/auth/README.md](docs/auth/README.md)

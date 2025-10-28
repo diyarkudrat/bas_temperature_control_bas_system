@@ -2,9 +2,9 @@
 
 ## 🎯 Quick Summary
 
-The BAS authentication system is a **session-based authentication system** with role-based access control. Think of it as a modern web application authentication system adapted for an IoT temperature controller.
+The BAS authentication system supports **JWT (preferred)** and **session tokens (fallback)** with role-based access control. It’s a modern web app auth model adapted for an IoT controller.
 
-**In simple terms**: Users log in with username/password, get a secure session token, and use that token to access protected endpoints. The system tracks who's doing what and when.
+**In simple terms**: Clients call protected endpoints using `Authorization: Bearer <JWT>`. If configured, a user can also login with username/password to obtain a secure session token used via `X-Session-ID` header or `bas_session_id` cookie.
 
 ---
 

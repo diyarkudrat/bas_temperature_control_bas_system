@@ -273,7 +273,8 @@ def enforce_revocation_check(token: str) -> Optional[Tuple[Any, int]]:
             setattr(request, '_revocation_service', service)
         if cache is None:
             from adapters.cache.redis.revocation_cache import LocalRevocationCache
-            cache = LocalRevocationCache(ttl_s=5.0)
+            # Use small negative TTL to reduce Redis calls while bounding staleness
+            cache = LocalRevocationCache(ttl_s=5.0, neg_ttl_s=1.0)
             setattr(request, '_revocation_cache', cache)
 
         # Extract token id (prefer jti)
@@ -286,11 +287,16 @@ def enforce_revocation_check(token: str) -> Optional[Tuple[Any, int]]:
             token_id = None
         if token_id:
             try:
+                # Fast-path: recently known revoked -> deny immediately
                 if cache.is_recently_revoked(token_id):
                     return jsonify({
                         "error": "Token revoked",
                         "code": "TOKEN_REVOKED"
                     }), 403
+                # Negative cache: skip network call briefly if known not revoked
+                if hasattr(cache, 'is_recently_not_revoked') and cache.is_recently_not_revoked(token_id):
+                    return None
+                # Check authoritative store
                 if service.is_revoked(token_id):
                     # Remember locally to avoid duplicate checks briefly
                     cache.set_revoked(token_id)
@@ -298,6 +304,9 @@ def enforce_revocation_check(token: str) -> Optional[Tuple[Any, int]]:
                         "error": "Token revoked",
                         "code": "TOKEN_REVOKED"
                     }), 403
+                # Cache negative result with short TTL
+                if hasattr(cache, 'set_not_revoked'):
+                    cache.set_not_revoked(token_id)
             except Exception:
                 # Fail-closed only on positive cache hits; otherwise ignore errors
                 pass
