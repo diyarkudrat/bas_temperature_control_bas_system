@@ -9,12 +9,9 @@ from __future__ import annotations
 from typing import Optional
 
 from app_platform.config.config import get_server_config, ServerConfig
-from adapters.db.firestore import build_service_factory_with_config, FirestoreServiceFactory
-from adapters.providers import (
-    MockAuth0Provider,
-    DenyAllAuthProvider,
-    build_auth0_provider,
-)
+from adapters.providers.mock_auth0 import MockAuth0Provider
+from adapters.providers.deny_all import DenyAllAuthProvider
+from adapters.providers.factory import build_auth0_provider
 from app_platform.observability.metrics import AuthMetrics
 from apps.api.http.middleware import TenantMiddleware
 
@@ -54,9 +51,11 @@ def build_auth_runtime(cfg: ServerConfig):
     return provider, metrics
 
 
-def build_firestore_factory(cfg) -> Optional[FirestoreServiceFactory]:
+def build_firestore_factory(cfg) -> Optional["FirestoreServiceFactory"]:
     """Create Firestore factory if any Firestore feature is enabled."""
     try:
+        # Lazy import to avoid hard dependency on google libs when Firestore is disabled
+        from adapters.db.firestore import build_service_factory_with_config, FirestoreServiceFactory  # type: ignore
         if any([
             cfg.firestore.use_firestore_telemetry,
             cfg.firestore.use_firestore_auth,

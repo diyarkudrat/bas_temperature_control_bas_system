@@ -33,7 +33,9 @@ from apps.api.http.versioning import build_versioning_applier
 from app_platform.errors.api import register_error_handlers
 from apps.api.bootstrap import load_server_config, build_auth_runtime, build_firestore_factory, build_tenant_middleware
 from app_platform.observability.metrics import AuthMetrics
-from adapters.providers import MockAuth0Provider, AuthProvider, build_auth0_provider
+from adapters.providers.mock_auth0 import MockAuth0Provider
+from adapters.providers.base import AuthProvider
+from adapters.providers.factory import build_auth0_provider
 from adapters.providers.deny_all import DenyAllAuthProvider
 from application.hardware.bas_hardware_controller import BASController
 from app_platform.config.rate_limit import AtomicRateLimitConfig
@@ -262,13 +264,14 @@ if __name__ == '__main__':
     
     # No cleanup thread needed
     
+    port = int(_os.getenv('PORT', '8080'))
     logger.info("Starting BAS Server...")
-    logger.info("Dashboard available at: http://localhost:8080")
-    logger.info("API available at: http://localhost:8080/api/")
+    logger.info(f"Dashboard available at: http://localhost:{port}")
+    logger.info(f"API available at: http://localhost:{port}/api/")
     if auth_config and auth_config.auth_enabled:
         logger.info("Authentication system enabled")
-        logger.info("Auth endpoints available at: http://localhost:8080/auth/")
+        logger.info(f"Auth endpoints available at: http://localhost:{port}/auth/")
     
-    app.run(host='0.0.0.0', port=8080, debug=False)
+    app.run(host='0.0.0.0', port=port, debug=False)
 
 

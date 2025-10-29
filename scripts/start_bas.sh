@@ -87,21 +87,139 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
+# Load project env if available
+if [ -f "config/auth.env" ]; then
+    print_info "Loading environment from config/auth.env"
+    set -a
+    # shellcheck disable=SC1091
+    source config/auth.env
+    set +a
+    print_status "Loaded environment from config/auth.env"
+fi
+
+# Ensure Python 3 virtual environment and dependencies
+setup_python_env() {
+    # Find a good CPython 3.x interpreter (prefer Homebrew); allow override via $PYTHON_BIN
+    find_python() {
+        local candidates=()
+        if [ -n "${PYTHON_BIN:-}" ]; then candidates+=("$PYTHON_BIN"); fi
+        # Prefer known stable versions first to avoid 3.14 package incompatibilities
+        candidates+=(
+            "/opt/homebrew/bin/python3.12" "/usr/local/bin/python3.12" "/usr/bin/python3.12"
+            "/opt/homebrew/bin/python3.11" "/usr/local/bin/python3.11" "/usr/bin/python3.11"
+            "/opt/homebrew/bin/python3.10" "/usr/local/bin/python3.10" "/usr/bin/python3.10"
+            "/opt/homebrew/bin/python3" "$(command -v python3 2>/dev/null)" "/usr/local/bin/python3" "/usr/bin/python3"
+        )
+        for cand in "${candidates[@]}"; do
+            if [ -x "$cand" ]; then
+                if "$cand" - <<'PYTEST' >/dev/null 2>&1
+import sys
+assert (3, 10) <= sys.version_info < (3, 14)
+import http.server, ssl, asyncio
+PYTEST
+                then
+                    echo "$cand"
+                    return 0
+                fi
+            fi
+        done
+        return 1
+    }
+
+    local BASE_PY
+    BASE_PY=$(find_python) || { print_error "No suitable CPython3 found (>=3.10 with stdlib). Install Homebrew python3."; exit 1; }
+
+    # Prefer .venv; recreate if missing or broken
+    local WANT_VENV_BIN=".venv/bin/python3"
+    local NEED_RECREATE=0
+    if [ -x "$WANT_VENV_BIN" ]; then
+        if ! "$WANT_VENV_BIN" - <<'PYTEST' >/dev/null 2>&1
+import http.server, ssl, asyncio
+PYTEST
+        then
+            print_warning ".venv is broken (stdlib missing); recreating"
+            NEED_RECREATE=1
+        else
+            # Recreate if venv uses unsupported Python version (>=3.14)
+            if ! "$WANT_VENV_BIN" - <<'PYTEST' >/dev/null 2>&1
+import sys
+import sys
+raise SystemExit(0 if sys.version_info < (3,14) and sys.version_info >= (3,10) else 1)
+PYTEST
+            then
+                print_warning ".venv Python version unsupported; recreating"
+                NEED_RECREATE=1
+            fi
+        fi
+    else
+        NEED_RECREATE=1
+    fi
+
+    if [ $NEED_RECREATE -eq 1 ]; then
+        print_info "Creating virtual environment at .venv using ${BASE_PY}"
+        "$BASE_PY" -m venv .venv || { print_error "Failed to create virtual environment (.venv)"; exit 1; }
+        print_status "Virtual environment created at .venv"
+    fi
+
+    PY_BIN="$WANT_VENV_BIN"
+    print_status "Using virtual environment at .venv/"
+
+    # Ensure pip present; install requirements if Flask missing or forced
+    if [ -f "apps/api/requirements.txt" ]; then
+        "$PY_BIN" -m pip --version >/dev/null 2>&1 || "$PY_BIN" -m ensurepip -U >/dev/null 2>&1 || true
+        if ! "$PY_BIN" -c "import flask" >/dev/null 2>&1 || [ "${FORCE_PIP_INSTALL:-0}" = "1" ]; then
+            print_info "Installing Python dependencies from apps/api/requirements.txt"
+            "$PY_BIN" -m pip install -U pip || true
+            "$PY_BIN" -m pip install -r apps/api/requirements.txt || { print_error "Dependency installation failed"; exit 1; }
+            print_status "Dependencies installed"
+        fi
+    fi
+}
+
 # Function to start server in background
 start_server() {
     print_server "Starting BAS Server..."
 
-    # Check if port 8080 is available
-    if lsof -i :8080 >/dev/null 2>&1; then
-        print_warning "Port 8080 is already in use"
-        lsof -ti :8080 | xargs kill -9 2>/dev/null || true
+    # Decide which port to use (honor existing PORT env; default 8080)
+    local PORT_TO_USE="${PORT:-8080}"
+
+    # Check if chosen port is available; try to free, else fall back to another
+    if lsof -i :"${PORT_TO_USE}" >/dev/null 2>&1; then
+        print_warning "Port ${PORT_TO_USE} is already in use"
+        lsof -ti :"${PORT_TO_USE}" | xargs kill -9 2>/dev/null || true
         sleep 2
-        print_status "Port 8080 freed"
+        if lsof -i :"${PORT_TO_USE}" >/dev/null 2>&1; then
+            print_warning "Port ${PORT_TO_USE} still in use, selecting alternate port"
+            for p in 8081 8082 8083 8084 8085 8090 8091 8092; do
+                if ! lsof -i :"$p" >/dev/null 2>&1; then
+                    PORT_TO_USE="$p"
+                    print_status "Selected alternate port ${PORT_TO_USE}"
+                    break
+                fi
+            done
+        else
+            print_status "Port ${PORT_TO_USE} freed"
+        fi
     fi
 
     # Start server in background using new entrypoint
-    mkdir -p logs
-    PYTHONPATH=. nohup python apps/api/main.py > logs/server.log 2>&1 &
+    local LOG_FILE="server.log"
+    local PY_CMD="${PY_BIN:-${PYTHON_BIN:-}}"
+    if [[ -z "$PY_CMD" ]]; then
+        if command -v python3 >/dev/null 2>&1; then
+            PY_CMD="python3"
+        elif command -v python >/dev/null 2>&1; then
+            PY_CMD="python"
+        else
+            print_error "Python interpreter not found (python3/python). Please install Python 3."
+            return 1
+        fi
+    fi
+
+    # Sanitize Python env to avoid broken search paths
+    unset PYTHONHOME || true
+    unset PYTHONPATH || true
+    PORT=${PORT_TO_USE} nohup "$PY_CMD" -m apps.api.main > "$LOG_FILE" 2>&1 &
     SERVER_PID=$!
 
     # Wait a moment for server to start
@@ -110,13 +228,13 @@ start_server() {
     # Check if server started successfully
     if kill -0 $SERVER_PID 2>/dev/null; then
         print_status "Server started successfully (PID: $SERVER_PID)"
-        print_info "Dashboard: http://localhost:8080"
-        print_info "Logs: tail -f logs/server.log"
+        print_info "Dashboard: http://localhost:${PORT_TO_USE}"
+        print_info "Logs: tail -f server.log"
         echo $SERVER_PID > server.pid
         return 0
     else
         print_error "Failed to start server"
-        print_info "Check logs/server.log for details"
+        print_info "Check server.log for details"
         return 1
     fi
 }
@@ -205,6 +323,8 @@ trap cleanup EXIT INT TERM
 
 # Start components based on options
 if [ "$START_SERVER" = true ]; then
+    # Prepare Python environment (venv + deps)
+    setup_python_env
     if ! start_server; then
         print_error "Failed to start server"
         exit 1

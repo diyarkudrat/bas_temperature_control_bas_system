@@ -32,12 +32,22 @@ def make_error(message: str, code: str) -> Any:
 
 
 def register_error_handlers(app) -> None:
-    from services.firestore.base import (
-        FirestoreError as FsError,
-        NotFoundError as FsNotFoundError,
-        ValidationError as FsValidationError,
-        PermissionError as FsPermissionError,
-    )
+    try:
+        from adapters.db.firestore.base import (
+            FirestoreError as FsError,
+            NotFoundError as FsNotFoundError,
+            ValidationError as FsValidationError,
+            PermissionError as FsPermissionError,
+        )
+    except Exception:
+        class FsError(Exception):  # type: ignore
+            pass
+        class FsNotFoundError(FsError):  # type: ignore
+            pass
+        class FsValidationError(FsError):  # type: ignore
+            pass
+        class FsPermissionError(FsError):  # type: ignore
+            pass
     try:
         from auth.exceptions import AuthError as AuthErr  # type: ignore
     except Exception:

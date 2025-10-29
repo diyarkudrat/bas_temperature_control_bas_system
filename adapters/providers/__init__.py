@@ -1,14 +1,10 @@
-"""Authentication providers adapters public API.
+"""Authentication providers package.
 
-Re-exports provider interfaces and factories for app consumption.
+Import specific providers directly from their modules, e.g.:
+ - adapters.providers.base.AuthProvider
+ - adapters.providers.factory.build_auth0_provider
+ - adapters.providers.mock_auth0.MockAuth0Provider
+ - adapters.providers.deny_all.DenyAllAuthProvider
 """
-
-from .auth0 import Auth0Provider  # noqa: F401
-from .mock_auth0 import MockAuth0Provider  # noqa: F401
-from .deny_all import DenyAllAuthProvider  # noqa: F401
-from .factory import build_auth0_provider  # noqa: F401
-from .base import AuthProvider  # noqa: F401
-
-"""Auth provider adapters (auth0, mock_auth0, deny_all)."""
 
 

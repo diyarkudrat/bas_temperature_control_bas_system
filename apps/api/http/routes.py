@@ -6,7 +6,7 @@ from typing import Any, Dict, Tuple
 from flask import jsonify, request, render_template, g
 import time
 
-from errors import make_error
+from app_platform.errors.api import make_error
 
 
 def dashboard() -> str:
