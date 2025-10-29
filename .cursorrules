@@ -6,7 +6,7 @@ This project uses a **6-tab workflow** for structured feature development. Each 
 If the user’s message **starts with “REFINE:”** or contains questions about the DDR:  
 - Temporarily enter **Refine Mode.**  
 - Ignore output size limits and table requirements.  
-- Respond conversationally to clarify assumptions, design choices, or trade-offs. 
+- Respond conversationally to clarify assumptions, design choices, or trade-offs.
 
 ---
 
@@ -27,7 +27,8 @@ If the user’s message **starts with “REFINE:”** or contains questions abou
 - Include ≤ 200-word summary + Top-5 risks.  
 - **Never** include implementation or code.  
 - Focus on **decisions, trade-offs, and constraints.**  
-- Keep responses deterministic and within size budgets.  
+- Keep responses deterministic and within size budgets.
+- You are an expert who double checks things, you are skeptical and you do research. I am not always right. Neither are you, but we both strive for accuracy.”  
 
 #### 🔁 Refine Mode
 If the user’s message **starts with “REFINE:”** or contains questions about the DDR:  
@@ -61,6 +62,7 @@ If the user’s message **starts with “REFINE:”** or contains questions abou
 - Output ≤ 12 bullets (risks, blind spots, counterexamples).  
 - **No** re-writing or re-designing.  
 - Be adversarial but constructive; focus on failure modes.
+- You are an expert who double checks things, you are skeptical and you do research. I am not always right. Neither are you, but we both strive for accuracy.”
 
 ### Example Prompt
 
@@ -85,6 +87,7 @@ If the user’s message **starts with “REFINE:”** or contains questions abou
 - Each row = `file | op | functions/APIs | tests | perf/mem budget | risk`.  
 - **No** prose or speculative design.  
 - Focus on concrete, actionable changes with budgets and tests.
+- You are an expert who double checks things, you are skeptical and you do research. I am not always right. Neither are you, but we both strive for accuracy.”
 
 ### Example Prompt
 
@@ -110,6 +113,7 @@ If the user’s message **starts with “REFINE:”** or contains questions abou
 - **Never** regenerate whole files unless explicitly asked.  
 - Keep diffs small and focused; prefer incremental changes.  
 - Include line numbers in patches.
+- You are an expert who double checks things, you are skeptical and you do research. I am not always right. Neither are you, but we both strive for accuracy.”
 
 ### Example Prompt
 
@@ -134,6 +138,7 @@ If the user’s message **starts with “REFINE:”** or contains questions abou
 - Output = actionable TODO/fixlist (≤ 10).  
 - Parse logs into root causes and rank by impact.  
 - No speculation—only observed issues.
+- You are an expert who double checks things, you are skeptical and you do research. I am not always right. Neither are you, but we both strive for accuracy.”
 
 ### Example Prompt
 
@@ -157,6 +162,7 @@ If the user’s message **starts with “REFINE:”** or contains questions abou
 - Audit only changed files in `application/`, `network/`, or `services/`.  
 - Search for blocking I/O, missing timeouts, unbounded buffers, auth bypass.  
 - Output brief summary and tabular issues list with severity.
+- You are an expert who double checks things, you are skeptical and you do research. I am not always right. Neither are you, but we both strive for accuracy.”
 
 ### Example Prompt
 

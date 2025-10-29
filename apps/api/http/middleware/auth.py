@@ -411,156 +411,142 @@ def require_auth(required_role="operator", require_tenant=False, provider: Optio
     def decorator(f):
         @wraps(f)
         def decorated_function(*args, **kwargs):
-            logger.debug(f"Checking authentication for endpoint: {request.endpoint}")
-            # Non-invasive provider injection: allow caller to pass a provider
-            # or defer to request.auth_provider set by server wiring.
             try:
-                if provider is not None and not hasattr(request, 'auth_provider'):
-                    setattr(request, 'auth_provider', provider)
-            except Exception:
-                pass
-            # Fast-path and per-user rate limits
-            limited = check_rate_limit()
-            if limited is not None:
-                return limited
+                logger.debug(f"Checking authentication for endpoint: {request.endpoint}")
+                try:
+                    if provider is not None and not hasattr(request, 'auth_provider'):
+                        setattr(request, 'auth_provider', provider)
+                except Exception:
+                    pass
 
-            # Validate required_role parameter
-            if required_role not in ['operator', 'admin', 'read-only']:
-                logger.error(f"Invalid required_role: {required_role}")
-                return jsonify({"error": "Invalid role configuration", "code": "CONFIG_ERROR"}), 500
+                limited = check_rate_limit()
+                if limited is not None:
+                    return limited
 
-            # Skip auth if disabled
-            if not hasattr(request, 'auth_config') or not request.auth_config or not request.auth_config.auth_enabled:
-                logger.debug("Authentication disabled, allowing access")
-                return f(*args, **kwargs)
+                if required_role not in ['operator', 'admin', 'read-only']:
+                    logger.error(f"Invalid required_role: {required_role}")
+                    return jsonify({"error": "Invalid role configuration", "code": "CONFIG_ERROR"}), 500
 
-            # Shadow mode - log but don't block
-            if request.auth_config.auth_mode == "shadow":
-                logger.info(f"Shadow mode: logging access to {request.endpoint}")
+                if not hasattr(request, 'auth_config') or not request.auth_config or not request.auth_config.auth_enabled:
+                    logger.debug("Authentication disabled, allowing access")
+                    return f(*args, **kwargs)
+
+                if request.auth_config.auth_mode == "shadow":
+                    logger.info(f"Shadow mode: logging access to {request.endpoint}")
+                    session_id = request.headers.get('X-Session-ID') or request.cookies.get('bas_session_id')
+                    if hasattr(request, 'audit_logger'):
+                        request.audit_logger.log_session_access(session_id, request.endpoint)
+                    return f(*args, **kwargs)
+
+                logger.debug("Authentication enforced, checking JWT or session")
+                token: Optional[str] = parse_authorization_header(request.headers.get('Authorization', '') or '')
+                provider_obj = getattr(request, 'auth_provider', None)
+                metrics = getattr(request, 'auth_metrics', None)
+
+                try:
+                    if hasattr(request, 'auth_config') and hasattr(request.auth_config, 'allow_session_fallback'):
+                        allow_fallback = bool(getattr(request.auth_config, 'allow_session_fallback'))
+                    else:
+                        allow_fallback = True
+                except Exception:
+                    allow_fallback = True
+
+                if not token and not allow_fallback:
+                    return jsonify({
+                        "error": "Authorization required",
+                        "message": "Bearer token required",
+                        "code": "AUTH_REQUIRED"
+                    }), 401
+
+                if token and provider_obj is not None:
+                    revoked = enforce_revocation_check(token)
+                    if revoked is not None:
+                        return revoked
+                    try:
+                        claims = verify_and_decode_jwt(provider_obj, token, metrics)
+                        allowed, denial = authorize_roles(claims, provider_obj, required_role)
+                        if not allowed:
+                            _log_jwt_failure(metrics)
+                            return denial  # type: ignore[return-value]
+                        if require_tenant:
+                            tenant_result = _enforce_tenant_isolation_jwt(request)
+                            if tenant_result is not True:
+                                return tenant_result
+                        user_id = str(claims.get('sub', '') or '').strip()
+                        logger.debug(f"JWT authentication successful for {user_id} accessing {request.endpoint}")
+                        return f(*args, **kwargs)
+                    except ValueError as exc:
+                        logger.warning(f"JWT verification failed for endpoint {request.endpoint}: {exc}")
+                        _log_jwt_failure(metrics)
+                        if not allow_fallback:
+                            msg = str(exc).lower()
+                            code = 'INVALID_TOKEN'
+                            if 'exp' in msg or 'expired' in msg:
+                                code = 'TOKEN_EXPIRED'
+                            if 'claim' in msg:
+                                code = 'INVALID_CLAIMS'
+                            return jsonify({
+                                "error": "Invalid or expired token",
+                                "message": "JWT verification failed",
+                                "code": code
+                            }), 401
+                        # else fall through to session checks
+
+                logger.debug("Authentication enforced, checking session")
+                sess_start_ms = time.time() * 1000.0
+                _log_session_attempt(metrics)
                 session_id = request.headers.get('X-Session-ID') or request.cookies.get('bas_session_id')
+
+                if not session_id or not isinstance(session_id, str) or len(session_id) < 10:
+                    logger.warning(f"Invalid session ID format for {request.endpoint}")
+                    _audit_auth_failure("INVALID_SESSION_ID", request.remote_addr, request.endpoint)
+                    _log_session_failure(metrics)
+                    return jsonify({
+                        "error": "Invalid session ID",
+                        "message": "Please login again",
+                        "code": "INVALID_SESSION_ID"
+                    }), 401
+
+                session_manager = getattr(request, 'session_manager', None)
+                if not session_manager:
+                    logger.error("Session manager not available")
+                    return jsonify({"error": "Authentication system not available", "code": "AUTH_SYSTEM_ERROR"}), 500
+
+                session = session_manager.validate_session(session_id, request)
+                if not session:
+                    logger.warning(f"Invalid or expired session for {request.endpoint}")
+                    _audit_auth_failure("SESSION_INVALID", request.remote_addr, request.endpoint)
+                    _log_session_failure(metrics)
+                    return jsonify({
+                        "error": "Invalid or expired session",
+                        "message": "Please login again",
+                        "code": "SESSION_INVALID"
+                    }), 401
+
+                if not _has_permission(session.role, required_role):
+                    logger.warning(f"Insufficient permissions for {session.username} ({session.role}) to access {request.endpoint} (requires {required_role})")
+                    _audit_permission_denied(session.username, session.user_id, request.remote_addr, request.endpoint, f"ROLE_{required_role.upper()}")
+                    return jsonify({
+                        "error": "Insufficient permissions",
+                        "message": f"{session.role} role cannot perform this action",
+                        "code": "PERMISSION_DENIED"
+                    }), 403
+
+                if require_tenant:
+                    tenant_result = _enforce_tenant_isolation(session, request)
+                    if tenant_result is not True:
+                        return tenant_result
+
+                session_manager.update_last_access(session_id)
+                request.session = session
                 if hasattr(request, 'audit_logger'):
                     request.audit_logger.log_session_access(session_id, request.endpoint)
+                logger.debug(f"Authentication successful for {session.username} accessing {request.endpoint}")
+                _log_session_success(metrics, sess_start_ms)
                 return f(*args, **kwargs)
-
-            # Enforced mode - prefer JWT verification first if a provider and token are present
-            logger.debug("Authentication enforced, checking JWT or session")
-            token: Optional[str] = parse_authorization_header(request.headers.get('Authorization', '') or '')
-
-            provider_obj = getattr(request, 'auth_provider', None)
-            metrics = getattr(request, 'auth_metrics', None)
-            # Determine whether session fallback is allowed.
-            try:
-                if hasattr(request, 'auth_config') and hasattr(request.auth_config, 'allow_session_fallback'):
-                    allow_fallback = bool(getattr(request.auth_config, 'allow_session_fallback'))
-                else:
-                    allow_fallback = True
-            except Exception:
-                allow_fallback = True
-
-            # If no Bearer token is provided and fallback is explicitly disabled, fail closed
-            if not token and not allow_fallback:
-                return jsonify({
-                    "error": "Authorization required",
-                    "message": "Bearer token required",
-                    "code": "AUTH_REQUIRED"
-                }), 401
-            if token and provider_obj is not None:
-                # Early revoked-token check with small local cache (5s TTL)
-                revoked = enforce_revocation_check(token)
-                if revoked is not None:
-                    return revoked
-                try:
-                    claims = verify_and_decode_jwt(provider_obj, token, metrics)
-                    allowed, denial = authorize_roles(claims, provider_obj, required_role)
-                    if not allowed:
-                        _log_jwt_failure(metrics)
-                        return denial  # type: ignore[return-value]
-                    if require_tenant:
-                        tenant_result = _enforce_tenant_isolation_jwt(request)
-                        if tenant_result is not True:
-                            return tenant_result
-                    user_id = str(claims.get('sub', '') or '').strip()
-                    logger.debug(f"JWT authentication successful for {user_id} accessing {request.endpoint}")
-                    return f(*args, **kwargs)
-                except ValueError as exc:
-                    logger.warning(f"JWT verification failed for endpoint {request.endpoint}: {exc}")
-                    _log_jwt_failure(metrics)
-                    if not allow_fallback:
-                        msg = str(exc).lower()
-                        code = 'INVALID_TOKEN'
-                        if 'exp' in msg or 'expired' in msg:
-                            code = 'TOKEN_EXPIRED'
-                        if 'claim' in msg:
-                            code = 'INVALID_CLAIMS'
-                        return jsonify({
-                            "error": "Invalid or expired token",
-                            "message": "JWT verification failed",
-                            "code": code
-                        }), 401
-                    # else fall through to session checks
-
-            # Fallback or legacy: require valid session
-            logger.debug("Authentication enforced, checking session")
-            sess_start_ms = time.time() * 1000.0
-            _log_session_attempt(metrics)
-            session_id = request.headers.get('X-Session-ID') or request.cookies.get('bas_session_id')
-
-            # Validate session ID format
-            if not session_id or not isinstance(session_id, str) or len(session_id) < 10:
-                logger.warning(f"Invalid session ID format for {request.endpoint}")
-                _audit_auth_failure("INVALID_SESSION_ID", request.remote_addr, request.endpoint)
-                _log_session_failure(metrics)
-                return jsonify({
-                    "error": "Invalid session ID",
-                    "message": "Please login again",
-                    "code": "INVALID_SESSION_ID"
-                }), 401
-
-            session_manager = getattr(request, 'session_manager', None)
-            if not session_manager:
-                logger.error("Session manager not available")
-                return jsonify({"error": "Authentication system not available", "code": "AUTH_SYSTEM_ERROR"}), 500
-
-            session = session_manager.validate_session(session_id, request)
-            if not session:
-                logger.warning(f"Invalid or expired session for {request.endpoint}")
-                _audit_auth_failure("SESSION_INVALID", request.remote_addr, request.endpoint)
-                _log_session_failure(metrics)
-                return jsonify({
-                    "error": "Invalid or expired session",
-                    "message": "Please login again",
-                    "code": "SESSION_INVALID"
-                }), 401
-
-            # Check role permissions
-            if not _has_permission(session.role, required_role):
-                logger.warning(f"Insufficient permissions for {session.username} ({session.role}) to access {request.endpoint} (requires {required_role})")
-                _audit_permission_denied(session.username, session.user_id, request.remote_addr, request.endpoint, f"ROLE_{required_role.upper()}")
-                return jsonify({
-                    "error": "Insufficient permissions",
-                    "message": f"{session.role} role cannot perform this action",
-                    "code": "PERMISSION_DENIED"
-                }), 403
-
-            # Enforce tenant isolation if required
-            if require_tenant:
-                tenant_result = _enforce_tenant_isolation(session, request)
-                if tenant_result is not True:
-                    return tenant_result
-
-            # Update last access
-            session_manager.update_last_access(session_id)
-
-            # Add session to request context
-            request.session = session
-
-            # Log access
-            if hasattr(request, 'audit_logger'):
-                request.audit_logger.log_session_access(session_id, request.endpoint)
-
-            logger.debug(f"Authentication successful for {session.username} accessing {request.endpoint}")
-            _log_session_success(metrics, sess_start_ms)
-            return f(*args, **kwargs)
+            except Exception as e:
+                logger.error(f"Auth middleware error on {request.endpoint}: {e}")
+                return jsonify({"error": "Internal server error", "code": "INTERNAL_ERROR"}), 500
         return decorated_function
     return decorator
 
@@ -854,7 +840,18 @@ def _claims_has_permission(user_roles: List[str], required_role: str) -> bool:
     """Check if any of the user's roles satisfies the required role using hierarchy."""
     normalized = set(r.lower() for r in user_roles)
     if required_role == 'read-only':
-        return bool(normalized & {'read-only', 'operator', 'admin'})
+        # Accept coarse roles OR granular read permissions for read-only endpoints
+        if normalized & {'read-only', 'operator', 'admin'}:
+            return True
+        # Map common granular read permissions to read-only access
+        for perm in normalized:
+            # Generic patterns: read:* or *:read
+            if perm.startswith('read:') or perm.endswith(':read'):
+                return True
+        # Known explicit read permissions used by this API
+        if normalized & {'read:status', 'telemetry:read', 'config:read'}:
+            return True
+        return False
     if required_role == 'operator':
         return bool(normalized & {'operator', 'admin'})
     if required_role == 'admin':

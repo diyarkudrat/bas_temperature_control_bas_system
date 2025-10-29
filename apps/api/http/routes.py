@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import Any, Dict, Tuple
 from flask import jsonify, request, render_template, g
+import logging
 import time
 
 from app_platform.errors.api import make_error
@@ -87,16 +88,21 @@ def receive_sensor_data(controller, firestore_factory) -> Tuple[Any, int]:
 
 
 def get_status(controller) -> Tuple[Any, int]:
-    return jsonify({
-        "temp_tenths": controller.current_temp_tenths,
-        "setpoint_tenths": controller.setpoint_tenths,
-        "deadband_tenths": controller.deadband_tenths,
-        "state": controller.state,
-        "cool_active": controller.cool_active,
-        "heat_active": controller.heat_active,
-        "sensor_ok": controller.sensor_ok,
-        "timestamp": time.time() * 1000,
-    }), 200
+    try:
+        payload = {
+            "temp_tenths": controller.current_temp_tenths,
+            "setpoint_tenths": controller.setpoint_tenths,
+            "deadband_tenths": controller.deadband_tenths,
+            "state": controller.state,
+            "cool_active": controller.cool_active,
+            "heat_active": controller.heat_active,
+            "sensor_ok": controller.sensor_ok,
+            "timestamp": time.time() * 1000,
+        }
+        return jsonify(payload), 200
+    except Exception as e:
+        logging.getLogger(__name__).error("get_status failed: %s", e)
+        return make_error("Internal server error", "INTERNAL_ERROR")
 
 
 def set_setpoint(controller) -> Tuple[Any, int]:

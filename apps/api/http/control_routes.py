@@ -19,6 +19,7 @@ def receive_sensor_data():
 
 
 @control_bp.route("/api/status")
+@require_auth(required_role="read-only")
 def get_status():
     controller = current_app.config["controller"]
     return http_routes.get_status(controller)
@@ -32,6 +33,7 @@ def set_setpoint():
 
 
 @control_bp.route("/api/config")
+@require_auth(required_role="read-only")
 def get_config():
     controller = current_app.config["controller"]
     return http_routes.get_config(controller)
