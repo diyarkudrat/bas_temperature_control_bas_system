@@ -12,7 +12,7 @@ import logging
 import os
 from dataclasses import dataclass
 from http.cookies import SimpleCookie
-from typing import Any, Mapping, MutableMapping, Optional
+from typing import Any, Mapping, MutableMapping, Optional, Sequence
 
 try:  # pragma: no cover - stdlib availability validated at runtime
     from urllib.request import Request, urlopen
@@ -23,7 +23,17 @@ except Exception:  # pragma: no cover
     HTTPError = Exception  # type: ignore
     URLError = Exception  # type: ignore
 
-from app_platform.security import ServiceTokenParams, build_auth_headers, sign_service_token
+from app_platform.security import (
+    IssuedServiceToken,
+    ServiceKeySet,
+    ServiceTokenError,
+    build_auth_headers,
+    issue_service_jwt,
+    load_service_keyset_from_env,
+)
+
+
+logger = logging.getLogger(__name__)
 
 
 _JSON_HEADERS = {"Accept": "application/json"}
@@ -54,11 +64,12 @@ class AuthServiceClientConfig:
     audience: str = "bas-auth"
     issuer: str = "bas-api"
     subject: str = "api-backend"
-    token_secret: Optional[str] = None
     token_scope: Optional[str] = None
-    static_token: Optional[str] = None
     token_ttl_seconds: int = 30
     forward_remote_addr_header: Optional[str] = "X-Forwarded-For"
+    keyset: Optional[ServiceKeySet] = None
+    keyset_env_prefix: str = "AUTH_SERVICE_TOKEN"
+    allowed_algorithms: Optional[Sequence[str]] = None
 
     @classmethod
     def from_env(cls, env: Mapping[str, str] | None = None) -> "AuthServiceClientConfig":
@@ -67,25 +78,39 @@ class AuthServiceClientConfig:
         env = env or os.environ
         base_url = env.get("AUTH_SERVICE_URL", "http://localhost:9090").strip()
         timeout = float(env.get("AUTH_SERVICE_TIMEOUT_S", "5.0"))
-        token_secret = env.get("AUTH_SERVICE_SIGNING_KEY") or None
-        static_token = env.get("AUTH_SERVICE_SHARED_TOKEN") or None
-        audience = env.get("AUTH_SERVICE_TOKEN_AUDIENCE", "bas-auth")
-        issuer = env.get("AUTH_SERVICE_TOKEN_ISSUER", "bas-api")
+        auth0_domain = env.get("AUTH0_DOMAIN")
+        auth0_audience = env.get("AUTH0_API_AUDIENCE")
+        audience = env.get("AUTH_SERVICE_TOKEN_AUDIENCE") or auth0_audience or "bas-auth"
+        issuer_env = env.get("AUTH_SERVICE_TOKEN_ISSUER")
+        if issuer_env:
+            issuer = issuer_env
+        elif auth0_domain:
+            issuer = f"https://{auth0_domain.strip().rstrip('/')}/"
+        else:
+            issuer = "bas-api"
         subject = env.get("AUTH_SERVICE_TOKEN_SUBJECT", "api-backend")
         scope = env.get("AUTH_SERVICE_TOKEN_SCOPE") or None
         ttl = int(env.get("AUTH_SERVICE_TOKEN_TTL_S", "30"))
         header_name = env.get("AUTH_SERVICE_REMOTE_ADDR_HEADER", "X-Forwarded-For") or None
+        keyset_prefix = env.get("AUTH_SERVICE_TOKEN_PREFIX", "AUTH_SERVICE_TOKEN") or "AUTH_SERVICE_TOKEN"
+        alg_env = env.get("AUTH_SERVICE_TOKEN_ALGORITHMS")
+        allowed_algorithms = (
+            tuple(alg.strip() for alg in alg_env.split(",") if alg.strip())
+            if alg_env
+            else None
+        )
+
         return cls(
             base_url=base_url,
             timeout_seconds=timeout,
             audience=audience,
             issuer=issuer,
             subject=subject,
-            token_secret=token_secret,
             token_scope=scope,
-            static_token=static_token,
             token_ttl_seconds=ttl,
             forward_remote_addr_header=header_name,
+            keyset_env_prefix=keyset_prefix,
+            allowed_algorithms=allowed_algorithms,
         )
 
 
@@ -108,6 +133,49 @@ class AuthServiceClient:
         self._timeout = max(0.1, float(config.timeout_seconds))
         self._logger = logger or logging.getLogger(__name__)
 
+        self._tenant_header = "X-BAS-Tenant"
+        self._allowed_algorithms = (
+            tuple(alg.upper() for alg in config.allowed_algorithms)
+            if config.allowed_algorithms
+            else None
+        )
+        self._forward_remote_header = config.forward_remote_addr_header
+
+        self._token_ttl_seconds = max(1, min(int(config.token_ttl_seconds), 60))
+        if config.token_ttl_seconds > 60:
+            self._logger.warning(
+                "Auth service token TTL capped at 60 seconds",
+                extra={"configured": config.token_ttl_seconds},
+            )
+
+        try:
+            resolved_keyset = config.keyset or self._load_service_keyset(config.keyset_env_prefix)
+        except ServiceTokenError as exc:
+            self._logger.error(
+                "Unable to load auth service keyset",
+                extra={"prefix": config.keyset_env_prefix},
+                exc_info=True,
+            )
+            raise RuntimeError("Auth service keyset configuration invalid") from exc
+        self._keyset: ServiceKeySet = resolved_keyset
+
+        reserved = {
+            "authorization",
+            "x-service-token",
+            "x-service-token-kid",
+            "x-service-token-exp",
+            "x-service-token-nonce",
+            self._tenant_header.lower(),
+        }
+        if self._forward_remote_header:
+            reserved.add(self._forward_remote_header.lower())
+        self._reserved_headers = reserved
+        self._reserved_passthrough = {
+            name.lower()
+            for name in (self._tenant_header, self._forward_remote_header)
+            if name
+        }
+
     # ------------------------ Public API ------------------------
     def login(
         self,
@@ -122,12 +190,12 @@ class AuthServiceClient:
 
         payload = {"username": username, "password": password}
         headers: MutableMapping[str, str] = {}
-        if tenant_id:
-            headers["X-BAS-Tenant"] = tenant_id
-        if remote_addr and self._cfg.forward_remote_addr_header:
-            headers[self._cfg.forward_remote_addr_header] = remote_addr
         if extra_headers:
-            headers.update(extra_headers)
+            headers.update(self._sanitize_outbound_headers(extra_headers))
+        if tenant_id:
+            headers[self._tenant_header] = tenant_id
+        if remote_addr and self._forward_remote_header:
+            headers[self._forward_remote_header] = remote_addr
         return self._request("POST", "/auth/login", json_body=payload, headers=headers)
 
     def logout(
@@ -142,7 +210,7 @@ class AuthServiceClient:
         payload = {"session_id": session_id} if session_id else None
         headers = self._build_cookie_header(cookies) if cookies else {}
         if extra_headers:
-            headers.update(extra_headers)
+            headers.update(self._sanitize_outbound_headers(extra_headers))
         return self._request("POST", "/auth/logout", json_body=payload, headers=headers)
 
     def status(
@@ -158,7 +226,7 @@ class AuthServiceClient:
         if session_id:
             headers["X-Session-ID"] = session_id
         if extra_headers:
-            headers.update(extra_headers)
+            headers.update(self._sanitize_outbound_headers(extra_headers))
         return self._request("GET", "/auth/status", headers=headers)
 
     def update_limits(
@@ -172,10 +240,62 @@ class AuthServiceClient:
         payload = {"per_user_limits": per_user_limits}
         headers: MutableMapping[str, str] = {}
         if extra_headers:
-            headers.update(extra_headers)
+            headers.update(self._sanitize_outbound_headers(extra_headers))
         return self._request("POST", "/auth/limits", json_body=payload, headers=headers)
 
     # --------------------- Internal helpers ---------------------
+    def _load_service_keyset(self, prefix: str) -> ServiceKeySet:
+        keyset = load_service_keyset_from_env(prefix=prefix)
+        if self._allowed_algorithms:
+            allowed = {alg.upper() for alg in self._allowed_algorithms}
+            invalid = [key.kid for key in keyset.keys() if key.alg.upper() not in allowed]
+            if invalid:
+                raise ServiceTokenError(
+                    f"Unsupported algorithm(s) for key(s): {', '.join(invalid)}"
+                )
+        return keyset
+
+    def _sanitize_outbound_headers(
+        self,
+        headers: Optional[Mapping[str, str]],
+        *,
+        allow: Optional[Sequence[str]] = None,
+    ) -> MutableMapping[str, str]:
+        if not headers:
+            return {}
+        allowed = {name.lower() for name in allow or ()}
+        sanitized: MutableMapping[str, str] = {}
+        for key, value in headers.items():
+            if value is None:
+                continue
+            lower = key.lower()
+            if lower in self._reserved_headers and lower not in allowed:
+                continue
+            sanitized[key] = value
+        return sanitized
+
+    def _issue_service_token(self) -> IssuedServiceToken:
+        try:
+            return issue_service_jwt(
+                self._keyset,
+                subject=self._cfg.subject,
+                audience=self._cfg.audience,
+                issuer=self._cfg.issuer,
+                ttl_seconds=self._token_ttl_seconds,
+                scope=self._cfg.token_scope,
+            )
+        except ServiceTokenError as exc:
+            self._logger.error(
+                "Failed to issue auth service JWT",
+                extra={
+                    "subject": self._cfg.subject,
+                    "audience": self._cfg.audience,
+                    "issuer": self._cfg.issuer,
+                },
+                exc_info=True,
+            )
+            raise
+
     def _request(
         self,
         method: str,
@@ -190,7 +310,8 @@ class AuthServiceClient:
         request_headers: MutableMapping[str, str] = dict(_JSON_HEADERS)
         request_headers.update(self._service_token_headers())
         if headers:
-            request_headers.update(headers)
+            sanitized = self._sanitize_outbound_headers(headers, allow=self._reserved_passthrough)
+            request_headers.update(sanitized)
 
         data = None
         if json_body is not None:
@@ -222,24 +343,13 @@ class AuthServiceClient:
     def _service_token_headers(self) -> Mapping[str, str]:
         """Build the service token headers."""
 
-        headers: MutableMapping[str, str] = {}
-        token: Optional[str] = None
-        if self._cfg.token_secret:
-            params = ServiceTokenParams(
-                subject=self._cfg.subject,
-                issuer=self._cfg.issuer,
-                audience=self._cfg.audience,
-                secret=self._cfg.token_secret,
-                ttl_seconds=self._cfg.token_ttl_seconds,
-                scope=self._cfg.token_scope,
-            )
-            token = sign_service_token(params)
-            headers.update(build_auth_headers(token))
-        elif self._cfg.static_token:
-            token = self._cfg.static_token
-
-        if token:
-            headers.setdefault("X-Service-Token", token)
+        issued = self._issue_service_token()
+        headers: MutableMapping[str, str] = dict(build_auth_headers(issued))
+        headers["X-Service-Token-Kid"] = issued.kid
+        headers["X-Service-Token-Exp"] = str(issued.expires_at)
+        nonce = issued.claims.get("nonce")
+        if nonce:
+            headers["X-Service-Token-Nonce"] = str(nonce)
         return headers
 
     @staticmethod

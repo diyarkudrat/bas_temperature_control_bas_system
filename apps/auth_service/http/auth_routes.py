@@ -7,11 +7,12 @@ safe under multi-process runtimes.
 
 from __future__ import annotations
 
-import os
 import time
-from typing import Any, Tuple
+from typing import Any, Mapping, Optional, Tuple
 
 from flask import Blueprint, current_app, jsonify, request
+
+from app_platform.security import ServiceTokenValidationError, verify_service_jwt
 
 
 auth_bp = Blueprint("auth_service", __name__)
@@ -29,16 +30,54 @@ def _get_request_components() -> Tuple[Any, Any, Any, Any, Any]:
 
 
 def _service_token_valid() -> bool:
-    """Placeholder auth for service-to-service endpoints.
-
-    TODO: Replace with signed service token verification (patch plan item #3).
-    """
-
-    expected = os.getenv("AUTH_SERVICE_SHARED_TOKEN", "").strip()
-    if not expected:
+    claims = _verify_service_token()
+    if claims is None:
         return False
-    provided = (request.headers.get("X-Service-Token") or "").strip()
-    return bool(provided and provided == expected)
+    request.service_token_claims = claims
+    return True
+
+
+def _verify_service_token() -> Optional[Mapping[str, Any]]:
+    settings = getattr(request, "service_tokens", None)
+    if settings is None:
+        current_app.logger.error("Service token settings missing on request")
+        return None
+
+    auth_header = request.headers.get("Authorization", "")
+    scheme, _, token_value = auth_header.partition(" ")
+    if not token_value or scheme.lower() != "bearer":
+        current_app.logger.warning("Missing bearer Authorization header for service request")
+        return None
+    token = token_value.strip()
+    if not token:
+        current_app.logger.warning("Bearer token present but empty for service request")
+        return None
+
+    try:
+        claims = verify_service_jwt(
+            token,
+            settings.keyset,
+            audience=settings.audience,
+            issuer=settings.issuer,
+            replay_cache=settings.replay_cache,
+            required_scope=settings.required_scopes or None,
+        )
+    except ServiceTokenValidationError as exc:
+        current_app.logger.warning(
+            "Service token validation failed",
+            extra={"error": str(exc)},
+        )
+        return None
+
+    subject = claims.get("sub")
+    if settings.allowed_subjects and subject not in settings.allowed_subjects:
+        current_app.logger.warning(
+            "Service token subject not allowed",
+            extra={"subject": subject},
+        )
+        return None
+
+    return claims
 
 
 @auth_bp.route("/auth/login", methods=["POST"])
