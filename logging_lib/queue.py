@@ -4,23 +4,29 @@ from __future__ import annotations
 
 import collections
 import threading
-from typing import Deque, List, Mapping, Optional
+from typing import Callable, Deque, Dict, List, Mapping, Optional
 
 
 class RingBufferQueue:
     """Thread-safe queue dropping oldest entries when full."""
 
-    def __init__(self, capacity: int) -> None:
+    def __init__(
+        self,
+        capacity: int,
+        *,
+        on_drop: Callable[[Mapping[str, object]], None] | None = None,
+    ) -> None:
         """Initialize the queue with a given capacity."""
 
         if capacity <= 0:
             raise ValueError("Queue capacity must be positive")
 
-        self._capacity = capacity # The capacity of the queue
-        self._items: Deque[Mapping[str, object]] = collections.deque() # The items in the queue
-        self._lock = threading.RLock() # The lock for the queue
-        self._not_empty = threading.Condition(self._lock) # The condition for the queue
-        self._dropped = 0 # The number of dropped items
+        self._capacity = capacity
+        self._items: Deque[Mapping[str, object]] = collections.deque()
+        self._lock = threading.RLock()
+        self._not_empty = threading.Condition(self._lock)
+        self._dropped = 0
+        self._on_drop = on_drop
 
     @property
     def dropped(self) -> int:
@@ -44,6 +50,11 @@ class RingBufferQueue:
             if len(self._items) >= self._capacity:
                 dropped_item = self._items.popleft()
                 self._dropped += 1
+                if self._on_drop is not None:
+                    try:
+                        self._on_drop(dropped_item)
+                    except Exception:  # pragma: no cover - defensive
+                        pass
 
             self._items.append(item)
             self._not_empty.notify()
@@ -69,5 +80,23 @@ class RingBufferQueue:
                 return True
 
             return self._not_empty.wait(timeout)
+
+    def emit_drop_event(
+        self,
+        dropped: Mapping[str, object],
+        *,
+        reason: str = "queue_full",
+    ) -> Dict[str, object]:
+        """Build metadata describing a drop event."""
+
+        with self._lock:
+            drop_count = self._dropped
+
+        return {
+            "drop_reason": reason,
+            "drop_count": drop_count,
+            "dropped_level": dropped.get("level"),
+            "dropped_component": dropped.get("component"),
+        }
 
 

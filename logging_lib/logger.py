@@ -6,13 +6,13 @@ import json
 from contextlib import contextmanager
 from contextvars import ContextVar, Token
 from threading import RLock
-from typing import Any, Dict, Mapping, MutableMapping
+from typing import Any, Dict, Mapping, MutableMapping, Optional
 
 from .config import LoggingSettings, get_settings
 from .dispatcher import Dispatcher
 from .metrics import reset_metrics
 from .queue import RingBufferQueue
-from .redaction import apply_redaction
+from .redaction import RedactorRegistry, build_registry
 from .sampling import should_emit
 from .schema import build_log_record
 from .sinks.memory import InMemorySink
@@ -87,7 +87,8 @@ class StructuredLogger:
             context=runtime_context,
             **fields,
         )
-        sanitized = apply_redaction(record)
+        redactor = manager.redactor
+        sanitized = redactor.apply(record) if redactor else record
 
         manager.dispatcher.submit(sanitized)
 
@@ -104,6 +105,7 @@ class LoggerManager:
         self._dispatcher: Dispatcher | None = None # The dispatcher for the logger manager
         self._queue: RingBufferQueue | None = None # The queue for the logger manager
         self._base_context: MutableMapping[str, Any] = {} # The base context for the logger manager
+        self._redactor: Optional[RedactorRegistry] = None
 
     def configure(self, settings: LoggingSettings) -> None:
         """Configure the logger manager with a given settings."""
@@ -114,7 +116,9 @@ class LoggerManager:
             self._settings = settings
             self._loggers.clear()
 
-            self._queue = RingBufferQueue(settings.queue_size)
+            self._queue = RingBufferQueue(
+                settings.queue_size, on_drop=self._handle_drop
+            )
             sinks = []
 
             for sink_name in settings.sinks:
@@ -152,6 +156,7 @@ class LoggerManager:
             )
 
             self._base_context = dict(settings.default_context)
+            self._redactor = build_registry(settings.redaction)
 
             reset_metrics()
 
@@ -187,6 +192,10 @@ class LoggerManager:
 
         return dict(self._base_context)
 
+    @property
+    def redactor(self) -> Optional[RedactorRegistry]:
+        return self._redactor
+
     def get_logger(self, name: str) -> StructuredLogger:
         """Get a logger with a given name."""
 
@@ -210,6 +219,7 @@ class LoggerManager:
             self._queue = None
 
             self._base_context.clear()
+            self._redactor = None
 
     # --------------------- internal helpers ---------------------
     def _shutdown_dispatcher(self) -> None:
@@ -221,6 +231,31 @@ class LoggerManager:
             dispatcher.stop()
 
         self._dispatcher = None
+
+    def _handle_drop(self, dropped: Mapping[str, object]) -> None:
+        dispatcher = self._dispatcher
+        queue = self._queue
+        settings = self._settings
+
+        if dispatcher is None or queue is None or settings is None:
+            return
+
+        drop_metadata = queue.emit_drop_event(dropped)
+        notice_context = dict(self._base_context)
+        notice_context.update({"drop": drop_metadata})
+
+        notice = build_log_record(
+            level="WARNING",
+            message="log_drop",
+            settings=settings,
+            component="logging.queue",
+            context=notice_context,
+        )
+
+        redactor = self._redactor
+        sanitized = redactor.apply(notice) if redactor else notice
+
+        dispatcher.emit_immediate(sanitized)
 
 
 _MANAGER = LoggerManager()

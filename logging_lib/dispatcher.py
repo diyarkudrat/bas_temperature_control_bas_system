@@ -79,6 +79,11 @@ class Dispatcher:
 
             record_drop(level)
 
+    def emit_immediate(self, record: Mapping[str, object]) -> None:
+        """Emit a control record directly to sinks, bypassing the queue."""
+
+        self._emit_batch([record])
+
     def flush(self) -> None:
         deadline = time.time() + self._flush_timeout
 
