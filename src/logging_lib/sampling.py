@@ -17,15 +17,10 @@ _LEVEL_NUMERIC = {
 
 
 def should_emit(level: str, settings: LoggingSettings, context: Mapping[str, object] | None = None) -> bool:
-    """Return ``True`` when the record should be emitted.
-
-    Phase 1 implements a simple severity threshold; future phases can extend
-    this to probabilistic sampling and per-route controls.
-    """
-
+    """Determine if a record should be emitted based on the level and settings."""
+    
     threshold = _LEVEL_NUMERIC.get(settings.level.upper(), 20)
     value = _LEVEL_NUMERIC.get(level.upper(), 20)
-    
     return value >= threshold
 
 

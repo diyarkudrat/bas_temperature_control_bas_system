@@ -1,4 +1,4 @@
-"""Structured logging schema helpers."""
+"""Structured logging schema utilities."""
 
 from __future__ import annotations
 
@@ -36,7 +36,7 @@ def build_log_record(
     context: Mapping[str, Any] | None = None,
     **fields: Any,
 ) -> Dict[str, Any]:
-    """Create a structured log document adhering to the canonical schema."""
+    """Build a structured log record adhering to the canonical schema."""
 
     record: Dict[str, Any] = {
         "schema_version": SCHEMA_VERSION,
@@ -50,11 +50,12 @@ def build_log_record(
 
     record.update(fields)
 
-    record.setdefault("context", {})
     if context:
-        merged_context = dict(record["context"])
-        merged_context.update(context)
-        record["context"] = merged_context
+        merged = dict(context)
+        merged.setdefault("component", component)
+        record["context"] = merged
+    else:
+        record.setdefault("context", {"component": component})
 
     validate_record(record)
 
@@ -62,13 +63,16 @@ def build_log_record(
 
 
 def validate_record(record: Mapping[str, Any]) -> None:
-    """Perform lightweight validation of a structured log record."""
+    """Validate a structured log record."""
 
     missing = REQUIRED_FIELDS.difference(record.keys())
-    
+
     if missing:
         raise ValueError(f"Log record missing required fields: {sorted(missing)}")
-    if not isinstance(record.get("context", {}), Mapping):
-        raise TypeError("Log record context must be a mapping")
+
+    context = record.get("context", {})
+    
+    if context is not None and not isinstance(context, Mapping):
+        raise TypeError("record context must be a mapping")
 
 

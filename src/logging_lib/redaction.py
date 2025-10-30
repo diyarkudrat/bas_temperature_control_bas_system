@@ -1,4 +1,4 @@
-"""Minimal redaction utilities (Phase 1 placeholder)."""
+"""Redaction helpers for structured logging."""
 
 from __future__ import annotations
 
@@ -11,7 +11,7 @@ Redactor = Callable[[str, Any], Any]
 
 @dataclass
 class RedactionRegistry:
-    """Stores key-specific redaction callables. Redactions are applied to the record before it is serialized and sent to the sink."""
+    """Registry of per-field redaction callables."""
 
     _redactors: Dict[str, Redactor] = field(default_factory=dict)
 
@@ -35,7 +35,7 @@ class RedactionRegistry:
         for key, redactor in self._redactors.items():
             if key in sanitized and key != "context":
                 sanitized[key] = redactor(key, sanitized[key])
-                
+
         return sanitized
 
 
@@ -43,10 +43,14 @@ _REGISTRY = RedactionRegistry()
 
 
 def register_redactor(key: str, fn: Redactor) -> None:
+    """Register a redaction function for a given key."""
+
     _REGISTRY.register(key, fn)
 
 
 def apply_redaction(record: Mapping[str, Any]) -> Dict[str, Any]:
+    """Apply redaction to a record."""
+    
     return _REGISTRY.apply(record)
 
 

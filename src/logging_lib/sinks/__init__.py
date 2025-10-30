@@ -1,8 +1,8 @@
-"""Sink implementations for logging_lib."""
+"""Sink implementations."""
 
-from .memory import InMemorySink
 from .stdout import StdoutSink
+from .memory import InMemorySink
 
-__all__ = ["InMemorySink", "StdoutSink"]
+__all__ = ["StdoutSink", "InMemorySink"]
 
 

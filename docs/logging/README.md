@@ -1,12 +1,13 @@
-# Logging Library — Phase 1 Overview
+# Logging Library — Phase 2 Overview
 
-Phase 1 introduces the foundational `logging_lib` package. Highlights:
+`logging_lib` now ships with the Phase 2 runtime upgrades. Highlights:
 
 - **Structured schema** – `logging_lib.schema` emits canonical JSON documents with timestamps, service/env tags, and schema versioning.
-- **Configurable settings** – `logging_lib.config` loads immutable `LoggingSettings` from environment variables and exposes `configure()` helpers.
-- **Logger facade** – `logging_lib.get_logger(component)` returns a structured logger that honors severity thresholds, context managers, and redaction hooks.
-- **Sinks** – Stdout NDJSON sink ships for Cloud Run ingestion. An in-memory sink can be enabled for diagnostics (`LOG_SINKS=stdout,memory`).
-- **Queue & dispatcher** – A bounded queue drops oldest entries under pressure. Dispatcher flushes synchronously in Phase 1; later phases will introduce async workers and Cloud Logging adapters.
+- **Async dispatcher** – Background worker threads drain a bounded queue, batching records with retry/backoff semantics (<1 ms enqueue p95 target).
+- **Dual sinks** – Stdout NDJSON sink for Cloud Run ingestion plus an optional Google Cloud Logging API sink (`LOG_SINKS=stdout,gcl`) with trace/span enrichment.
+- **Configuration** – `logging_lib.config` exposes env-driven `LoggingSettings` (queue sizing, batch size, flush intervals, retry timings, sink selection).
+- **Metrics** – `logging_lib.metrics` tracks drops, retries, queue depth, and flush durations for observability and alerting.
+- **Diagnostics** – In-memory sink available for local testing (`LOG_SINKS=stdout,memory`), with `logging_lib.logger.dump_memory_sink()` helper.
 
 Usage sketch:
 
@@ -20,6 +21,6 @@ with logger_context(rid="abc123"):
     logger.info("starting")
 ```
 
-Future phases will extend this foundation with asynchronous delivery, dual Cloud Logging sinks, Flask middleware, and advanced sampling/redaction controls. For details, see `docs/logging/design_plan.md` and `docs/logging/implementation_phase_plan.md`.
+Operational guidance (queue sizing, retry tuning, verifying Cloud Logging ingestion) lives in `docs/logging/operations.md`. Future phases will add Flask context propagation and advanced sampling/redaction controls. See `docs/logging/design_plan.md` and `docs/logging/implementation_phase_plan.md` for roadmap details.
 
 
