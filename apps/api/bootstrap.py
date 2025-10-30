@@ -6,14 +6,22 @@ factory, and tenant middleware. Centralizes DI for the API app.
 
 from __future__ import annotations
 
-from typing import Optional
+import logging
+from typing import Optional, TYPE_CHECKING
 
 from app_platform.config.config import get_server_config, ServerConfig
 from adapters.providers.mock_auth0 import MockAuth0Provider
 from adapters.providers.deny_all import DenyAllAuthProvider
 from adapters.providers.factory import build_auth0_provider
 from app_platform.observability.metrics import AuthMetrics
-from apps.api.http.middleware import TenantMiddleware
+from apps.api.http.middleware import TenantAuditSink, TenantMiddleware
+
+
+if TYPE_CHECKING:  # pragma: no cover - imported for type checkers only
+    from adapters.db.firestore.service_factory import FirestoreServiceFactory
+
+
+logger = logging.getLogger(__name__)
 
 
 def load_server_config() -> ServerConfig:
@@ -68,8 +76,19 @@ def build_firestore_factory(cfg) -> Optional["FirestoreServiceFactory"]:
 
 
 def build_tenant_middleware(auth_config, firestore_factory) -> Optional[TenantMiddleware]:
-    if firestore_factory:
-        return TenantMiddleware(auth_config, firestore_factory)
-    return None
+    if not firestore_factory:
+        return None
+
+    audit_sink: Optional[TenantAuditSink] = None
+    try:
+        audit_sink = firestore_factory.get_audit_service()
+    except Exception as exc:
+        logger.warning(
+            "Failed to initialize Firestore audit service for tenant middleware",
+            extra={"error": str(exc)},
+            exc_info=True,
+        )
+
+    return TenantMiddleware(auth_config, audit_sink)
 
 

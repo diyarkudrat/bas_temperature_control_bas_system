@@ -17,7 +17,7 @@ from functools import wraps
 from types import SimpleNamespace
 from typing import Any, Dict, List, Optional, Tuple
 
-from flask import g, jsonify, request
+from flask import current_app, g, jsonify, request
 
 from logging_lib import get_logger as get_structured_logger
 
@@ -521,7 +521,7 @@ def require_auth(required_role="operator", require_tenant=False, provider: Optio
                             _log_jwt_failure(metrics)
                             return denial  # type: ignore[return-value]
                         if require_tenant:
-                            tenant_result = _enforce_tenant_isolation_jwt(request)
+                            tenant_result = _ensure_tenant_header()
                             if tenant_result is not True:
                                 return tenant_result
                         user_id = str(claims.get('sub', '') or '').strip()
@@ -652,7 +652,7 @@ def require_auth(required_role="operator", require_tenant=False, provider: Optio
                 )
 
                 if require_tenant:
-                    tenant_result = _enforce_tenant_isolation(session_obj, request)
+                    tenant_result = _ensure_tenant_isolation(session_obj)
                     if tenant_result is not True:
                         return tenant_result
 
@@ -777,106 +777,43 @@ def _extract_roles_from_claims_local(claims: Dict[str, Any]) -> List[str]:
         return []
 
 
-def _enforce_tenant_isolation(session, request):
-    """Enforce tenant isolation for the session."""
-    try:
-        # Get tenant ID from request header
-        tenant_header = getattr(request.auth_config, 'tenant_id_header', 'X-BAS-Tenant')
-        requested_tenant_id = request.headers.get(tenant_header)
+def _tenant_middleware_missing_response() -> Tuple[Any, int]:
+    logger.warning("Tenant middleware not configured")
+    return jsonify({
+        "error": "Tenant middleware not configured",
+        "code": "TENANT_MIDDLEWARE_MISSING",
+    }), 500
 
-        if not requested_tenant_id:
-            logger.warning(
-                "Missing tenant ID in request",
-                extra={"endpoint": request.endpoint},
-            )
-            _audit_permission_denied(
-                session.username, session.user_id, request.remote_addr,
-                request.endpoint, "MISSING_TENANT_ID"
-            )
-            return jsonify({
-                'error': 'Tenant ID required',
-                'code': 'MISSING_TENANT_ID'
-            }), 400
 
-        # Get user's tenant from session
-        user_tenant_id = getattr(session, 'tenant_id', None)
-        if not user_tenant_id:
-            logger.warning(
-                "Session missing tenant",
-                extra={"endpoint": request.endpoint, "user_hash": _scrub_identifier(session.username)},
-            )
-            _audit_permission_denied(
-                session.username, session.user_id, request.remote_addr,
-                request.endpoint, "NO_SESSION_TENANT"
-            )
-            return jsonify({
-                'error': 'User not assigned to tenant',
-                'code': 'NO_SESSION_TENANT'
-            }), 400
+def _ensure_tenant_header() -> Any:
+    middleware = getattr(current_app, "tenant_middleware", None)
+    if middleware is None:
+        return _tenant_middleware_missing_response()
 
-        # Validate tenant access
-        if user_tenant_id != requested_tenant_id:
-            logger.warning(
-                "Tenant violation",
-                extra={
-                    "endpoint": request.endpoint,
-                    "user_hash": _scrub_identifier(session.username),
-                    "attempted_tenant": requested_tenant_id,
-                    "allowed_tenant": user_tenant_id,
-                },
-            )
+    result = middleware.require_tenant(lambda: True)()
+    return result
 
-            _audit_tenant_violation(
-                session.user_id, session.username, request.remote_addr,
-                requested_tenant_id, user_tenant_id
-            )
 
-            return jsonify({
-                'error': 'Access denied to tenant',
-                'code': 'TENANT_ACCESS_DENIED'
-            }), 403
+def _ensure_tenant_isolation(session_obj: Any) -> Any:
+    middleware = getattr(current_app, "tenant_middleware", None)
+    if middleware is None:
+        return _tenant_middleware_missing_response()
 
-        # Store validated tenant ID in request context
-        g.tenant_id = requested_tenant_id
+    original_session = getattr(request, "session", None)
+    request.session = session_obj
+    result = middleware.enforce_tenant_isolation(lambda: True)()
 
+    if result is True:
         return True
 
-    except Exception as e:
-        logger.error(
-            "Error enforcing tenant isolation",
-            extra={"endpoint": request.endpoint, "error": str(e)},
-        )
-        return jsonify({
-            'error': 'Tenant validation error',
-            'code': 'TENANT_VALIDATION_ERROR'
-        }), 500
-
-
-def _enforce_tenant_isolation_jwt(request):
-    """Enforce tenant isolation for JWT-authenticated requests using header only."""
-    try:
-        tenant_header = getattr(request.auth_config, 'tenant_id_header', 'X-BAS-Tenant') if hasattr(request, 'auth_config') else 'X-BAS-Tenant'
-        requested_tenant_id = request.headers.get(tenant_header)
-        if not requested_tenant_id:
-            logger.warning(
-                "Missing tenant ID in JWT request",
-                extra={"endpoint": request.endpoint},
-            )
-            return jsonify({
-                'error': 'Tenant ID required',
-                'code': 'MISSING_TENANT_ID'
-            }), 400
-        g.tenant_id = requested_tenant_id
-        return True
-    except Exception as e:
-        logger.error(
-            "Error enforcing tenant isolation (JWT)",
-            extra={"endpoint": request.endpoint, "error": str(e)},
-        )
-        return jsonify({
-            'error': 'Tenant validation error',
-            'code': 'TENANT_VALIDATION_ERROR'
-        }), 500
+    if original_session is not None:
+        request.session = original_session
+    else:
+        try:
+            delattr(request, "session")
+        except Exception:
+            request.session = None
+    return result
 
 
 def _audit_auth_failure(reason: str, ip_address: str, endpoint: str):

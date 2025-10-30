@@ -290,9 +290,15 @@ def setup_auth_context():
         except Exception:
             client_logger.warning("Failed to create auth service client", exc_info=True)
 
-    # Initialize tenant context if middleware is available
+    tenant_context = None
     if tenant_middleware and auth_config:
-        tenant_middleware.setup_tenant_context(request)
+        try:
+            tenant_middleware.setup_tenant_context(request)
+            tenant_context = getattr(request, "_tenant_context", None)
+            if tenant_context is not None:
+                setattr(request, "tenant_context", tenant_context)
+        except Exception:
+            context_logger.warning("Tenant context setup failed", exc_info=True)
 
     # Apply security + versioning headers: build once, safely
     global _apply_versioning
@@ -312,6 +318,7 @@ def setup_auth_context():
             "auth_config_attached": auth_config is not None,
             "auth_client_attached": hasattr(request, "auth_service_client"),
             "tenant_middleware": tenant_middleware is not None,
+            "tenant_context": tenant_context.tenant_id if tenant_context else None,
         },
     )
 
