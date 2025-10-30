@@ -5,7 +5,13 @@ Unit tests for authentication models (User, Session) using pytest.
 import time
 import pytest
 
-from auth.models import User, Session
+from domains.auth.models import User, Session
+from domains.auth.serializers import (
+    session_from_dict,
+    session_to_dict,
+    user_from_dict,
+    user_to_dict,
+)
 from tests.utils.assertions import assert_equals, assert_true, assert_false, assert_is_not_none
 
 
@@ -35,7 +41,7 @@ class TestUserModel:
 
     def test_user_to_dict(self, sample_user):
         """Test converting user to dictionary."""
-        user_dict = sample_user.to_dict()
+        user_dict = user_to_dict(sample_user)
         assert_equals(user_dict['username'], "testuser")
         assert_equals(user_dict['password_hash'], "hashed_password_123")
         assert_equals(user_dict['salt'], "salt_123")
@@ -58,7 +64,7 @@ class TestUserModel:
             'password_history': '["old1", "old2"]',
         }
         
-        user = User.from_dict(user_data)
+        user = user_from_dict(user_data)
         assert_equals(user.username, 'newuser')
         assert_equals(user.password_hash, 'newhash')
         assert_equals(user.salt, 'newsalt')
@@ -77,7 +83,7 @@ class TestUserModel:
             'salt': 'salt',
         }
         
-        user = User.from_dict(user_data)
+        user = user_from_dict(user_data)
         assert_equals(user.role, 'operator')
         assert_equals(user.failed_attempts, 0)
         assert_equals(user.locked_until, 0)
@@ -109,7 +115,7 @@ class TestSessionModel:
 
     def test_session_to_dict(self, sample_session):
         """Test converting session to dictionary."""
-        session_dict = sample_session.to_dict()
+        session_dict = session_to_dict(sample_session)
         assert_equals(session_dict['session_id'], "sess_test_123")
         assert_equals(session_dict['username'], "testuser")
         assert_equals(session_dict['role'], "operator")
@@ -131,7 +137,7 @@ class TestSessionModel:
             'user_agent': 'Chrome/91.0',
         }
         
-        session = Session.from_dict(session_data)
+        session = session_from_dict(session_data)
         assert_equals(session.session_id, 'sess_456')
         assert_equals(session.username, 'newuser')
         assert_equals(session.role, 'admin')
@@ -156,7 +162,7 @@ class TestSessionModel:
             'user_agent': 'Safari/14.0'
         }
         
-        session = Session.from_dict(session_data)
+        session = session_from_dict(session_data)
 
 
 
@@ -169,7 +175,7 @@ class TestSessionModel:
             'password_history': 'invalid_json'  # Invalid JSON
         }
         
-        user = User.from_dict(user_data)
+        user = user_from_dict(user_data)
         assert_equals(user.password_history, [], "Should default to empty list for invalid JSON")
 
     def test_user_from_dict_non_list_password_history(self):
@@ -181,7 +187,7 @@ class TestSessionModel:
             'password_history': '{"not": "a_list"}'  # Valid JSON but not a list
         }
         
-        user = User.from_dict(user_data)
+        user = user_from_dict(user_data)
         assert_equals(user.password_history, [], "Should default to empty list for non-list JSON")
 
     def test_user_from_dict_invalid_numeric_fields(self):
@@ -196,7 +202,7 @@ class TestSessionModel:
             'locked_until': None  # None value
         }
         
-        user = User.from_dict(user_data)
+        user = user_from_dict(user_data)
         assert_true(user.created_at > 0, "Should set valid created_at for invalid input")
         assert_equals(user.last_login, 0, "Should default to 0 for negative last_login")
         assert_equals(user.failed_attempts, 0, "Should default to 0 for invalid failed_attempts")
@@ -211,7 +217,7 @@ class TestSessionModel:
             'role': 'invalid_role'  # Invalid role
         }
         
-        user = User.from_dict(user_data)
+        user = user_from_dict(user_data)
         assert_equals(user.role, 'operator', "Should default to operator for invalid role")
 
 
@@ -229,7 +235,7 @@ class TestSessionModel:
             'user_agent': 'Test Browser'
         }
         
-        session = Session.from_dict(session_data)
+        session = session_from_dict(session_data)
         assert_true(session.created_at > 0, "Should set valid created_at for invalid input")
         assert_true(session.expires_at > session.created_at, "Should set valid expires_at")
         assert_true(session.last_access >= session.created_at, "Should set valid last_access")
@@ -248,7 +254,7 @@ class TestSessionModel:
             'user_agent': 'Test Browser'
         }
         
-        session = Session.from_dict(session_data)
+        session = session_from_dict(session_data)
         assert_equals(session.role, 'operator', "Should default to operator for invalid role")
 
 
@@ -256,7 +262,7 @@ class TestSessionModel:
         """Test that to_dict method logs debug information."""
         # This test verifies the logging behavior is present
         # We can't easily test the actual log output, but we can verify the method works
-        user_dict = sample_user.to_dict()
+        user_dict = user_to_dict(sample_user)
         assert_is_not_none(user_dict)
         assert_equals(user_dict['username'], sample_user.username)
 
@@ -264,7 +270,7 @@ class TestSessionModel:
         """Test that to_dict method logs debug information."""
         # This test verifies the logging behavior is present
         # We can't easily test the actual log output, but we can verify the method works
-        session_dict = sample_session.to_dict()
+        session_dict = session_to_dict(sample_session)
         assert_is_not_none(session_dict)
         assert_equals(session_dict['session_id'], sample_session.session_id)
 
@@ -278,7 +284,7 @@ class TestSessionModel:
             'phone_number': '+1234567890'
         }
         
-        user = User.from_dict(user_data)
+        user = user_from_dict(user_data)
         assert_is_not_none(user)
         assert_equals(user.username, 'testuser')
 
@@ -297,7 +303,7 @@ class TestSessionModel:
             'user_agent': 'Test Browser'
         }
         
-        session = Session.from_dict(session_data)
+        session = session_from_dict(session_data)
         assert_is_not_none(session)
         assert_equals(session.session_id, 'sess_123')
 
@@ -330,7 +336,7 @@ class TestSessionModel:
             'failed_attempts': 0  # Zero attempts
         }
         
-        user = User.from_dict(user_data)
+        user = user_from_dict(user_data)
         assert_equals(user.created_at, 0, "Should preserve zero created_at")
         assert_equals(user.last_login, 0, "Should preserve zero last_login")
         assert_equals(user.locked_until, 0, "Should preserve zero locked_until")
@@ -351,7 +357,7 @@ class TestSessionModel:
             'user_agent': 'Test Browser'
         }
         
-        session = Session.from_dict(session_data)
+        session = session_from_dict(session_data)
         assert_equals(session.created_at, current_time, "Should preserve created_at")
         assert_equals(session.expires_at, current_time + 1, "Should preserve expires_at")
         assert_equals(session.last_access, current_time, "Should preserve last_access")

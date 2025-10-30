@@ -19,14 +19,15 @@ from flask_cors import CORS
 import logging
 import os as _os
 import os
-from typing import Optional
+from typing import Optional, Callable
+
+from logging_lib import configure as configure_structured_logging, get_logger as get_structured_logger
+from logging_lib.flask_ext import register_flask_context
 
 _THIS_DIR = os.path.dirname(os.path.abspath(__file__))
 
 # Authentication imports
 from app_platform.config.auth import AuthConfig
-from application.auth.managers import UserManager, SessionManager
-from application.auth.services import AuditLogger, RateLimiter
 from apps.api.http.middleware import add_security_headers as _sec_headers
 
 from apps.api.http.versioning import build_versioning_applier
@@ -40,15 +41,19 @@ from adapters.providers.deny_all import DenyAllAuthProvider
 from application.hardware.bas_hardware_controller import BASController
 from app_platform.config.rate_limit import AtomicRateLimitConfig
 from apps.api.http.router import register_routes
+from apps.api.clients import AuthServiceClient, AuthServiceClientConfig
 
 # Configure logging early to ensure consistent format/level
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+configure_structured_logging(service="api", env=os.getenv("BAS_ENV", "local"))
+get_structured_logger("api.bootstrap").info("api service starting")
 
 # Use local templates directory to avoid legacy coupling
 _TEMPLATE_DIR = os.path.normpath(os.path.join(_THIS_DIR, 'templates'))
 app = Flask(__name__, template_folder=_TEMPLATE_DIR)
 CORS(app)
+register_flask_context(app, service="api")
 
 # Default versioning applier; replaced during setup if build succeeds
 _apply_versioning = lambda resp: resp
@@ -60,12 +65,9 @@ app.config["controller"] = controller
 
 # Authentication singletons (populated in init_auth)
 auth_config: Optional[AuthConfig] = None
-user_manager: Optional[UserManager] = None
-session_manager: Optional[SessionManager] = None
-audit_logger: Optional[AuditLogger] = None
-rate_limiter: Optional[RateLimiter] = None
 auth_provider: Optional[AuthProvider] = None
 auth_metrics: Optional[AuthMetrics] = None
+auth_service_client_factory: Optional[Callable[[], AuthServiceClient]] = None
 _rate_limit_holder = AtomicRateLimitConfig(server_config.rate_limit)
 app.config["rate_limit_holder"] = _rate_limit_holder
 
@@ -135,54 +137,51 @@ tenant_middleware = None
 def init_auth():
     """Initialize authentication system."""
 
-    global auth_config, user_manager, session_manager
-    global audit_logger, rate_limiter
+    global auth_config
     global firestore_factory, tenant_middleware
-    
+    global auth_service_client_factory
+
     try:
         logger.info("Initializing authentication system")
-        
-        # Load auth configuration
+
+        # Load auth configuration (shared invariants with auth service)
         auth_config = AuthConfig.from_file('configs/app/auth_config.json')
         if not auth_config.validate():
             logger.error("Invalid auth configuration")
             return False
-        
-        # Initialize Firestore if enabled
+
+        # Initialize Firestore if enabled for tenant middleware or other features
         if any([auth_config.use_firestore_telemetry, auth_config.use_firestore_auth, auth_config.use_firestore_audit]):
             logger.info("Initializing Firestore services")
-            # Manual composition root: construct factory with server config
             firestore_factory = build_firestore_factory(server_config)
-            
+
             # Health check
             health = firestore_factory.health_check()
             if health['status'] != 'healthy':
                 logger.error(f"Firestore health check failed: {health}")
                 return False
-            
+
             logger.info("Firestore services initialized successfully")
-        
+
         # Initialize tenant middleware if Firestore is enabled
         if firestore_factory:
             tenant_middleware = build_tenant_middleware(auth_config, firestore_factory)
             logger.info("Tenant middleware initialized")
-        
-        # Initialize managers (will use Firestore if enabled)
-        # Use an ephemeral sqlite database file path when Firestore features are disabled.
-        db_path = 'bas.sqlite3'
-        user_manager = UserManager(db_path, auth_config, firestore_factory)
-        session_manager = SessionManager(db_path, auth_config, firestore_factory)
-        app.config["user_manager"] = user_manager
-        
-        # Initialize services
-        audit_logger = AuditLogger(db_path, firestore_factory)
-        rate_limiter = RateLimiter(auth_config)
-        
+
+        # Auth service client factory keeps shared IO out of blueprints
+        cfg = AuthServiceClientConfig.from_env(os.environ)
+
+        def _client_factory() -> AuthServiceClient:
+            return AuthServiceClient(cfg)
+
+        auth_service_client_factory = _client_factory
+        app.config["auth_service_client_factory"] = _client_factory
+
         # Update app config with Firestore factory for handlers
         app.config["firestore_factory"] = firestore_factory
         logger.info("Authentication system initialized successfully")
         return True
-        
+
     except Exception as e:
         logger.error(f"Failed to initialize auth system: {e}")
         return False
@@ -215,14 +214,16 @@ def setup_auth_context():
 
     if auth_config:
         request.auth_config = auth_config
-        request.session_manager = session_manager
-        request.audit_logger = audit_logger
-        # Expose limiter for auth endpoints implemented in blueprints
-        request.rate_limiter = rate_limiter
-        
-        # Initialize tenant context if middleware is available
-        if tenant_middleware:
-            tenant_middleware.setup_tenant_context(request)
+
+    if auth_service_client_factory:
+        try:
+            request.auth_service_client = auth_service_client_factory()
+        except Exception:
+            logger.warning("Failed to create auth service client", exc_info=True)
+
+    # Initialize tenant context if middleware is available
+    if tenant_middleware and auth_config:
+        tenant_middleware.setup_tenant_context(request)
 
     # Apply security + versioning headers: build once, safely
     global _apply_versioning

@@ -6,6 +6,8 @@ from unittest.mock import Mock, patch, MagicMock
 from datetime import datetime
 from typing import Dict, Any
 
+from domains.auth.serializers import user_to_dict
+
 # Contract testing imports
 from tests.contracts.base import UsersStoreProtocol, OperationResult, QueryOptions, PaginatedResult
 from tests.contracts.firestore import ContractValidator, ContractViolationError
@@ -470,7 +472,7 @@ class TestUsersRepository:
         
         mock_doc = Mock()
         mock_doc.id = "test_user_id"
-        mock_doc.to_dict.return_value = sample_user.to_dict()
+        mock_doc.to_dict.return_value = user_to_dict(sample_user)
         
         with patch.object(users_repo, '_apply_query_options') as mock_apply_options:
             mock_apply_options.return_value.stream.return_value = [mock_doc]

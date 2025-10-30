@@ -1,6 +1,8 @@
 import sqlite3
 from typing import List, Optional
+
 from domains.auth.models import Session
+from domains.auth.serializers import session_from_dict, session_to_dict
 
 
 class SessionsTable:
@@ -33,6 +35,7 @@ class SessionsTable:
     def upsert(self, session: Session) -> None:
         conn = sqlite3.connect(self.db_path)
         cur = conn.cursor()
+        record = session_to_dict(session)
         cur.execute(
             '''
             INSERT OR REPLACE INTO sessions
@@ -40,17 +43,17 @@ class SessionsTable:
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ''',
             (
-                session.session_id,
-                session.username,
-                session.role,
-                session.created_at,
-                session.expires_at,
-                session.last_access,
-                session.fingerprint,
-                session.ip_address,
-                session.user_agent,
-                session.user_id,
-                session.tenant_id,
+                record["session_id"],
+                record["username"],
+                record["role"],
+                record["created_at"],
+                record["expires_at"],
+                record["last_access"],
+                record["fingerprint"],
+                record["ip_address"],
+                record["user_agent"],
+                record["user_id"],
+                record["tenant_id"],
             ),
         )
         conn.commit(); conn.close()
@@ -72,5 +75,5 @@ class SessionsTable:
         out: List[Session] = []
         for row in rows:
             data = dict(zip(cols, row))
-            out.append(Session.from_dict(data))
+            out.append(session_from_dict(data))
         return out

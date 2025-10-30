@@ -27,6 +27,12 @@ from tests.utils.business_rules import BusinessRules
 
 # Auth models under test (server/auth/models.py)
 from domains.auth.models import User as AuthUser, Session as AuthSession
+from domains.auth.serializers import (
+    session_from_dict as auth_session_from_dict,
+    session_to_dict as auth_session_to_dict,
+    user_from_dict as auth_user_from_dict,
+    user_to_dict as auth_user_to_dict,
+)
 
 
 @pytest.mark.auth
@@ -512,7 +518,7 @@ class TestUser:
             algorithm_params={"algorithm": "argon2id"}
         )
         
-        result = user.to_dict()
+        result = auth_user_to_dict(user)
         
         assert_equals(result['user_id'], "test_user_id", "Should include user_id")
         assert_equals(result['username'], "testuser", "Should include username")
@@ -719,7 +725,7 @@ class TestSession:
             tenant_id="tenant_789"
         )
         
-        result = session.to_dict()
+        result = auth_session_to_dict(session)
         
         assert_equals(result['session_id'], "f47ac10b-58cc-4372-a567-0e02b2c3d479", "Should include session_id")
         assert_equals(result['user_id'], "3fa85f64-5717-4562-b3fc-2c963f66afa6", "Should include user_id")
@@ -1247,7 +1253,7 @@ class TestAuthUserModels:
 
     def test_user_to_dict_password_history_json(self):
         user = AuthUser(username="u", password_hash="p", salt="s", password_history=["a", "b"])
-        result = user.to_dict()
+        result = auth_user_to_dict(user)
         assert_true(isinstance(result["password_history"], str), "password_history should be JSON string")
         parsed = json.loads(result["password_history"])
         assert_equals(parsed, ["a", "b"], "password_history JSON should round-trip to list")
@@ -1264,7 +1270,7 @@ class TestAuthUserModels:
             "locked_until": 2.0,
             "password_history": json.dumps(["old1", "old2"]),
         }
-        user = AuthUser.from_dict(data)
+        user = auth_user_from_dict(data)
         assert_equals(user.username, "u", "Should set username")
         assert_equals(user.password_hash, "p", "Should set password_hash")
         assert_equals(user.salt, "s", "Should set salt")
@@ -1277,17 +1283,17 @@ class TestAuthUserModels:
 
     def test_user_from_dict_password_history_invalid_json(self):
         data = {"username": "u", "password_hash": "p", "salt": "s", "password_history": "not-json"}
-        user = AuthUser.from_dict(data)
+        user = auth_user_from_dict(data)
         assert_equals(user.password_history, [], "Invalid JSON should yield empty password_history list")
 
     def test_user_from_dict_password_history_non_list_json(self):
         data = {"username": "u", "password_hash": "p", "salt": "s", "password_history": json.dumps("hello")}
-        user = AuthUser.from_dict(data)
+        user = auth_user_from_dict(data)
         assert_equals(user.password_history, [], "Non-list JSON should yield empty password_history list")
 
     def test_user_from_dict_password_history_none(self):
         data = {"username": "u", "password_hash": "p", "salt": "s", "password_history": None}
-        user = AuthUser.from_dict(data)
+        user = auth_user_from_dict(data)
         assert_equals(user.password_history, [], "None password_history should yield empty list")
 
     def test_user_from_dict_numeric_and_role_validation_with_freeze(self):
@@ -1303,7 +1309,7 @@ class TestAuthUserModels:
                 "locked_until": "bad",  # invalid -> 0
                 "role": "INVALID_ROLE", # invalid -> operator
             }
-            user = AuthUser.from_dict(data)
+            user = auth_user_from_dict(data)
             assert_equals(user.created_at, now_ts, "Invalid created_at should default to now")
             assert_equals(user.last_login, 0, "Negative last_login should default to 0")
             assert_equals(user.failed_attempts, 0, "Negative failed_attempts should default to 0")
@@ -1312,12 +1318,12 @@ class TestAuthUserModels:
 
     def test_user_from_dict_role_allowed_read_only(self):
         data = {"username": "u", "password_hash": "p", "salt": "s", "role": "read-only"}
-        user = AuthUser.from_dict(data)
+        user = auth_user_from_dict(data)
         assert_equals(user.role, "read-only", "Allowed role read-only should be preserved")
 
     def test_user_from_dict_missing_required_keys(self):
         with assert_raises(KeyError):
-            AuthUser.from_dict({"password_hash": "p", "salt": "s"})  # missing username
+            auth_user_from_dict({"password_hash": "p", "salt": "s"})  # missing username
 
 
 @pytest.mark.auth
@@ -1381,7 +1387,7 @@ class TestAuthSessionModels:
             "user_id": "uid-1",
             "tenant_id": "ten-1",
         }
-        sess = AuthSession.from_dict(data)
+        sess = auth_session_from_dict(data)
         assert_equals(sess.role, "admin", "Valid role should be preserved")
         assert_equals(sess.created_at, 1000.0, "created_at should be preserved")
         assert_equals(sess.expires_at, 2000.0, "expires_at should be preserved")
@@ -1399,7 +1405,7 @@ class TestAuthSessionModels:
             "ip_address": "127.0.0.1",
             "user_agent": "UA",
         }
-        sess = AuthSession.from_dict(data)
+        sess = auth_session_from_dict(data)
         assert_equals(sess.role, "operator", "Invalid role should default to operator")
         assert_equals(sess.user_id, "unknown", "Missing user_id should default to 'unknown'")
         assert_is_none(sess.tenant_id, "Missing tenant_id should default to None")
@@ -1418,7 +1424,7 @@ class TestAuthSessionModels:
                 "ip_address": "127.0.0.1",
                 "user_agent": "UA",
             }
-            sess = AuthSession.from_dict(data)
+            sess = auth_session_from_dict(data)
             assert_equals(sess.created_at, now_ts, "Invalid created_at should default to now")
             assert_equals(sess.expires_at, now_ts + 1800, "Invalid expires_at should default to created_at + 1800")
             assert_equals(sess.last_access, now_ts, "Invalid last_access should default to created_at")
@@ -1435,12 +1441,12 @@ class TestAuthSessionModels:
             "ip_address": "127.0.0.1",
             "user_agent": "UA",
         }
-        sess = AuthSession.from_dict(data)
+        sess = auth_session_from_dict(data)
         assert_equals(sess.last_access, 2000.0, "last_access earlier than created_at should clamp to created_at")
 
     def test_session_from_dict_missing_required_keys(self):
         with assert_raises(KeyError):
-            AuthSession.from_dict({"username": "u"})  # missing many required keys
+            auth_session_from_dict({"username": "u"})  # missing many required keys
 
 
 # ---------------------------------------------------------------------------

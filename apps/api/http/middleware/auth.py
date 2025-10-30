@@ -14,6 +14,7 @@ import threading
 import time
 from collections import defaultdict
 from functools import wraps
+from types import SimpleNamespace
 from typing import Any, Dict, List, Optional, Tuple
 
 from flask import g, jsonify, request
@@ -507,41 +508,72 @@ def require_auth(required_role="operator", require_tenant=False, provider: Optio
                         "code": "INVALID_SESSION_ID"
                     }), 401
 
-                session_manager = getattr(request, 'session_manager', None)
-                if not session_manager:
-                    logger.error("Session manager not available")
-                    return jsonify({"error": "Authentication system not available", "code": "AUTH_SYSTEM_ERROR"}), 500
+                client = getattr(request, 'auth_service_client', None)
+                if client is None:
+                    logger.error("Auth service client not available")
+                    return jsonify({"error": "Authentication service unavailable", "code": "AUTH_SERVICE_ERROR"}), 503
 
-                session = session_manager.validate_session(session_id, request)
-                if not session:
-                    logger.warning(f"Invalid or expired session for {request.endpoint}")
-                    _audit_auth_failure("SESSION_INVALID", request.remote_addr, request.endpoint)
+                try:
+                    upstream = client.status(
+                        session_id=session_id,
+                        cookies=dict(request.cookies) if request.cookies else None,
+                    )
+                except ConnectionError:
+                    logger.error("Auth service status request failed", exc_info=True)
+                    return jsonify({"error": "Auth service unreachable", "code": "AUTH_UPSTREAM_UNAVAILABLE"}), 502
+
+                if not upstream.ok:
+                    payload = upstream.json or {
+                        "error": "Invalid or expired session",
+                        "code": "SESSION_INVALID",
+                    }
+                    _audit_auth_failure(payload.get("code", "SESSION_INVALID"), request.remote_addr, request.endpoint)
+                    _log_session_failure(metrics)
+                    resp = jsonify(payload)
+                    for cookie_header in upstream.set_cookies:
+                        resp.headers.add("Set-Cookie", cookie_header)
+                    return resp, upstream.status_code or 502
+
+                payload = upstream.json or {}
+                user_payload = payload.get("user", {}) if isinstance(payload, dict) else {}
+                username = str(user_payload.get("username") or "")
+                role = str(user_payload.get("role") or "")
+                user_id = user_payload.get("user_id", "unknown")
+                tenant_id = user_payload.get("tenant_id")
+
+                if not username:
+                    logger.warning("Auth service status response missing username")
                     _log_session_failure(metrics)
                     return jsonify({
-                        "error": "Invalid or expired session",
-                        "message": "Please login again",
-                        "code": "SESSION_INVALID"
-                    }), 401
+                        "error": "Invalid session response",
+                        "code": "SESSION_INVALID",
+                    }), 502
 
-                if not _has_permission(session.role, required_role):
-                    logger.warning(f"Insufficient permissions for {session.username} ({session.role}) to access {request.endpoint} (requires {required_role})")
-                    _audit_permission_denied(session.username, session.user_id, request.remote_addr, request.endpoint, f"ROLE_{required_role.upper()}")
+                if not _has_permission(role, required_role):
+                    logger.warning(f"Insufficient permissions for {username} ({role}) to access {request.endpoint} (requires {required_role})")
+                    _audit_permission_denied(username, user_id, request.remote_addr, request.endpoint, f"ROLE_{required_role.upper()}")
                     return jsonify({
                         "error": "Insufficient permissions",
-                        "message": f"{session.role} role cannot perform this action",
+                        "message": f"{role} role cannot perform this action",
                         "code": "PERMISSION_DENIED"
                     }), 403
 
+                session_obj = SimpleNamespace(
+                    session_id=session_id,
+                    username=username,
+                    role=role,
+                    user_id=user_id,
+                    tenant_id=tenant_id,
+                    created_at=user_payload.get("login_time"),
+                )
+
                 if require_tenant:
-                    tenant_result = _enforce_tenant_isolation(session, request)
+                    tenant_result = _enforce_tenant_isolation(session_obj, request)
                     if tenant_result is not True:
                         return tenant_result
 
-                session_manager.update_last_access(session_id)
-                request.session = session
-                if hasattr(request, 'audit_logger'):
-                    request.audit_logger.log_session_access(session_id, request.endpoint)
-                logger.debug(f"Authentication successful for {session.username} accessing {request.endpoint}")
+                request.session = session_obj
+                logger.debug(f"Authentication successful for {username} accessing {request.endpoint}")
                 _log_session_success(metrics, sess_start_ms)
                 return f(*args, **kwargs)
             except Exception as e:

@@ -1,7 +1,8 @@
 import sqlite3
-import json
 from typing import Optional
+
 from domains.auth.models import User
+from domains.auth.serializers import user_from_dict, user_to_dict
 
 
 class UsersTable:
@@ -40,11 +41,12 @@ class UsersTable:
             return None
         cols = [d[0] for d in desc]
         data = dict(zip(cols, row))
-        return User.from_dict(data)
+        return user_from_dict(data)
 
     def upsert(self, user: User) -> None:
         conn = sqlite3.connect(self.db_path)
         cur = conn.cursor()
+        record = user_to_dict(user)
         cur.execute(
             '''
             INSERT OR REPLACE INTO users 
@@ -52,15 +54,15 @@ class UsersTable:
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             ''',
             (
-                user.username,
-                user.password_hash,
-                user.salt,
-                user.role,
-                user.created_at,
-                user.last_login,
-                user.failed_attempts,
-                user.locked_until,
-                json.dumps(user.password_history),
+                record["username"],
+                record["password_hash"],
+                record["salt"],
+                record["role"],
+                record["created_at"],
+                record["last_login"],
+                record["failed_attempts"],
+                record["locked_until"],
+                record["password_history"],
             ),
         )
         conn.commit(); conn.close()
