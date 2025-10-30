@@ -53,4 +53,29 @@ def apply_redaction(record: Mapping[str, Any]) -> Dict[str, Any]:
     
     return _REGISTRY.apply(record)
 
+def _mask_token(_key: str, value: Any) -> str:
+    text = str(value)
+    if len(text) <= 8:
+        return "***"
+    return f"{text[:4]}…{text[-4:]}"
+
+
+def _mask_email(_key: str, value: Any) -> str:
+    text = str(value)
+    if "@" not in text:
+        return _mask_token(_key, text)
+    local, _, domain = text.partition("@")
+    masked_local = local[0] + "***" if local else "***"
+    return f"{masked_local}@{domain}"
+
+
+for _key, _fn in {
+    "authorization": _mask_token,
+    "access_token": _mask_token,
+    "refresh_token": _mask_token,
+    "id_token": _mask_token,
+    "token": _mask_token,
+    "email": _mask_email,
+}.items():
+    register_redactor(_key, _fn)
 

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 from contextlib import contextmanager
-from contextvars import ContextVar
+from contextvars import ContextVar, Token
 from threading import RLock
 from typing import Any, Dict, Mapping, MutableMapping
 
@@ -240,14 +240,13 @@ def get_logger(name: str) -> StructuredLogger:
 
 @contextmanager
 def logger_context(**context: Any):
-    """Set the context for the logger manager."""
+    """Context manager for temporary context variables."""
 
-    token = _CONTEXT.set({**_CONTEXT.get(), **context})
-
+    token = push_context(**context)
     try:
         yield
     finally:
-        _CONTEXT.reset(token)
+        pop_context(token)
 
 
 def reset_loggers() -> None:
@@ -269,5 +268,23 @@ def dump_memory_sink() -> str:
             return json.dumps(sink.records, indent=2)
             
     return "[]"
+
+
+def push_context(**context: Any) -> Token:
+    current = dict(_CONTEXT.get())
+    current.update(context)
+    return _CONTEXT.set(current)
+
+
+def pop_context(token: Token) -> None:
+    _CONTEXT.reset(token)
+
+
+def get_context() -> Mapping[str, Any]:
+    return dict(_CONTEXT.get())
+
+
+def clear_context() -> None:
+    _CONTEXT.set({})
 
 
