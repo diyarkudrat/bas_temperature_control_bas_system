@@ -8,7 +8,7 @@ This module provides `require_auth` and helpers without importing legacy
 
 from __future__ import annotations
 
-import logging
+import hashlib
 import os
 import threading
 import time
@@ -18,6 +18,8 @@ from types import SimpleNamespace
 from typing import Any, Dict, List, Optional, Tuple
 
 from flask import g, jsonify, request
+
+from logging_lib import get_logger as get_structured_logger
 
 from app_platform.rate_limit.sliding_window_limiter import RateLimiter as RedisSlidingLimiter
 from adapters.cache.redis.revocation_service import RevocationService
@@ -30,7 +32,16 @@ except Exception:  # pragma: no cover
         return "0"
 
 
-logger = logging.getLogger(__name__)
+logger = get_structured_logger("api.http.middleware.auth")
+rate_logger = get_structured_logger("api.http.middleware.auth.rate")
+revocation_logger = get_structured_logger("api.http.middleware.auth.revocation")
+
+
+def _scrub_identifier(value: Optional[str]) -> Optional[str]:
+    if not value:
+        return None
+    digest = hashlib.sha256(value.encode("utf-8")).hexdigest()
+    return digest[:12]
 
 
 # Lightweight, non-blocking token-bucket limiter keyed by (tenant_id, api_version)
@@ -123,11 +134,24 @@ class _RequestRateLimiter:
                 self._limited_count += 1
         # If shadow mode, never block
         if not allowed and self.shadow:
-            try:
-                logger.info(f"Rate limit (shadow) would block: key={key} remaining={remaining:.2f}")
-            except Exception:
-                pass
+            rate_logger.info(
+                "Rate limit shadow hit",
+                extra={
+                    "tenant": key[0],
+                    "version": key[1],
+                    "remaining": round(remaining, 2),
+                },
+            )
             return True, remaining, key
+        if not allowed:
+            rate_logger.warning(
+                "Rate limit enforced",
+                extra={
+                    "tenant": key[0],
+                    "version": key[1],
+                    "remaining": round(remaining, 2),
+                },
+            )
         return allowed, remaining, key
 
 
@@ -190,7 +214,7 @@ def check_rate_limit() -> Optional[Tuple[Any, int]]:
             token_str = parse_authorization_header(request.headers.get('Authorization', '') or '') or ''
             try:
                 if token_str:
-                    from jose import jwt
+                    from jose import jwt  # type: ignore[import]
                     claims = jwt.get_unverified_claims(token_str)
                     sub = str(claims.get('sub') or '').strip()
                     if sub:
@@ -281,15 +305,20 @@ def enforce_revocation_check(token: str) -> Optional[Tuple[Any, int]]:
         # Extract token id (prefer jti)
         token_id = None
         try:
-            from jose import jwt
+            from jose import jwt  # type: ignore[import]
             unverified = jwt.get_unverified_claims(token)
             token_id = str(unverified.get('jti') or '').strip() or None
         except Exception:
             token_id = None
         if token_id:
+            token_hash = _scrub_identifier(token_id)
             try:
                 # Fast-path: recently known revoked -> deny immediately
                 if cache.is_recently_revoked(token_id):
+                    revocation_logger.info(
+                        "Token revoked via local cache",
+                        extra={"token_hash": token_hash},
+                    )
                     return jsonify({
                         "error": "Token revoked",
                         "code": "TOKEN_REVOKED"
@@ -301,6 +330,10 @@ def enforce_revocation_check(token: str) -> Optional[Tuple[Any, int]]:
                 if service.is_revoked(token_id):
                     # Remember locally to avoid duplicate checks briefly
                     cache.set_revoked(token_id)
+                    revocation_logger.warning(
+                        "Token revoked via upstream store",
+                        extra={"token_hash": token_hash},
+                    )
                     return jsonify({
                         "error": "Token revoked",
                         "code": "TOKEN_REVOKED"
@@ -366,7 +399,10 @@ def authorize_roles(claims: Dict[str, Any], provider_obj: Any, required_role: st
                 "message": f"JWT roles missing permission: {required_role}",
                 "code": "PERMISSION_DENIED"
             }), 403)
-        logger.warning(f"Full metadata check failed for critical path: {exc}")
+        logger.warning(
+            "Full metadata check failed",
+            extra={"endpoint": request.endpoint, "error": str(exc)},
+        )
         return False, (jsonify({
             "error": "Authorization service unavailable",
             "code": "AUTH_UNAVAILABLE"
@@ -413,7 +449,10 @@ def require_auth(required_role="operator", require_tenant=False, provider: Optio
         @wraps(f)
         def decorated_function(*args, **kwargs):
             try:
-                logger.debug(f"Checking authentication for endpoint: {request.endpoint}")
+                logger.debug(
+                    "Checking authentication",
+                    extra={"endpoint": request.endpoint},
+                )
                 try:
                     if provider is not None and not hasattr(request, 'auth_provider'):
                         setattr(request, 'auth_provider', provider)
@@ -425,21 +464,33 @@ def require_auth(required_role="operator", require_tenant=False, provider: Optio
                     return limited
 
                 if required_role not in ['operator', 'admin', 'read-only']:
-                    logger.error(f"Invalid required_role: {required_role}")
+                    logger.error(
+                        "Invalid required role",
+                        extra={"required_role": required_role, "endpoint": request.endpoint},
+                    )
                     return jsonify({"error": "Invalid role configuration", "code": "CONFIG_ERROR"}), 500
 
                 if not hasattr(request, 'auth_config') or not request.auth_config or not request.auth_config.auth_enabled:
-                    logger.debug("Authentication disabled, allowing access")
+                    logger.debug(
+                        "Authentication disabled, allowing access",
+                        extra={"endpoint": request.endpoint},
+                    )
                     return f(*args, **kwargs)
 
                 if request.auth_config.auth_mode == "shadow":
-                    logger.info(f"Shadow mode: logging access to {request.endpoint}")
+                    logger.info(
+                        "Shadow mode access",
+                        extra={"endpoint": request.endpoint},
+                    )
                     session_id = request.headers.get('X-Session-ID') or request.cookies.get('bas_session_id')
                     if hasattr(request, 'audit_logger'):
                         request.audit_logger.log_session_access(session_id, request.endpoint)
                     return f(*args, **kwargs)
 
-                logger.debug("Authentication enforced, checking JWT or session")
+                logger.debug(
+                    "Authentication enforced",
+                    extra={"endpoint": request.endpoint},
+                )
                 token: Optional[str] = parse_authorization_header(request.headers.get('Authorization', '') or '')
                 provider_obj = getattr(request, 'auth_provider', None)
                 metrics = getattr(request, 'auth_metrics', None)
@@ -474,10 +525,19 @@ def require_auth(required_role="operator", require_tenant=False, provider: Optio
                             if tenant_result is not True:
                                 return tenant_result
                         user_id = str(claims.get('sub', '') or '').strip()
-                        logger.debug(f"JWT authentication successful for {user_id} accessing {request.endpoint}")
+                        logger.debug(
+                            "JWT authentication successful",
+                            extra={
+                                "endpoint": request.endpoint,
+                                "user_hash": _scrub_identifier(user_id),
+                            },
+                        )
                         return f(*args, **kwargs)
                     except ValueError as exc:
-                        logger.warning(f"JWT verification failed for endpoint {request.endpoint}: {exc}")
+                        logger.warning(
+                            "JWT verification failed",
+                            extra={"endpoint": request.endpoint, "error": str(exc)},
+                        )
                         _log_jwt_failure(metrics)
                         if not allow_fallback:
                             msg = str(exc).lower()
@@ -493,13 +553,19 @@ def require_auth(required_role="operator", require_tenant=False, provider: Optio
                             }), 401
                         # else fall through to session checks
 
-                logger.debug("Authentication enforced, checking session")
+                logger.debug(
+                    "Checking session fallback",
+                    extra={"endpoint": request.endpoint},
+                )
                 sess_start_ms = time.time() * 1000.0
                 _log_session_attempt(metrics)
                 session_id = request.headers.get('X-Session-ID') or request.cookies.get('bas_session_id')
 
                 if not session_id or not isinstance(session_id, str) or len(session_id) < 10:
-                    logger.warning(f"Invalid session ID format for {request.endpoint}")
+                    logger.warning(
+                        "Invalid session identifier",
+                        extra={"endpoint": request.endpoint},
+                    )
                     _audit_auth_failure("INVALID_SESSION_ID", request.remote_addr, request.endpoint)
                     _log_session_failure(metrics)
                     return jsonify({
@@ -510,7 +576,10 @@ def require_auth(required_role="operator", require_tenant=False, provider: Optio
 
                 client = getattr(request, 'auth_service_client', None)
                 if client is None:
-                    logger.error("Auth service client not available")
+                    logger.error(
+                        "Auth service client unavailable",
+                        extra={"endpoint": request.endpoint},
+                    )
                     return jsonify({"error": "Authentication service unavailable", "code": "AUTH_SERVICE_ERROR"}), 503
 
                 try:
@@ -519,7 +588,11 @@ def require_auth(required_role="operator", require_tenant=False, provider: Optio
                         cookies=dict(request.cookies) if request.cookies else None,
                     )
                 except ConnectionError:
-                    logger.error("Auth service status request failed", exc_info=True)
+                    logger.error(
+                        "Auth service status request failed",
+                        extra={"endpoint": request.endpoint},
+                        exc_info=True,
+                    )
                     return jsonify({"error": "Auth service unreachable", "code": "AUTH_UPSTREAM_UNAVAILABLE"}), 502
 
                 if not upstream.ok:
@@ -542,7 +615,10 @@ def require_auth(required_role="operator", require_tenant=False, provider: Optio
                 tenant_id = user_payload.get("tenant_id")
 
                 if not username:
-                    logger.warning("Auth service status response missing username")
+                    logger.warning(
+                        "Auth service status response missing username",
+                        extra={"endpoint": request.endpoint},
+                    )
                     _log_session_failure(metrics)
                     return jsonify({
                         "error": "Invalid session response",
@@ -550,7 +626,15 @@ def require_auth(required_role="operator", require_tenant=False, provider: Optio
                     }), 502
 
                 if not _has_permission(role, required_role):
-                    logger.warning(f"Insufficient permissions for {username} ({role}) to access {request.endpoint} (requires {required_role})")
+                    logger.warning(
+                        "Insufficient permissions",
+                        extra={
+                            "endpoint": request.endpoint,
+                            "user_hash": _scrub_identifier(username),
+                            "role": role,
+                            "required_role": required_role,
+                        },
+                    )
                     _audit_permission_denied(username, user_id, request.remote_addr, request.endpoint, f"ROLE_{required_role.upper()}")
                     return jsonify({
                         "error": "Insufficient permissions",
@@ -573,11 +657,21 @@ def require_auth(required_role="operator", require_tenant=False, provider: Optio
                         return tenant_result
 
                 request.session = session_obj
-                logger.debug(f"Authentication successful for {username} accessing {request.endpoint}")
+                logger.debug(
+                    "Session authentication successful",
+                    extra={
+                        "endpoint": request.endpoint,
+                        "user_hash": _scrub_identifier(username),
+                        "role": role,
+                    },
+                )
                 _log_session_success(metrics, sess_start_ms)
                 return f(*args, **kwargs)
             except Exception as e:
-                logger.error(f"Auth middleware error on {request.endpoint}: {e}")
+                logger.error(
+                    "Auth middleware error",
+                    extra={"endpoint": request.endpoint, "error": str(e)},
+                )
                 return jsonify({"error": "Internal server error", "code": "INTERNAL_ERROR"}), 500
         return decorated_function
     return decorator
@@ -585,7 +679,10 @@ def require_auth(required_role="operator", require_tenant=False, provider: Optio
 
 def _has_permission(user_role: str, required_role: str) -> bool:
     """Check if user role has permission for required role."""
-    logger.debug(f"Checking permission: {user_role} -> {required_role}")
+    logger.debug(
+        "Checking permission",
+        extra={"user_role": user_role, "required_role": required_role},
+    )
 
     role_hierarchy = {
         "read-only": 1,
@@ -597,7 +694,10 @@ def _has_permission(user_role: str, required_role: str) -> bool:
     required_level = role_hierarchy.get(required_role, 0)
 
     has_permission = user_level >= required_level
-    logger.debug(f"Permission check result: {has_permission}")
+    logger.debug(
+        "Permission check result",
+        extra={"has_permission": has_permission, "user_role": user_role, "required_role": required_role},
+    )
     return has_permission
 
 
@@ -685,7 +785,10 @@ def _enforce_tenant_isolation(session, request):
         requested_tenant_id = request.headers.get(tenant_header)
 
         if not requested_tenant_id:
-            logger.warning(f"Missing tenant ID in request to {request.endpoint}")
+            logger.warning(
+                "Missing tenant ID in request",
+                extra={"endpoint": request.endpoint},
+            )
             _audit_permission_denied(
                 session.username, session.user_id, request.remote_addr,
                 request.endpoint, "MISSING_TENANT_ID"
@@ -698,7 +801,10 @@ def _enforce_tenant_isolation(session, request):
         # Get user's tenant from session
         user_tenant_id = getattr(session, 'tenant_id', None)
         if not user_tenant_id:
-            logger.warning(f"No tenant ID in session for user {session.username}")
+            logger.warning(
+                "Session missing tenant",
+                extra={"endpoint": request.endpoint, "user_hash": _scrub_identifier(session.username)},
+            )
             _audit_permission_denied(
                 session.username, session.user_id, request.remote_addr,
                 request.endpoint, "NO_SESSION_TENANT"
@@ -710,9 +816,15 @@ def _enforce_tenant_isolation(session, request):
 
         # Validate tenant access
         if user_tenant_id != requested_tenant_id:
-            logger.warning(f"Tenant violation: user {session.username} "
-                         f"attempted to access tenant {requested_tenant_id}, "
-                         f"allowed tenant: {user_tenant_id}")
+            logger.warning(
+                "Tenant violation",
+                extra={
+                    "endpoint": request.endpoint,
+                    "user_hash": _scrub_identifier(session.username),
+                    "attempted_tenant": requested_tenant_id,
+                    "allowed_tenant": user_tenant_id,
+                },
+            )
 
             _audit_tenant_violation(
                 session.user_id, session.username, request.remote_addr,
@@ -730,7 +842,10 @@ def _enforce_tenant_isolation(session, request):
         return True
 
     except Exception as e:
-        logger.error(f"Error enforcing tenant isolation: {e}")
+        logger.error(
+            "Error enforcing tenant isolation",
+            extra={"endpoint": request.endpoint, "error": str(e)},
+        )
         return jsonify({
             'error': 'Tenant validation error',
             'code': 'TENANT_VALIDATION_ERROR'
@@ -743,7 +858,10 @@ def _enforce_tenant_isolation_jwt(request):
         tenant_header = getattr(request.auth_config, 'tenant_id_header', 'X-BAS-Tenant') if hasattr(request, 'auth_config') else 'X-BAS-Tenant'
         requested_tenant_id = request.headers.get(tenant_header)
         if not requested_tenant_id:
-            logger.warning(f"Missing tenant ID in JWT request to {request.endpoint}")
+            logger.warning(
+                "Missing tenant ID in JWT request",
+                extra={"endpoint": request.endpoint},
+            )
             return jsonify({
                 'error': 'Tenant ID required',
                 'code': 'MISSING_TENANT_ID'
@@ -751,7 +869,10 @@ def _enforce_tenant_isolation_jwt(request):
         g.tenant_id = requested_tenant_id
         return True
     except Exception as e:
-        logger.error(f"Error enforcing tenant isolation (JWT): {e}")
+        logger.error(
+            "Error enforcing tenant isolation (JWT)",
+            extra={"endpoint": request.endpoint, "error": str(e)},
+        )
         return jsonify({
             'error': 'Tenant validation error',
             'code': 'TENANT_VALIDATION_ERROR'
@@ -775,7 +896,7 @@ def _audit_auth_failure(reason: str, ip_address: str, endpoint: str):
                 # Fallback to SQLite audit
                 request.audit_logger.log_auth_failure(None, ip_address, reason)
     except Exception as e:
-        logger.error(f"Failed to audit auth failure: {e}")
+        logger.error("Failed to audit auth failure", extra={"error": str(e)})
 
 
 def _audit_permission_denied(username: str, user_id: str, ip_address: str, endpoint: str, reason: str):
@@ -797,7 +918,7 @@ def _audit_permission_denied(username: str, user_id: str, ip_address: str, endpo
                 # Fallback to SQLite audit
                 request.audit_logger.log_permission_denied(username, user_id, ip_address, endpoint, reason)
     except Exception as e:
-        logger.error(f"Failed to audit permission denied: {e}")
+        logger.error("Failed to audit permission denied", extra={"error": str(e)})
 
 
 def _audit_tenant_violation(user_id: str, username: str, ip_address: str, attempted_tenant: str, allowed_tenant: str):
@@ -823,7 +944,7 @@ def _audit_tenant_violation(user_id: str, username: str, ip_address: str, attemp
                 # Fallback to SQLite audit
                 request.audit_logger.log_tenant_violation(user_id, username, ip_address, attempted_tenant, allowed_tenant)
     except Exception as e:
-        logger.error(f"Failed to audit tenant violation: {e}")
+        logger.error("Failed to audit tenant violation", extra={"error": str(e)})
 
 
 def path_classify(path: str) -> str:

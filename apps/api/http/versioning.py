@@ -2,8 +2,12 @@
 
 from __future__ import annotations
 
-from typing import Optional, Callable
+from typing import Callable, Optional
+
 from flask import request
+
+from logging_lib import get_logger as get_structured_logger
+logger = get_structured_logger("api.http.versioning")
 
 
 def get_version_from_path(path: str) -> str:
@@ -30,8 +34,13 @@ def build_versioning_applier(*, sunset_v1_http_date: Optional[str] = None, depre
                 if version == '1' and deprecate_v1:
                     response.headers['Deprecation'] = 'true'
                     response.headers['Sunset'] = sunset_value
+                logger.debug(
+                    "Applied version headers",
+                    extra={"path": request.path, "version": version, "deprecated": version == '1'},
+                )
             return response
         except Exception:
+            logger.warning("Failed to apply version headers", exc_info=True)
             return response
 
     return _apply

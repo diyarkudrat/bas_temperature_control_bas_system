@@ -5,26 +5,35 @@ Implements tenant context setup and decorators.
 
 from __future__ import annotations
 
-import logging
+import hashlib
 import time
 import threading
-from typing import Optional, Dict, Any, Callable
-from types import SimpleNamespace
 from functools import wraps
+from types import SimpleNamespace
+from typing import Any, Callable, Dict, Optional
 
 from flask import current_app, g as flask_g, has_request_context
 from flask import jsonify as _flask_jsonify
 from flask import request as _flask_request
 
+from logging_lib import get_logger as get_structured_logger
+
 from app_platform.config.auth import AuthConfig
 
 
-logger = logging.getLogger(__name__)
+logger = get_structured_logger("api.http.middleware.tenant")
 
 # Module-level globals for tests to patch without Flask context
 g = SimpleNamespace()
 request = None  # will be patched in tests; fallback to _flask_request at runtime
 jsonify = _flask_jsonify
+
+
+def _scrub_identifier(value: Optional[str]) -> Optional[str]:
+    if not value:
+        return None
+    digest = hashlib.sha256(value.encode("utf-8")).hexdigest()
+    return digest[:12]
 
 
 def get_request():
@@ -159,10 +168,13 @@ class TenantMiddleware:
             if header_tenant_id and header_tenant_id != session_tenant_id:
                 try:
                     logger.warning(
-                        "Tenant header mismatch; using session tenant. header=%s session=%s endpoint=%s",
-                        header_tenant_id,
-                        session_tenant_id,
-                        getattr(request_obj, 'endpoint', 'unknown')
+                        "Tenant header mismatch; using session tenant",
+                        extra={
+                            "endpoint": getattr(request_obj, 'endpoint', 'unknown'),
+                            "header_tenant": header_tenant_id,
+                            "session_tenant": session_tenant_id,
+                            "principal_hash": _scrub_identifier(principal_id),
+                        },
                     )
                 except Exception:
                     pass
@@ -237,7 +249,7 @@ class TenantMiddleware:
                     allowed_tenant=allowed_tenant
                 )
             except Exception as e:
-                logger.error(f"Failed to audit tenant violation: {e}")
+                logger.error("Failed to audit tenant violation", extra={"error": str(e)})
 
     def require_tenant(self, func: Callable) -> Callable:
         @wraps(func)
@@ -245,7 +257,10 @@ class TenantMiddleware:
             req = get_request()
             tenant_id = self.extract_tenant_id(req)
             if not tenant_id:
-                logger.warning(f"Missing tenant ID in request to {request.endpoint}")
+                logger.warning(
+                    "Missing tenant ID in request",
+                    extra={"endpoint": request.endpoint},
+                )
                 if self.audit_service:
                     session_obj = getattr(req, 'session', None)
                     username = getattr(session_obj, 'username', None)
@@ -273,7 +288,10 @@ class TenantMiddleware:
             req = get_request()
             requested_tenant_id = self.extract_tenant_id(req)
             if not requested_tenant_id:
-                logger.warning(f"Missing tenant ID in request to {req.endpoint}")
+                logger.warning(
+                    "Missing tenant ID in request",
+                    extra={"endpoint": req.endpoint},
+                )
                 resp = jsonify({'error': 'Tenant ID required', 'code': 'MISSING_TENANT_ID'})
                 return resp if isinstance(resp, tuple) else (resp, 400)
 
@@ -282,15 +300,24 @@ class TenantMiddleware:
                 user_tenant_id = getattr(req.session, 'tenant_id', None)
 
             if not user_tenant_id:
-                logger.warning(f"No user session for tenant-isolated endpoint {request.endpoint}")
+                logger.warning(
+                    "No user session for tenant-isolated endpoint",
+                    extra={"endpoint": request.endpoint},
+                )
                 if has_request_context():
                     flask_g.tenant_id = requested_tenant_id
                 return func(*args, **kwargs)
 
             if not self.validate_tenant_access(user_tenant_id, requested_tenant_id):
-                logger.warning(f"Tenant violation: user {getattr(req.session, 'username', None)} "
-                             f"attempted to access tenant {requested_tenant_id}, "
-                             f"allowed tenant: {user_tenant_id}")
+                logger.warning(
+                    "Tenant violation",
+                    extra={
+                        "endpoint": request.endpoint,
+                        "user_hash": _scrub_identifier(getattr(req.session, 'username', None)),
+                        "attempted_tenant": requested_tenant_id,
+                        "allowed_tenant": user_tenant_id,
+                    },
+                )
 
                 self.audit_tenant_violation(
                     user_id=getattr(req.session, 'user_id', None),
@@ -329,11 +356,20 @@ class TenantMiddleware:
                 device_id = req.args.get('device_id')
 
             if not device_id:
-                logger.warning(f"Missing device_id in request to {request.endpoint}")
+                logger.warning(
+                    "Missing device_id in request",
+                    extra={"endpoint": request.endpoint},
+                )
                 resp = jsonify({'error': 'Device ID required', 'code': 'MISSING_DEVICE_ID'})
                 return resp if isinstance(resp, tuple) else (resp, 400)
 
-            logger.debug(f"Device access request: tenant={tenant_id}, device={device_id}")
+            logger.debug(
+                "Device access request",
+                extra={
+                    "tenant": tenant_id,
+                    "device_hash": _scrub_identifier(str(device_id) if device_id else None),
+                },
+            )
 
             if has_request_context():
                 flask_g.device_id = device_id

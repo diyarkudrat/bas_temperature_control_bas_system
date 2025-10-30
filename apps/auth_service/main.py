@@ -42,7 +42,8 @@ from application.auth.services import AuditLogger, RateLimiter
 from logging_lib import configure as configure_structured_logging, get_logger as get_structured_logger
 from logging_lib.flask_ext import register_flask_context
 
-logger = logging.getLogger(__name__)
+logger = get_structured_logger("auth.main")
+service_token_logger = get_structured_logger("auth.service_tokens")
 
 
 DEFAULT_CONFIG_PATH = os.getenv("AUTH_CONFIG_PATH", "configs/app/auth_config.json")
@@ -87,7 +88,7 @@ def _build_service_token_settings() -> ServiceTokenSettings:
     try:
         keyset = load_service_keyset_from_env(prefix=prefix)
     except ServiceTokenError as exc:
-        logger.error(
+        service_token_logger.error(
             "Failed to load service JWT keyset",
             extra={"prefix": prefix},
             exc_info=True,
@@ -95,6 +96,11 @@ def _build_service_token_settings() -> ServiceTokenSettings:
         raise RuntimeError("Service JWT keyset configuration invalid") from exc
 
     replay_cache = load_replay_cache_from_env(prefix=prefix, namespace="auth-service")
+    cache_backend = "redis" if getattr(replay_cache, "_redis", None) else "in-process"
+    service_token_logger.info(
+        "Replay cache initialized",
+        extra={"prefix": prefix, "backend": cache_backend},
+    )
 
     auth0_domain = os.getenv("AUTH0_DOMAIN")
     expected_audience = (
@@ -126,14 +132,16 @@ def _build_service_token_settings() -> ServiceTokenSettings:
         required_scopes = _parse_csv(required_scopes_env)
 
     kids = [key.kid for key in keyset.keys()]
-    logger.info(
+    service_token_logger.info(
         "Service JWT verifier configured",
         extra={
             "prefix": prefix,
-            "kids": kids,
+            "kid_count": len(kids),
+            "default_kid": keyset.default_kid,
             "audience": expected_audience,
             "issuer": expected_issuer,
             "required_scopes": required_scopes,
+            "allowed_subjects": allowed_subjects,
         },
     )
 
@@ -224,7 +232,16 @@ def bootstrap_runtime(app: Flask, *, config_path: str | None = None) -> AuthRunt
     if service_tokens is not None:
         app.config.setdefault("SERVICE_TOKENS", service_tokens)
 
-    logger.info("Auth service runtime initialized")
+    logger.info(
+        "Auth service runtime initialized",
+        extra={
+            "auth_enabled": bool(auth_config.auth_enabled),
+            "firestore_enabled": bool(firestore_factory),
+            "db_path": db_path,
+            "service_tokens_enabled": service_tokens is not None,
+            "rate_limit_per_ip": getattr(auth_config, "rate_limit_per_ip", None),
+        },
+    )
 
     return runtime
 
@@ -258,6 +275,13 @@ def _register_request_hooks(app: Flask, runtime: AuthRuntime) -> None:
             request.firestore_factory = runtime.firestore_factory
         if runtime.service_tokens is not None:
             request.service_tokens = runtime.service_tokens
+        logger.debug(
+            "Request context hydrated",
+            extra={
+                "firestore_attached": runtime.firestore_factory is not None,
+                "service_tokens_attached": runtime.service_tokens is not None,
+            },
+        )
 
 
 def _register_blueprints(app: Flask) -> None:

@@ -14,12 +14,13 @@ Notes:
 """
 
 import time
+from typing import Callable, Optional
+
+import logging
+import os
+import os as _os
 from flask import Flask, jsonify, request
 from flask_cors import CORS
-import logging
-import os as _os
-import os
-from typing import Optional, Callable
 
 from logging_lib import configure as configure_structured_logging, get_logger as get_structured_logger
 from logging_lib.flask_ext import register_flask_context
@@ -45,7 +46,11 @@ from apps.api.clients import AuthServiceClient, AuthServiceClientConfig
 
 # Configure logging early to ensure consistent format/level
 logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
+logger = get_structured_logger("api.main")
+provider_logger = get_structured_logger("api.auth.provider")
+firestore_logger = get_structured_logger("api.firestore")
+client_logger = get_structured_logger("api.auth.client")
+context_logger = get_structured_logger("api.context")
 configure_structured_logging(service="api", env=os.getenv("BAS_ENV", "local"))
 get_structured_logger("api.bootstrap").info("api service starting")
 
@@ -77,6 +82,14 @@ def _build_auth_provider(cfg) -> AuthProvider:
 
     try:
         provider_kind = (cfg.auth_provider or "mock").lower()
+        provider_logger.info(
+            "Selecting auth provider",
+            extra={
+                "provider_kind": provider_kind,
+                "use_emulators": bool(cfg.use_emulators),
+                "auth0_domain_present": bool(getattr(cfg, "auth0_domain", "")),
+            },
+        )
 
         if provider_kind == "auth0":
             # Strict env validation: issuer must be https and audience provided
@@ -84,6 +97,13 @@ def _build_auth_provider(cfg) -> AuthProvider:
             audience = (cfg.auth0_audience or "").strip()
 
             if not domain or not audience:
+                provider_logger.error(
+                    "Auth0 provider missing configuration",
+                    extra={
+                        "domain_present": bool(domain),
+                        "audience_present": bool(audience),
+                    },
+                )
                 raise ValueError("AUTH0_DOMAIN and AUTH0_AUDIENCE are required for auth0 provider")
 
             issuer = f"https://{domain}/" if not domain.startswith("https://") else domain
@@ -93,12 +113,16 @@ def _build_auth_provider(cfg) -> AuthProvider:
                 "audience": audience,
             })
 
+            provider_logger.info(
+                "Auth0 provider configured",
+                extra={"issuer": issuer, "audience_length": len(audience)},
+            )
             return provider
 
         if provider_kind == "mock":
             # Disallow mock in prod unless emulators explicitly enabled
             if not cfg.use_emulators:
-                logger.error("Mock auth provider is not allowed without emulators enabled")
+                provider_logger.error("Mock auth provider is not allowed without emulators enabled")
 
                 return DenyAllAuthProvider()
 
@@ -109,11 +133,14 @@ def _build_auth_provider(cfg) -> AuthProvider:
                 issuer=issuer,
             )
             
-        logger.warning("Unknown AUTH_PROVIDER '%s'; using deny-all auth provider", provider_kind)
+        provider_logger.warning(
+            "Unknown auth provider configured; defaulting to deny-all",
+            extra={"provider_kind": provider_kind},
+        )
 
         return DenyAllAuthProvider()
     except Exception as e:
-        logger.error("Auth provider initialization failed: %s", e)
+        provider_logger.exception("Auth provider initialization failed")
 
         return DenyAllAuthProvider()
 
@@ -123,6 +150,11 @@ def _build_auth_runtime(cfg):
 
     provider = _build_auth_provider(cfg)
     metrics = AuthMetrics()
+
+    provider_logger.info(
+        "Auth runtime constructed",
+        extra={"provider_type": provider.__class__.__name__},
+    )
 
     return provider, metrics
 
@@ -147,29 +179,59 @@ def init_auth():
         # Load auth configuration (shared invariants with auth service)
         auth_config = AuthConfig.from_file('configs/app/auth_config.json')
         if not auth_config.validate():
-            logger.error("Invalid auth configuration")
+            logger.error(
+                "Invalid auth configuration",
+                extra={
+                    "auth_enabled": getattr(auth_config, "auth_enabled", None),
+                    "session_timeout": getattr(auth_config, "session_timeout", None),
+                },
+            )
             return False
+
+        logger.info(
+            "Auth configuration loaded",
+            extra={
+                "auth_mode": getattr(auth_config, "auth_mode", None),
+                "use_firestore": any([
+                    auth_config.use_firestore_telemetry,
+                    auth_config.use_firestore_auth,
+                    auth_config.use_firestore_audit,
+                ]),
+            },
+        )
 
         # Initialize Firestore if enabled for tenant middleware or other features
         if any([auth_config.use_firestore_telemetry, auth_config.use_firestore_auth, auth_config.use_firestore_audit]):
-            logger.info("Initializing Firestore services")
+            firestore_logger.info("Initializing Firestore services")
             firestore_factory = build_firestore_factory(server_config)
 
             # Health check
             health = firestore_factory.health_check()
             if health['status'] != 'healthy':
-                logger.error(f"Firestore health check failed: {health}")
+                firestore_logger.error(
+                    "Firestore health check failed",
+                    extra={"health": health},
+                )
                 return False
 
-            logger.info("Firestore services initialized successfully")
+            firestore_logger.info("Firestore services initialized successfully")
 
         # Initialize tenant middleware if Firestore is enabled
         if firestore_factory:
             tenant_middleware = build_tenant_middleware(auth_config, firestore_factory)
-            logger.info("Tenant middleware initialized")
+            firestore_logger.info("Tenant middleware initialized")
 
         # Auth service client factory keeps shared IO out of blueprints
         cfg = AuthServiceClientConfig.from_env(os.environ)
+        client_logger.info(
+            "Auth service client configuration loaded",
+            extra={
+                "audience": cfg.audience,
+                "issuer": cfg.issuer,
+                "ttl_seconds": cfg.token_ttl_seconds,
+                "allowed_algorithms": cfg.allowed_algorithms,
+            },
+        )
 
         def _client_factory() -> AuthServiceClient:
             return AuthServiceClient(cfg)
@@ -179,11 +241,17 @@ def init_auth():
 
         # Update app config with Firestore factory for handlers
         app.config["firestore_factory"] = firestore_factory
-        logger.info("Authentication system initialized successfully")
+        logger.info(
+            "Authentication system initialized successfully",
+            extra={
+                "firestore_enabled": firestore_factory is not None,
+                "tenant_middleware_enabled": tenant_middleware is not None,
+            },
+        )
         return True
 
-    except Exception as e:
-        logger.error(f"Failed to initialize auth system: {e}")
+    except Exception:
+        logger.exception("Failed to initialize auth system")
         return False
 
 # routes are registered via blueprints; see apps.api.http.router.register_routes
@@ -201,6 +269,7 @@ def setup_auth_context():
     try:
         request.rate_limit_snapshot = _rate_limit_holder.get_snapshot()
     except Exception:
+        context_logger.warning("Failed to capture rate limit snapshot", exc_info=True)
         request.rate_limit_snapshot = getattr(server_config, 'rate_limit', None)
 
     # Attach auth provider for routes and middleware
@@ -219,7 +288,7 @@ def setup_auth_context():
         try:
             request.auth_service_client = auth_service_client_factory()
         except Exception:
-            logger.warning("Failed to create auth service client", exc_info=True)
+            client_logger.warning("Failed to create auth service client", exc_info=True)
 
     # Initialize tenant context if middleware is available
     if tenant_middleware and auth_config:
@@ -234,21 +303,30 @@ def setup_auth_context():
             deprecate_v1=_os.getenv('SERVER_V1_DEPRECATE', 'true').lower() in {'1', 'true', 'yes'},
         )
     except Exception:
-        # placeholder for metrics
+        context_logger.warning("Failed to build versioning applier", exc_info=True)
         _apply_versioning = (lambda resp: resp)
+
+    context_logger.debug(
+        "Request context hydrated",
+        extra={
+            "auth_config_attached": auth_config is not None,
+            "auth_client_attached": hasattr(request, "auth_service_client"),
+            "tenant_middleware": tenant_middleware is not None,
+        },
+    )
 
 @app.after_request
 def _after(resp):
     try:
         resp = _sec_headers(resp)
     except Exception:
-        # placeholder for metrics
+        context_logger.warning("Security headers application failed", exc_info=True)
         pass
 
     try:
         resp = _apply_versioning(resp)
     except Exception:
-        # placeholder for metrics
+        context_logger.warning("Versioning header application failed", exc_info=True)
         pass
     
     return resp
@@ -266,12 +344,12 @@ if __name__ == '__main__':
     # No cleanup thread needed
     
     port = int(_os.getenv('PORT', '8080'))
-    logger.info("Starting BAS Server...")
-    logger.info(f"Dashboard available at: http://localhost:{port}")
-    logger.info(f"API available at: http://localhost:{port}/api/")
+    logger.info("Starting BAS Server", extra={"port": port})
+    logger.info("Dashboard available", extra={"url": f"http://localhost:{port}"})
+    logger.info("API available", extra={"url": f"http://localhost:{port}/api/"})
     if auth_config and auth_config.auth_enabled:
-        logger.info("Authentication system enabled")
-        logger.info(f"Auth endpoints available at: http://localhost:{port}/auth/")
+        logger.info("Authentication system enabled", extra={"auth_enabled": True})
+        logger.info("Auth endpoints available", extra={"url": f"http://localhost:{port}/auth/"})
     
     app.run(host='0.0.0.0', port=port, debug=False)
 

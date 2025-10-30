@@ -7,15 +7,27 @@ safe under multi-process runtimes.
 
 from __future__ import annotations
 
+import hashlib
 import time
 from typing import Any, Mapping, Optional, Tuple
 
 from flask import Blueprint, current_app, jsonify, request
 
 from app_platform.security import ServiceTokenValidationError, verify_service_jwt
+from logging_lib import get_logger as get_structured_logger
 
 
 auth_bp = Blueprint("auth_service", __name__)
+
+logger = get_structured_logger("auth.routes")
+token_logger = get_structured_logger("auth.routes.tokens")
+
+
+def _scrub_identifier(value: Optional[str]) -> Optional[str]:
+    if not value:
+        return None
+    digest = hashlib.sha256(value.encode("utf-8")).hexdigest()
+    return digest[:12]
 
 
 def _get_request_components() -> Tuple[Any, Any, Any, Any, Any]:
@@ -40,17 +52,17 @@ def _service_token_valid() -> bool:
 def _verify_service_token() -> Optional[Mapping[str, Any]]:
     settings = getattr(request, "service_tokens", None)
     if settings is None:
-        current_app.logger.error("Service token settings missing on request")
+        token_logger.error("Service token settings missing on request")
         return None
 
     auth_header = request.headers.get("Authorization", "")
     scheme, _, token_value = auth_header.partition(" ")
     if not token_value or scheme.lower() != "bearer":
-        current_app.logger.warning("Missing bearer Authorization header for service request")
+        token_logger.warning("Missing bearer Authorization header for service request")
         return None
     token = token_value.strip()
     if not token:
-        current_app.logger.warning("Bearer token present but empty for service request")
+        token_logger.warning("Bearer token present but empty for service request")
         return None
 
     try:
@@ -63,7 +75,7 @@ def _verify_service_token() -> Optional[Mapping[str, Any]]:
             required_scope=settings.required_scopes or None,
         )
     except ServiceTokenValidationError as exc:
-        current_app.logger.warning(
+        token_logger.warning(
             "Service token validation failed",
             extra={"error": str(exc)},
         )
@@ -71,11 +83,21 @@ def _verify_service_token() -> Optional[Mapping[str, Any]]:
 
     subject = claims.get("sub")
     if settings.allowed_subjects and subject not in settings.allowed_subjects:
-        current_app.logger.warning(
+        token_logger.warning(
             "Service token subject not allowed",
             extra={"subject": subject},
         )
         return None
+
+    token_logger.info(
+        "Service token accepted",
+        extra={
+            "subject": subject,
+            "audience": claims.get("aud"),
+            "kid": request.headers.get("X-Service-Token-Kid"),
+            "scopes_present": bool(claims.get("scope")),
+        },
+    )
 
     return claims
 
@@ -84,22 +106,44 @@ def _verify_service_token() -> Optional[Mapping[str, Any]]:
 def auth_login():
     cfg = getattr(request, "auth_config", None)
     if not cfg or not getattr(cfg, "auth_enabled", False):
+        logger.warning(
+            "Login attempt rejected: auth disabled",
+            extra={"config_present": cfg is not None},
+        )
         return jsonify({"error": "Authentication disabled"}), 503
 
     payload = request.get_json(silent=True) or {}
     username = payload.get("username")
     password = payload.get("password")
     if not username or not password:
+        logger.warning(
+            "Login attempt missing required fields",
+            extra={"username_present": bool(username)},
+        )
         return jsonify({"error": "Missing required fields", "code": "MISSING_FIELDS"}), 400
+
+    username_hash = _scrub_identifier(username)
+    remote_hash = _scrub_identifier(request.remote_addr)
+    logger.info(
+        "Login attempt received",
+        extra={"username_hash": username_hash, "remote_hash": remote_hash},
+    )
 
     limiter, audit, sessions, users, _ = _get_request_components()
     if sessions is None or users is None:
-        current_app.logger.error("Auth runtime not fully initialized")
+        logger.error(
+            "Auth runtime not fully initialized",
+            extra={"sessions_missing": sessions is None, "users_missing": users is None},
+        )
         return jsonify({"error": "Authentication system unavailable"}), 500
 
     try:
         allowed, message = limiter.is_allowed(request.remote_addr, username) if limiter else (True, "Allowed")
         if not allowed:
+            logger.info(
+                "Login rate limited",
+                extra={"username_hash": username_hash, "remote_hash": remote_hash, "message": message},
+            )
             if audit:
                 audit.log_auth_failure(username, request.remote_addr, "RATE_LIMITED")
             return jsonify({"error": message, "code": "RATE_LIMITED"}), 429
@@ -108,11 +152,19 @@ def auth_login():
         if not user:
             if limiter:
                 limiter.record_attempt(request.remote_addr, username)
+            logger.info(
+                "Login failed: invalid credentials",
+                extra={"username_hash": username_hash, "remote_hash": remote_hash},
+            )
             if audit:
                 audit.log_auth_failure(username, request.remote_addr, "INVALID_CREDENTIALS")
             return jsonify({"error": "Invalid credentials", "code": "AUTH_FAILED"}), 401
 
         if user.is_locked():
+            logger.info(
+                "Login failed: account locked",
+                extra={"username_hash": username_hash},
+            )
             if audit:
                 audit.log_auth_failure(username, request.remote_addr, "ACCOUNT_LOCKED")
             return jsonify({"error": "Account locked", "code": "USER_LOCKED"}), 423
@@ -123,6 +175,15 @@ def auth_login():
             limiter.clear_attempts(request.remote_addr, username)
         if audit:
             audit.log_auth_success(username, request.remote_addr, session.session_id)
+
+        logger.info(
+            "Login succeeded",
+            extra={
+                "username_hash": username_hash,
+                "role": user.role,
+                "tenant_present": bool(getattr(session, "tenant_id", None)),
+            },
+        )
 
         resp = jsonify({
             "status": "success",
@@ -144,7 +205,7 @@ def auth_login():
         )
         return resp
     except Exception as exc:  # noqa: BLE001
-        current_app.logger.exception("Auth login failed: %%s", exc)
+        logger.exception("Auth login failed")
         return jsonify({"error": "Internal server error"}), 500
 
 
@@ -152,7 +213,7 @@ def auth_login():
 def auth_logout():
     _, audit, sessions, _, _ = _get_request_components()
     if sessions is None:
-        current_app.logger.error("Session manager missing in logout handler")
+        logger.error("Session manager missing in logout handler")
         return jsonify({"error": "Authentication system unavailable"}), 500
 
     try:
@@ -161,6 +222,12 @@ def auth_logout():
             payload = request.get_json(silent=True) or {}
             sid = payload.get("session_id")
 
+        sid_hash = _scrub_identifier(sid) if sid else None
+        logger.info(
+            "Logout requested",
+            extra={"session_present": bool(sid)},
+        )
+
         if sid:
             sessions.invalidate_session(sid)
             if audit:
@@ -168,9 +235,13 @@ def auth_logout():
 
         resp = jsonify({"status": "success", "message": "Logged out successfully"})
         resp.set_cookie("bas_session_id", "", max_age=0, httponly=True, secure=True, samesite="Strict")
+        logger.info(
+            "Logout completed",
+            extra={"session_hash": sid_hash},
+        )
         return resp
     except Exception as exc:  # noqa: BLE001
-        current_app.logger.exception("Auth logout failed: %%s", exc)
+        logger.exception("Auth logout failed")
         return jsonify({"error": "Internal server error"}), 500
 
 
@@ -178,17 +249,31 @@ def auth_logout():
 def auth_status():
     _, _, sessions, _, _ = _get_request_components()
     if sessions is None:
-        current_app.logger.error("Session manager missing in status handler")
+        logger.error("Session manager missing in status handler")
         return jsonify({"error": "Authentication system unavailable"}), 500
 
     sid = request.cookies.get("bas_session_id") or request.headers.get("X-Session-ID")
     if not sid:
+        logger.info("Status check missing session identifier")
         return jsonify({"error": "No session provided", "code": "NO_SESSION"}), 400
 
     try:
         session = sessions.validate_session(sid, request)
         if not session:
+            logger.info(
+                "Status check invalid session",
+                extra={"session_hash": _scrub_identifier(sid)},
+            )
             return jsonify({"error": "Invalid or expired session", "code": "SESSION_INVALID"}), 401
+
+        logger.info(
+            "Status check succeeded",
+            extra={
+                "username_hash": _scrub_identifier(getattr(session, "username", None)),
+                "role": getattr(session, "role", None),
+                "tenant_present": bool(getattr(session, "tenant_id", None)),
+            },
+        )
 
         return jsonify({
             "status": "valid",
@@ -202,7 +287,7 @@ def auth_status():
             "expires_in": int(session.expires_at - time.time()) if hasattr(session, "expires_at") else 0,
         })
     except Exception as exc:  # noqa: BLE001
-        current_app.logger.exception("Auth status failed: %%s", exc)
+        logger.exception("Auth status failed")
         return jsonify({"error": "Internal server error"}), 500
 
 
@@ -212,24 +297,41 @@ def update_per_user_limits():
     if holder is None:
         holder = current_app.config.get("rate_limit_holder")
     if holder is None:
-        current_app.logger.error("Rate limit holder unavailable")
+        logger.error("Rate limit holder unavailable")
         return jsonify({"error": "Rate limit holder unavailable"}), 500
 
     if not _service_token_valid():
+        token_logger.warning("Service token missing or invalid for limits update")
         return jsonify({"error": "Forbidden", "code": "FORBIDDEN"}), 403
 
     try:
         body = request.get_json(silent=True) or {}
         limits = body.get("per_user_limits") if isinstance(body, dict) else None
         if not isinstance(limits, dict):
+            logger.warning("Limits update rejected: invalid payload structure")
             return jsonify({"error": "Invalid payload", "code": "INVALID_ARGUMENT"}), 400
+
+        claims = getattr(request, "service_token_claims", {}) or {}
+        subject = claims.get("sub")
+        logger.info(
+            "Received per-user limits update",
+            extra={"subject": subject, "limit_count": len(limits)},
+        )
 
         snap = holder.update(per_user_limits=limits)
         snapshot = snap.get_per_user_limits_snapshot()
+        logger.info(
+            "Per-user limits updated",
+            extra={"subject": subject, "limit_count": len(snapshot)},
+        )
         return jsonify({"per_user_limits": snapshot}), 200
     except ValueError as exc:
+        logger.warning(
+            "Limits update rejected: value error",
+            extra={"error": str(exc)},
+        )
         return jsonify({"error": str(exc), "code": "INVALID_ARGUMENT"}), 400
     except Exception as exc:  # noqa: BLE001
-        current_app.logger.exception("Updating per-user limits failed: %%s", exc)
+        logger.exception("Updating per-user limits failed")
         return jsonify({"error": "Internal server error"}), 500
 
