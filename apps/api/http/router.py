@@ -14,6 +14,7 @@ from .health_routes import health_bp
 from .control_routes import control_bp
 from .telemetry_routes import telemetry_bp
 from .auth_routes import auth_bp
+from .org_routes import org_bp
 
 
 def register_routes(app: Flask) -> None:
@@ -33,5 +34,11 @@ def register_routes(app: Flask) -> None:
 
     app.register_blueprint(auth_bp)
     logger.debug("Registered auth blueprint")
+
+    if app.config.get("org_signup_v2_enabled", False):
+        app.register_blueprint(org_bp)
+        logger.debug("Registered org blueprint", extra={"feature_flag": True})
+    else:
+        logger.debug("Skipped org blueprint", extra={"feature_flag": False})
 
 

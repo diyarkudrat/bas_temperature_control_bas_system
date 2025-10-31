@@ -17,6 +17,7 @@ from .redis_budgets import RedisBudgets
 from .sse_budgets import SSEBudgets
 from .cache_ttls import CacheTTLs
 from .auth0_configs import Auth0JWTBudgets, Auth0MgmtConfig
+from .org_flows import OrgFlowsConfig
 
 logger = logging.getLogger(__name__)
 
@@ -176,6 +177,7 @@ class ServerConfig:
     # Auth0 Phase 2 budgets and management config
     auth0_jwt: Auth0JWTBudgets = field(default_factory=Auth0JWTBudgets)
     auth0_mgmt: Auth0MgmtConfig = field(default_factory=Auth0MgmtConfig)
+    org_flows: OrgFlowsConfig = field(default_factory=OrgFlowsConfig)
     # Path sensitivity rules used by middleware.path_classify()
     # List of (regex_pattern, level). Empty => default fail-closed to 'critical'.
     PATH_SENSITIVITY_RULES: list[tuple[str, str]] = field(default_factory=list)  # type: ignore
@@ -236,6 +238,7 @@ class ServerConfig:
             cache_ttl=CacheTTLs.from_env(),
             auth0_jwt=Auth0JWTBudgets.from_env(),
             auth0_mgmt=Auth0MgmtConfig.from_env(),
+            org_flows=OrgFlowsConfig.from_env(),
             PATH_SENSITIVITY_RULES=path_rules,
             metadata_rate_limit=MetadataFetchRateLimit.from_env(),
             revocation_ttl_s=_get_int_env("REVOCATION_TTL_S", 3600, min_value=1),

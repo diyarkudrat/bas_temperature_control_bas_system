@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
-from flask import Blueprint, current_app, request
+import time
+
+from flask import Blueprint, current_app, jsonify, request
 
 from logging_lib import get_logger as get_structured_logger
 
@@ -28,5 +30,50 @@ def health():
 def auth_health():
     logger.debug("Auth health route invoked")
     return http_routes.auth_health(request.auth_provider)
+
+
+@health_bp.route("/healthz")
+def healthz():
+    """Liveness probe."""
+
+    return (jsonify({"status": "ok", "timestamp": time.time()}), 200)
+
+
+@health_bp.route("/readyz")
+def readyz():
+    """Readiness probe that verifies dependent services."""
+
+    firestore_factory = current_app.config.get("firestore_factory")
+    auth_provider = getattr(request, "auth_provider", None)
+
+    issues = []
+
+    if firestore_factory:
+        try:
+            firestore_status = firestore_factory.health_check()
+            if firestore_status.get("status") != "healthy":
+                issues.append("firestore")
+        except Exception as exc:  # pragma: no cover - defensive
+            logger.warning("Firestore readiness check failed", exc_info=True)
+            issues.append("firestore:" + str(exc))
+
+    if auth_provider is not None:
+        try:
+            provider_status = auth_provider.healthcheck()
+            if provider_status.get("status") not in {"ok", "healthy"}:
+                issues.append("auth_provider")
+        except Exception as exc:  # pragma: no cover - defensive
+            logger.warning("Auth provider readiness check failed", exc_info=True)
+            issues.append("auth_provider:" + str(exc))
+
+    status_code = 200 if not issues else 503
+    payload = {
+        "status": "ready" if not issues else "degraded",
+        "issues": issues,
+        "timestamp": time.time(),
+    }
+    response = jsonify(payload)
+    response.status_code = status_code
+    return response
 
 

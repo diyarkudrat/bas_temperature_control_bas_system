@@ -29,7 +29,11 @@ _THIS_DIR = os.path.dirname(os.path.abspath(__file__))
 
 # Authentication imports
 from app_platform.config.auth import AuthConfig
-from apps.api.http.middleware import add_security_headers as _sec_headers
+from apps.api.http.middleware import (
+    InMemoryIdempotencyStore,
+    add_security_headers as _sec_headers,
+    enforce_global_rate_limit,
+)
 
 from apps.api.http.versioning import build_versioning_applier
 from app_platform.errors.api import register_error_handlers
@@ -67,6 +71,15 @@ _apply_versioning = lambda resp: resp
 controller = BASController()
 server_config = load_server_config()
 app.config["controller"] = controller
+app.config.setdefault("org_flows_config", getattr(server_config, "org_flows", None))
+app.config.setdefault(
+    "org_signup_v2_enabled",
+    bool(getattr(getattr(server_config, "org_flows", None), "org_signup_v2_enabled", False)),
+)
+app.config.setdefault(
+    "device_rbac_enforcement",
+    bool(getattr(getattr(server_config, "org_flows", None), "device_rbac_enforcement", False)),
+)
 
 # Authentication singletons (populated in init_auth)
 auth_config: Optional[AuthConfig] = None
@@ -75,6 +88,7 @@ auth_metrics: Optional[AuthMetrics] = None
 auth_service_client_factory: Optional[Callable[[], AuthServiceClient]] = None
 _rate_limit_holder = AtomicRateLimitConfig(server_config.rate_limit)
 app.config["rate_limit_holder"] = _rate_limit_holder
+app.config.setdefault("idempotency_store", InMemoryIdempotencyStore())
 
 
 def _build_auth_provider(cfg) -> AuthProvider:
@@ -188,6 +202,10 @@ def init_auth():
             )
             return False
 
+        app.config["org_signup_v2_enabled"] = auth_config.org_signup_v2_enabled
+        app.config["device_rbac_enforcement"] = auth_config.device_rbac_enforcement
+        app.config["provisioning_jwt_ttl_seconds"] = auth_config.provisioning_jwt_ttl_seconds
+
         logger.info(
             "Auth configuration loaded",
             extra={
@@ -197,6 +215,8 @@ def init_auth():
                     auth_config.use_firestore_auth,
                     auth_config.use_firestore_audit,
                 ]),
+                "org_signup_v2": auth_config.org_signup_v2_enabled,
+                "device_rbac_enforcement": auth_config.device_rbac_enforcement,
             },
         )
 
@@ -264,6 +284,11 @@ def setup_auth_context():
 
     # Always attach server_config for downstream components
     request.server_config = server_config
+
+    # Apply global rate limiting before doing heavier work
+    limit_response = enforce_global_rate_limit()
+    if limit_response is not None:
+        return limit_response
 
     # Attach rate limit snapshot for per-user dynamic limits (hot-reloaded)
     try:

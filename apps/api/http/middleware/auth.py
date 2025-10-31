@@ -12,10 +12,9 @@ import hashlib
 import os
 import threading
 import time
-from collections import defaultdict
 from functools import wraps
 from types import SimpleNamespace
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, Optional, Tuple
 
 from flask import current_app, g, jsonify, request
 
@@ -23,6 +22,11 @@ from logging_lib import get_logger as get_structured_logger
 
 from app_platform.rate_limit.sliding_window_limiter import RateLimiter as RedisSlidingLimiter
 from adapters.cache.redis.revocation_service import RevocationService
+from .auth_context import (
+    AuthContextError,
+    parse_authorization_header as parse_bearer_token,
+    resolve_auth_context,
+)
 
 try:
     # Prefer new location for version classification
@@ -156,26 +160,6 @@ class _RequestRateLimiter:
 
 
 _request_rate_limiter = _RequestRateLimiter()
-_override_timeouts = defaultdict(float)
-_override_lock = threading.Lock()
-
-
-def parse_authorization_header(authz_header: Optional[str]) -> Optional[str]:
-    """Extract Bearer token from Authorization header.
-
-    Returns the token string if present, else None. Robust to whitespace and case.
-    """
-    try:
-        if not isinstance(authz_header, str):
-            return None
-        parts = authz_header.strip().split()
-        if len(parts) == 2 and parts[0].lower() == 'bearer' and parts[1]:
-            return parts[1].strip()
-    except Exception:
-        pass
-    return None
-
-
 def classify_path(path: str) -> str:
     """Public helper that delegates to internal classifier; kept for clarity."""
     return path_classify(path)
@@ -211,7 +195,7 @@ def check_rate_limit() -> Optional[Tuple[Any, int]]:
         if isinstance(per_user_limits, dict) and per_user_limits:
             # Identify user by unverified JWT sub (if present) else IP
             identity = request.remote_addr or 'anon'
-            token_str = parse_authorization_header(request.headers.get('Authorization', '') or '') or ''
+            token_str = parse_bearer_token(request.headers.get('Authorization')) or ''
             try:
                 if token_str:
                     from jose import jwt  # type: ignore[import]
@@ -347,68 +331,6 @@ def enforce_revocation_check(token: str) -> Optional[Tuple[Any, int]]:
     except Exception:
         pass
     return None
-
-
-def verify_and_decode_jwt(provider_obj: Any, token: str, metrics: Optional[Any]) -> Dict[str, Any]:
-    """Verify JWT with provider, record metrics, and return claims dict.
-
-    Raises ValueError on verification failure.
-    """
-    start_ms = time.time() * 1000.0
-    _log_jwt_attempt(metrics)
-    claims = provider_obj.verify_token(token)
-    if not isinstance(claims, dict):
-        raise ValueError("invalid claims")
-    setattr(request, 'user_claims', claims)
-    _log_jwt_success(metrics, start_ms)
-    return claims
-
-
-def authorize_roles(claims: Dict[str, Any], provider_obj: Any, required_role: str) -> Tuple[bool, Optional[Tuple[Any, int]]]:
-    """Authorize according to path sensitivity using claims-only or provider metadata.
-
-    Returns (True, None) on success; (False, (response, status)) when denied/unavailable.
-    """
-    classify = classify_path(request.path)
-    if classify != 'critical':
-        if claims_only_check(claims, required_role):
-            return True, None
-        return False, (jsonify({
-            "error": "Insufficient permissions",
-            "message": f"JWT roles missing permission: {required_role}",
-            "code": "PERMISSION_DENIED"
-        }), 403)
-
-    # critical: require provider metadata, allow admin outage override on failure
-    user_id = str(claims.get('sub', '') or '').strip()
-    try:
-        success = full_metadata_check(user_id, provider_obj, required_role)
-        if not success:
-            return False, (jsonify({
-                "error": "Insufficient permissions",
-                "message": f"JWT roles missing permission: {required_role}",
-                "code": "PERMISSION_DENIED"
-            }), 403)
-        return True, None
-    except Exception as exc:
-        if admin_outage_override(user_id, claims):
-            if claims_only_check(claims, required_role):
-                return True, None
-            return False, (jsonify({
-                "error": "Insufficient permissions",
-                "message": f"JWT roles missing permission: {required_role}",
-                "code": "PERMISSION_DENIED"
-            }), 403)
-        logger.warning(
-            "Full metadata check failed",
-            extra={"endpoint": request.endpoint, "error": str(exc)},
-        )
-        return False, (jsonify({
-            "error": "Authorization service unavailable",
-            "code": "AUTH_UNAVAILABLE"
-        }), 503)
-
-
 def write_auth_audit(kind: str, **kwargs: Any) -> None:
     """Unified audit writer wrapper around existing sinks.
 
@@ -491,9 +413,10 @@ def require_auth(required_role="operator", require_tenant=False, provider: Optio
                     "Authentication enforced",
                     extra={"endpoint": request.endpoint},
                 )
-                token: Optional[str] = parse_authorization_header(request.headers.get('Authorization', '') or '')
+                token: Optional[str] = parse_bearer_token(request.headers.get('Authorization'))
                 provider_obj = getattr(request, 'auth_provider', None)
                 metrics = getattr(request, 'auth_metrics', None)
+                auth_ctx = None
 
                 try:
                     if hasattr(request, 'auth_config') and hasattr(request.auth_config, 'allow_session_fallback'):
@@ -502,6 +425,16 @@ def require_auth(required_role="operator", require_tenant=False, provider: Optio
                         allow_fallback = True
                 except Exception:
                     allow_fallback = True
+
+                if token and provider_obj is None and not allow_fallback:
+                    logger.error(
+                        "Auth provider unavailable while bearer token supplied",
+                        extra={"endpoint": request.endpoint},
+                    )
+                    return jsonify({
+                        "error": "Authentication provider unavailable",
+                        "code": "AUTH_PROVIDER_UNAVAILABLE"
+                    }), 503
 
                 if not token and not allow_fallback:
                     return jsonify({
@@ -515,43 +448,102 @@ def require_auth(required_role="operator", require_tenant=False, provider: Optio
                     if revoked is not None:
                         return revoked
                     try:
-                        claims = verify_and_decode_jwt(provider_obj, token, metrics)
-                        allowed, denial = authorize_roles(claims, provider_obj, required_role)
-                        if not allowed:
-                            _log_jwt_failure(metrics)
-                            return denial  # type: ignore[return-value]
-                        if require_tenant:
-                            tenant_result = _ensure_tenant_header()
-                            if tenant_result is not True:
-                                return tenant_result
-                        user_id = str(claims.get('sub', '') or '').strip()
-                        logger.debug(
-                            "JWT authentication successful",
-                            extra={
-                                "endpoint": request.endpoint,
-                                "user_hash": _scrub_identifier(user_id),
-                            },
+                        auth_ctx = resolve_auth_context(
+                            request,
+                            provider=provider_obj,
+                            metrics=metrics,
+                            require_email_verified=True,
                         )
-                        return f(*args, **kwargs)
-                    except ValueError as exc:
+                    except AuthContextError as exc:
                         logger.warning(
                             "JWT verification failed",
                             extra={"endpoint": request.endpoint, "error": str(exc)},
                         )
-                        _log_jwt_failure(metrics)
                         if not allow_fallback:
-                            msg = str(exc).lower()
-                            code = 'INVALID_TOKEN'
-                            if 'exp' in msg or 'expired' in msg:
-                                code = 'TOKEN_EXPIRED'
-                            if 'claim' in msg:
-                                code = 'INVALID_CLAIMS'
+                            return _auth_context_error_response(exc)
+                    else:
+                        if not auth_ctx.has_role(required_role):
+                            logger.warning(
+                                "Insufficient permissions",
+                                extra={
+                                    "endpoint": request.endpoint,
+                                    "user_hash": _scrub_identifier(auth_ctx.subject),
+                                    "required_role": required_role,
+                                    "token_roles": list(auth_ctx.roles),
+                                },
+                            )
+                            write_auth_audit(
+                                "PERMISSION_DENIED",
+                                user_id=auth_ctx.subject,
+                                username=auth_ctx.email or "",
+                                ip_address=request.remote_addr,
+                                reason=f"ROLE_{required_role.upper()}",
+                            )
                             return jsonify({
-                                "error": "Invalid or expired token",
-                                "message": "JWT verification failed",
-                                "code": code
-                            }), 401
-                        # else fall through to session checks
+                                "error": "Insufficient permissions",
+                                "message": f"{required_role} role required",
+                                "code": "PERMISSION_DENIED",
+                            }), 403
+
+                        if require_tenant:
+                            tenant_header_name = (
+                                getattr(request.auth_config, 'tenant_id_header', 'X-BAS-Tenant')
+                                if hasattr(request, 'auth_config')
+                                else 'X-BAS-Tenant'
+                            )
+                            tenant_check = _ensure_tenant_header()
+                            if tenant_check is not True:
+                                return tenant_check
+                            header_tenant = request.headers.get(tenant_header_name)
+                            if auth_ctx.tenant_id:
+                                if header_tenant and header_tenant != auth_ctx.tenant_id:
+                                    write_auth_audit(
+                                        "TENANT_VIOLATION",
+                                        user_id=auth_ctx.subject,
+                                        username=auth_ctx.email or "",
+                                        ip_address=request.remote_addr,
+                                        attempted_tenant=header_tenant,
+                                        allowed_tenant=auth_ctx.tenant_id,
+                                    )
+                                    return jsonify({
+                                        "error": "Access denied to tenant",
+                                        "code": "TENANT_ACCESS_DENIED",
+                                    }), 403
+                                try:
+                                    g.tenant_id = auth_ctx.tenant_id
+                                except Exception:
+                                    pass
+                                try:
+                                    setattr(request, "tenant_id", auth_ctx.tenant_id)
+                                except Exception:
+                                    pass
+                            elif header_tenant:
+                                logger.warning(
+                                    "JWT missing tenant id for tenant-protected endpoint",
+                                    extra={"endpoint": request.endpoint},
+                                )
+                                return jsonify({
+                                    "error": "Tenant context unavailable",
+                                    "code": "TENANT_ID_MISSING",
+                                }), 403
+
+                        try:
+                            setattr(request, "auth_context", auth_ctx)
+                        except Exception:
+                            pass
+                        try:
+                            setattr(request, "user_claims", dict(auth_ctx.claims))
+                        except Exception:
+                            pass
+
+                        logger.debug(
+                            "JWT authentication successful",
+                            extra={
+                                "endpoint": request.endpoint,
+                                "user_hash": _scrub_identifier(auth_ctx.subject),
+                            },
+                        )
+                        return f(*args, **kwargs)
 
                 logger.debug(
                     "Checking session fallback",
@@ -701,30 +693,6 @@ def _has_permission(user_role: str, required_role: str) -> bool:
     return has_permission
 
 
-def _log_jwt_attempt(metrics: Optional[Any]) -> None:
-    try:
-        if metrics is not None:
-            metrics.inc_jwt_attempt()
-    except Exception:
-        pass
-
-
-def _log_jwt_failure(metrics: Optional[Any]) -> None:
-    try:
-        if metrics is not None:
-            metrics.inc_jwt_failure()
-    except Exception:
-        pass
-
-
-def _log_jwt_success(metrics: Optional[Any], start_ms: float) -> None:
-    try:
-        if metrics is not None:
-            metrics.observe_jwt_success(time.time() * 1000.0 - start_ms)
-    except Exception:
-        pass
-
-
 def _log_session_attempt(metrics: Optional[Any]) -> None:
     try:
         if metrics is not None:
@@ -747,34 +715,6 @@ def _log_session_success(metrics: Optional[Any], start_ms: float) -> None:
             metrics.observe_session_success(time.time() * 1000.0 - start_ms)
     except Exception:
         pass
-
-
-def _extract_roles_from_claims_local(claims: Dict[str, Any]) -> List[str]:
-    """Extract roles from common claim keys with normalization and de-dupe."""
-    roles: List[str] = []
-    try:
-        if not isinstance(claims, dict):
-            return []
-        direct = claims.get('roles')
-        if isinstance(direct, list):
-            roles.extend([str(x) for x in direct])
-        perms = claims.get('permissions')
-        if isinstance(perms, list):
-            roles.extend([str(x) for x in perms])
-        for k, v in claims.items():
-            if isinstance(k, str) and k.endswith('/roles') and isinstance(v, list):
-                roles.extend([str(x) for x in v])
-        # normalize and de-dupe
-        seen = set()
-        result: List[str] = []
-        for r in roles:
-            rl = r.strip()
-            if rl and rl not in seen:
-                seen.add(rl)
-                result.append(rl)
-        return result
-    except Exception:
-        return []
 
 
 def _tenant_middleware_missing_response() -> Tuple[Any, int]:
@@ -884,6 +824,42 @@ def _audit_tenant_violation(user_id: str, username: str, ip_address: str, attemp
         logger.error("Failed to audit tenant violation", extra={"error": str(e)})
 
 
+def _auth_context_error_response(exc: AuthContextError) -> Tuple[Any, int]:
+    """Translate an ``AuthContextError`` into a standardized HTTP response."""
+
+    msg_lower = str(exc).lower()
+    if "email not verified" in msg_lower:
+        status = 403
+        payload = {
+            "error": "Email not verified",
+            "code": "EMAIL_NOT_VERIFIED",
+            "message": "Email address must be verified before accessing this resource",
+        }
+    elif "expired" in msg_lower or "exp" in msg_lower:
+        status = 401
+        payload = {
+            "error": "Invalid or expired token",
+            "code": "TOKEN_EXPIRED",
+            "message": "Provided access token is expired",
+        }
+    elif "missing bearer token" in msg_lower:
+        status = 401
+        payload = {
+            "error": "Authorization required",
+            "code": "AUTH_REQUIRED",
+            "message": "Bearer token required",
+        }
+    else:
+        status = 401
+        payload = {
+            "error": "Invalid or expired token",
+            "code": "INVALID_TOKEN",
+            "message": "JWT verification failed",
+        }
+
+    return jsonify(payload), status
+
+
 def path_classify(path: str) -> str:
     rules = getattr(request.server_config, 'PATH_SENSITIVITY_RULES', [])
     for pattern, level in rules:
@@ -894,61 +870,6 @@ def path_classify(path: str) -> str:
         except Exception:
             continue
     return 'critical'  # fail-closed to full check
-
-
-def claims_only_check(claims: Dict[str, Any], required_role: str) -> bool:
-    roles = _extract_roles_from_claims_local(claims)
-    return _claims_has_permission(roles, required_role)
-
-
-def full_metadata_check(user_id: str, provider: Any, required_role: str) -> bool:
-    roles = provider.get_user_roles(user_id)
-    return _claims_has_permission(roles, required_role)
-
-
-def admin_outage_override(user_id: str, claims: Dict[str, Any]) -> bool:
-    roles = _extract_roles_from_claims_local(claims)
-    if 'admin' not in [r.lower() for r in roles]:
-        return False
-    with _override_lock:
-        now = time.time()
-        if now - _override_timeouts[user_id] < 300:
-            pass
-        else:
-            _override_timeouts[user_id] = now
-    audit_logger = getattr(request, 'audit_logger', None)
-    if audit_logger:
-        audit_logger.log_event(
-            event_type='ADMIN_OUTAGE_OVERRIDE',
-            user_id=user_id,
-            details={'reason': 'metadata outage', 'timestamp': time.time()}
-        )
-    return True
-
-
-def _claims_has_permission(user_roles: List[str], required_role: str) -> bool:
-    """Check if any of the user's roles satisfies the required role using hierarchy."""
-    normalized = set(r.lower() for r in user_roles)
-    if required_role == 'read-only':
-        # Accept coarse roles OR granular read permissions for read-only endpoints
-        if normalized & {'read-only', 'operator', 'admin'}:
-            return True
-        # Map common granular read permissions to read-only access
-        for perm in normalized:
-            # Generic patterns: read:* or *:read
-            if perm.startswith('read:') or perm.endswith(':read'):
-                return True
-        # Known explicit read permissions used by this API
-        if normalized & {'read:status', 'telemetry:read', 'config:read'}:
-            return True
-        return False
-    if required_role == 'operator':
-        return bool(normalized & {'operator', 'admin'})
-    if required_role == 'admin':
-        return 'admin' in normalized
-    return False
-
-
 __all__ = [
     "require_auth",
 ]

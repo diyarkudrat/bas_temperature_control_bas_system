@@ -5,6 +5,7 @@ from typing import Dict, Any, Optional, List
 from datetime import datetime
 import uuid
 
+from app_platform.contracts import InviteStatus, MemberRole, TenantStatus
 
 @dataclass
 class BaseEntity:
@@ -249,3 +250,145 @@ class Device(BaseEntity):
     def update_last_seen(self) -> None:
         """Update last seen timestamp to now."""
         self.last_seen = int(datetime.utcnow().timestamp() * 1000)
+
+
+@dataclass
+class Tenant(BaseEntity):
+    """Tenant aggregate root."""
+
+    tenant_id: str
+    name: str
+    status: str = TenantStatus.PROVISIONING.value
+    slug: Optional[str] = None
+    organization_id: Optional[str] = None
+    created_by_user_id: Optional[str] = None
+    limits: Dict[str, Any] = field(default_factory=dict)
+    settings: Dict[str, Any] = field(default_factory=dict)
+    counters: Dict[str, int] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        if not self.tenant_id:
+            raise ValueError("tenant_id is required")
+        if not self.name:
+            raise ValueError("tenant name is required")
+        if self.status not in {item.value for item in TenantStatus}:
+            raise ValueError(f"Unsupported tenant status: {self.status}")
+
+
+@dataclass
+class TenantMember(BaseEntity):
+    """Tenant member association."""
+
+    tenant_id: str
+    user_id: str
+    email: str
+    role: str = MemberRole.READ_ONLY.value
+    status: str = "pending"
+    invited_by: Optional[str] = None
+    invited_at: Optional[int] = None
+    accepted_at: Optional[int] = None
+    auth0_user_id: Optional[str] = None
+
+    def __post_init__(self) -> None:
+        if not self.tenant_id:
+            raise ValueError("tenant_id is required")
+        if not self.user_id:
+            raise ValueError("user_id is required")
+        if not self.email:
+            raise ValueError("email is required")
+        if self.role not in {item.value for item in MemberRole}:
+            raise ValueError(f"Unsupported member role: {self.role}")
+
+
+@dataclass
+class Invite(BaseEntity):
+    """Invite document for onboarding new members."""
+
+    invite_id: str
+    tenant_id: str
+    email: str
+    role: str = MemberRole.READ_ONLY.value
+    status: str = InviteStatus.PENDING.value
+    token_hash: Optional[str] = None
+    issued_at: Optional[int] = None
+    expires_at: Optional[int] = None
+    invited_by: Optional[str] = None
+    redeemed_by: Optional[str] = None
+    redeemed_at: Optional[int] = None
+    metadata: Dict[str, Any] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        if not self.invite_id:
+            raise ValueError("invite_id is required")
+        if not self.tenant_id:
+            raise ValueError("tenant_id is required")
+        if not self.email:
+            raise ValueError("email is required")
+        if self.role not in {item.value for item in MemberRole}:
+            raise ValueError(f"Unsupported invite role: {self.role}")
+        if self.status not in {item.value for item in InviteStatus}:
+            raise ValueError(f"Unsupported invite status: {self.status}")
+
+
+@dataclass
+class IdempotencyKey(BaseEntity):
+    """Idempotency record for write operations."""
+
+    key: str
+    request_hash: str
+    status: str = "in_progress"
+    status_code: Optional[int] = None
+    response_body: Optional[str] = None
+    response_headers: Dict[str, str] = field(default_factory=dict)
+    tenant_id: Optional[str] = None
+    method: Optional[str] = None
+    path: Optional[str] = None
+    expires_at: Optional[int] = None
+
+    def __post_init__(self) -> None:
+        if not self.key:
+            raise ValueError("key is required")
+        if not self.request_hash:
+            raise ValueError("request_hash is required")
+
+
+@dataclass
+class OutboxEvent(BaseEntity):
+    """Durable outbox entry for asynchronous processing."""
+
+    event_id: str
+    topic: str
+    payload: Dict[str, Any] = field(default_factory=dict)
+    status: str = "pending"
+    available_at: Optional[int] = None
+    retry_count: int = 0
+    last_error: Optional[str] = None
+    partition: Optional[str] = None
+
+    def __post_init__(self) -> None:
+        if not self.event_id:
+            raise ValueError("event_id is required")
+        if not self.topic:
+            raise ValueError("topic is required")
+        if self.status not in {"pending", "delivered", "failed"}:
+            raise ValueError(f"Unsupported outbox status: {self.status}")
+
+
+def create_tenant(data: Dict[str, Any]) -> Tenant:
+    return Tenant.from_dict(data)
+
+
+def create_tenant_member(data: Dict[str, Any]) -> TenantMember:
+    return TenantMember.from_dict(data)
+
+
+def create_invite(data: Dict[str, Any]) -> Invite:
+    return Invite.from_dict(data)
+
+
+def create_idempotency_key(data: Dict[str, Any]) -> IdempotencyKey:
+    return IdempotencyKey.from_dict(data)
+
+
+def create_outbox_event(data: Dict[str, Any]) -> OutboxEvent:
+    return OutboxEvent.from_dict(data)

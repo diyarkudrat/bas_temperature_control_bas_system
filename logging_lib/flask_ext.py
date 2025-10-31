@@ -2,15 +2,22 @@
 
 from __future__ import annotations
 
+import importlib
 import time
 import uuid
-from typing import Any, Iterable, Tuple
+from typing import Any, Iterable, Optional, Tuple
 
 from flask import Flask, Response, g, request
 
 from . import get_logger
 from .config import get_settings
-from .logger import get_context, pop_context, push_context
+from .logger import pop_context, push_context
+
+
+class _TraceInfo:
+    def __init__(self, trace_id: Optional[str], span_id: Optional[str]) -> None:
+        self.trace_id = trace_id
+        self.span_id = span_id
 
 
 def register_flask_context(app: Flask, *, service: str | None = None) -> None:
@@ -38,8 +45,14 @@ def register_flask_context(app: Flask, *, service: str | None = None) -> None:
             rid = uuid.uuid4().hex[:16]
         g.request_id = rid
 
-        trace_header = request.headers.get(traceparent_header)
-        trace_id, span_id = _parse_traceparent(trace_header)
+        otel_trace = _start_opentelemetry_span(component)
+        if otel_trace:
+            trace_id, span_id = otel_trace.trace_id, otel_trace.span_id
+        else:
+            trace_header = request.headers.get(traceparent_header)
+            trace_id, span_id = _parse_traceparent(trace_header)
+        trace_id, span_id = _ensure_trace_ids(trace_id, span_id)
+
         g._logging_trace = (trace_id, span_id)
 
         token = push_context(
@@ -88,6 +101,13 @@ def register_flask_context(app: Flask, *, service: str | None = None) -> None:
         )
 
         response.headers.setdefault(request_id_header, rid)
+        if trace_id and span_id:
+            response.headers.setdefault(
+                traceparent_header,
+                _format_traceparent(trace_id, span_id),
+            )
+
+        _finalize_span(response.status_code)
 
         token = g.pop("_logging_token", None)
         if token is not None:
@@ -123,6 +143,7 @@ def register_flask_context(app: Flask, *, service: str | None = None) -> None:
                     "message": str(_exc),
                 },
             )
+        _finalize_span(None, exc=_exc)
 
 
 def _parse_traceparent(header: str | None) -> Tuple[str | None, str | None]:
@@ -158,4 +179,119 @@ def _resolve_identity() -> Tuple[str | None, str | None]:
     # Prefer globally unique ID, fallback to username for observability
     resolved_user = str(user_id or username) if (user_id or username) else None
     return resolved_user, tenant_id
+
+
+def _observability_logger():
+    return get_logger("observability.tracing")
+
+
+def _ensure_trace_ids(trace_id: Optional[str], span_id: Optional[str]) -> Tuple[str, str]:
+    if not trace_id or len(trace_id) != 32:
+        trace_id = uuid.uuid4().hex
+    if not span_id or len(span_id) != 16:
+        span_id = uuid.uuid4().hex[:16]
+    return trace_id, span_id
+
+
+def _format_traceparent(trace_id: str, span_id: str) -> str:
+    return f"00-{trace_id}-{span_id}-01"
+
+
+def _start_opentelemetry_span(component: Optional[str]) -> Optional[_TraceInfo]:
+    otel_logger = _observability_logger()
+    try:
+        trace_mod = importlib.import_module("opentelemetry.trace")
+        propagate_mod = importlib.import_module("opentelemetry.propagate")
+        SpanKind = getattr(trace_mod, "SpanKind", None)
+        if SpanKind is None:
+            return None
+        tracer_getter = getattr(trace_mod, "get_tracer")
+        extract = getattr(propagate_mod, "extract")
+    except ModuleNotFoundError:
+        return None
+    except Exception as exc:  # pragma: no cover
+        otel_logger.warning("OpenTelemetry modules unavailable", extra={"error": str(exc)})
+        return None
+
+    span_cm = None
+    try:
+        headers = {key: value for key, value in request.headers.items()}
+        context = extract(headers)
+        tracer = tracer_getter(component or "api")
+        span_cm = tracer.start_as_current_span(
+            name=f"{component or 'api'}.request",
+            context=context,
+            kind=SpanKind.SERVER,
+        )
+        span = span_cm.__enter__()
+        span_ctx = span.get_span_context()
+        trace_id = f"{span_ctx.trace_id:032x}" if span_ctx.trace_id else None
+        span_id = f"{span_ctx.span_id:016x}" if span_ctx.span_id else None
+        try:
+            span.set_attribute("http.method", request.method)
+            span.set_attribute("http.target", request.full_path or request.path)
+            span.set_attribute("http.scheme", request.scheme)
+            span.set_attribute("http.host", request.host)
+            span.set_attribute("net.peer.ip", _client_ip() or "")
+        except Exception:
+            pass
+        g._otel_span_cm = span_cm
+        g._otel_span = span
+        return _TraceInfo(trace_id, span_id)
+    except Exception as exc:  # pragma: no cover - graceful degradation
+        if span_cm is not None:
+            try:
+                span_cm.__exit__(type(exc), exc, exc.__traceback__)
+            except Exception:
+                pass
+        otel_logger.warning("OpenTelemetry span setup failed", extra={"error": str(exc)})
+        g.pop("_otel_span_cm", None)
+        g.pop("_otel_span", None)
+        return None
+
+
+def _finalize_span(status_code: Optional[int], *, exc: Any = None) -> None:
+    span = g.pop("_otel_span", None)
+    span_cm = g.pop("_otel_span_cm", None)
+    if span is None and span_cm is None:
+        return
+
+    if span is not None:
+        try:
+            if status_code is not None:
+                span.set_attribute("http.status_code", status_code)
+            span.set_attribute("http.target", request.path)
+            span.set_attribute("http.method", request.method)
+            status_cls, status_code_cls = _load_status_classes()
+            if status_cls and status_code_cls:
+                if exc is not None:
+                    span.record_exception(exc)
+                    span.set_status(status_cls(status_code_cls.ERROR))
+                elif status_code is not None:
+                    if status_code >= 500:
+                        span.set_status(status_cls(status_code_cls.ERROR))
+                    else:
+                        span.set_status(status_cls(status_code_cls.OK))
+        except Exception:  # pragma: no cover - best effort
+            pass
+
+    if span_cm is not None:
+        try:
+            if exc is not None:
+                span_cm.__exit__(type(exc), exc, exc.__traceback__)
+            else:
+                span_cm.__exit__(None, None, None)
+        except Exception:  # pragma: no cover
+            pass
+
+
+def _load_status_classes() -> Tuple[Optional[Any], Optional[Any]]:
+    try:
+        status_mod = importlib.import_module("opentelemetry.trace.status")
+        return getattr(status_mod, "Status", None), getattr(status_mod, "StatusCode", None)
+    except ModuleNotFoundError:
+        return None, None
+    except Exception as exc:  # pragma: no cover
+        _observability_logger().warning("OpenTelemetry status classes unavailable", extra={"error": str(exc)})
+        return None, None
 

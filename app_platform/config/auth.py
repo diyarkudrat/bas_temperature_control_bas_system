@@ -21,6 +21,10 @@ class AuthConfig:
     use_firestore_auth: bool = False
     use_firestore_audit: bool = False
 
+    # Org onboarding feature flags
+    org_signup_v2_enabled: bool = False
+    device_rbac_enforcement: bool = False
+
     # Firestore configuration
     gcp_project_id: str | None = None
     firestore_emulator_host: str | None = None
@@ -42,6 +46,24 @@ class AuthConfig:
     rate_limit_per_user: int = 50  # requests per hour
     auth_attempts_per_15min: int = 5
 
+    # Provisioning / invite settings
+    provisioning_key_id: str | None = None
+    provisioning_private_key_secret: str | None = None
+    provisioning_jwt_ttl_seconds: int = 60
+    invite_quota_per_tenant: int = 20
+    invite_quota_window_minutes: int = 60
+    invite_ttl_hours: int = 72
+    default_device_quota: int = 100
+    idempotency_ttl_hours: int = 24
+    replay_cache_ttl_seconds: int = 120
+    auth0_webhook_secret: str | None = None
+
+    # CAPTCHA configuration
+    captcha_provider: str | None = None
+    captcha_site_key: str | None = None
+    captcha_secret_handle: str | None = None
+    captcha_min_score: float = 0.5
+
     @classmethod
     def from_env(cls) -> "AuthConfig":
         """Load configuration from environment variables."""
@@ -53,6 +75,8 @@ class AuthConfig:
             use_firestore_telemetry=os.getenv("USE_FIRESTORE_TELEMETRY", "0") == "1",
             use_firestore_auth=os.getenv("USE_FIRESTORE_AUTH", "0") == "1",
             use_firestore_audit=os.getenv("USE_FIRESTORE_AUDIT", "0") == "1",
+            org_signup_v2_enabled=os.getenv("ORG_SIGNUP_V2", "0") in {"1", "true", "True"},
+            device_rbac_enforcement=os.getenv("DEVICE_RBAC_ENFORCEMENT", "0") in {"1", "true", "True"},
             gcp_project_id=os.getenv("GOOGLE_CLOUD_PROJECT"),
             firestore_emulator_host=os.getenv("FIRESTORE_EMULATOR_HOST"),
             tenant_id_header=os.getenv("TENANT_ID_HEADER", "X-BAS-Tenant"),
@@ -60,6 +84,20 @@ class AuthConfig:
             max_concurrent_sessions=int(os.getenv("BAS_MAX_CONCURRENT_SESSIONS", "3")),
             max_login_attempts=int(os.getenv("BAS_MAX_LOGIN_ATTEMPTS", "5")),
             lockout_duration=int(os.getenv("BAS_LOCKOUT_DURATION", "900")),
+            provisioning_key_id=os.getenv("ORG_SIGNUP_SIGNING_KEY_ID"),
+            provisioning_private_key_secret=os.getenv("ORG_SIGNUP_PRIVATE_KEY_SECRET"),
+            provisioning_jwt_ttl_seconds=int(os.getenv("ORG_SIGNUP_JWT_TTL_SECONDS", "60")),
+            invite_quota_per_tenant=int(os.getenv("INVITE_MAX_PER_TENANT", "20")),
+            invite_quota_window_minutes=int(os.getenv("INVITE_QUOTA_WINDOW_MINUTES", "60")),
+            invite_ttl_hours=int(os.getenv("INVITE_TTL_HOURS", "72")),
+            default_device_quota=int(os.getenv("DEFAULT_DEVICE_QUOTA", "100")),
+            idempotency_ttl_hours=int(os.getenv("IDEMPOTENCY_TTL_HOURS", "24")),
+            replay_cache_ttl_seconds=int(os.getenv("REQUEST_JWT_REPLAY_TTL_SECONDS", "120")),
+            auth0_webhook_secret=os.getenv("AUTH0_WEBHOOK_SECRET"),
+            captcha_provider=os.getenv("CAPTCHA_PROVIDER"),
+            captcha_site_key=os.getenv("CAPTCHA_SITE_KEY"),
+            captcha_secret_handle=os.getenv("CAPTCHA_SECRET_HANDLE"),
+            captcha_min_score=float(os.getenv("CAPTCHA_MIN_SCORE", "0.5")),
         )
 
     @classmethod
@@ -101,6 +139,26 @@ class AuthConfig:
 
         if self.password_min_length < 8:
             logger.warning(f"Password minimum length too low: {self.password_min_length}")
+
+        if self.org_signup_v2_enabled:
+            if not self.provisioning_key_id:
+                logger.warning("ORG_SIGNUP_V2 enabled without provisioning key id")
+            if not self.provisioning_private_key_secret:
+                logger.warning("ORG_SIGNUP_V2 enabled without provisioning key secret handle")
+            if self.provisioning_jwt_ttl_seconds < 30 or self.provisioning_jwt_ttl_seconds > 300:
+                logger.warning(
+                    "Provisioning JWT TTL outside recommended range",
+                    extra={"ttl": self.provisioning_jwt_ttl_seconds},
+                )
+
+        if self.captcha_provider and not self.captcha_secret_handle:
+            logger.warning(
+                "Captcha provider configured without secret handle",
+                extra={"provider": self.captcha_provider},
+            )
+
+        if self.invite_quota_per_tenant <= 0:
+            logger.warning("invite_quota_per_tenant must be positive")
 
         logger.info("Auth configuration validation completed")
         

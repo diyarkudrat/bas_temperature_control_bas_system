@@ -16,6 +16,21 @@ from flask import Blueprint, current_app, jsonify, request
 from app_platform.security import ServiceTokenValidationError, verify_service_jwt
 from logging_lib import get_logger as get_structured_logger
 
+from apps.auth_service.http.schemas import (
+    SchemaValidationError,
+    parse_email_verified_event,
+    parse_invite_create,
+    parse_org_provisioning,
+)
+from apps.auth_service.services import (
+    DuplicateEventError,
+    InviteConflictError,
+    InviteRateLimitError,
+    ServiceConfigurationError,
+    UnauthorizedRequestError,
+    UpstreamServiceError,
+)
+
 
 auth_bp = Blueprint("auth_service", __name__)
 
@@ -100,6 +115,131 @@ def _verify_service_token() -> Optional[Mapping[str, Any]]:
     )
 
     return claims
+
+
+@auth_bp.route("/auth/orgs/provision", methods=["POST"])
+def provision_org_jwt() -> Any:
+    service = getattr(request, "provisioning_service", None)
+    if service is None or not getattr(service, "enabled", False):
+        logger.warning("Provisioning request rejected: service unavailable")
+        return jsonify({"error": "Provisioning unavailable", "code": "SERVICE_DISABLED"}), 503
+
+    if not _service_token_valid():
+        token_logger.warning("Provisioning request missing service token")
+        return jsonify({"error": "Forbidden", "code": "FORBIDDEN"}), 403
+
+    payload = request.get_json(silent=True) or {}
+    try:
+        schema = parse_org_provisioning(payload)
+    except SchemaValidationError as exc:
+        logger.info("Provisioning payload invalid", extra={"error": str(exc)})
+        return jsonify({"error": "Invalid payload", "code": "INVALID_ARGUMENT", "details": str(exc)}), 400
+
+    try:
+        response = service.mint(
+            schema,
+            request_id=request.headers.get("X-Request-ID"),
+            remote_addr=request.remote_addr,
+        )
+        body = response.to_dict()
+        return jsonify(body), 200
+    except ServiceConfigurationError as exc:
+        logger.error("Provisioning service misconfigured", extra={"error": str(exc)})
+        return jsonify({"error": "Provisioning unavailable", "code": "SERVICE_DISABLED"}), 503
+    except Exception:  # noqa: BLE001
+        logger.exception("Provisioning token issuance failed")
+        return jsonify({"error": "Internal server error"}), 500
+
+
+@auth_bp.route("/auth/invite", methods=["POST"])
+def create_invite() -> Any:
+    service = getattr(request, "invite_service", None)
+    if service is None or not getattr(service, "enabled", False):
+        logger.warning("Invite creation attempted while service disabled")
+        return jsonify({"error": "Invite service unavailable", "code": "SERVICE_DISABLED"}), 503
+
+    if not _service_token_valid():
+        token_logger.warning("Invite creation missing service token")
+        return jsonify({"error": "Forbidden", "code": "FORBIDDEN"}), 403
+
+    payload = request.get_json(silent=True) or {}
+    tenant_id = payload.get("tenantId") or payload.get("tenant_id")
+    if not tenant_id or not isinstance(tenant_id, str) or not tenant_id.strip():
+        return jsonify({"error": "tenant_id is required", "code": "INVALID_ARGUMENT"}), 400
+
+    try:
+        schema = parse_invite_create(payload, tenant_id=tenant_id)
+    except SchemaValidationError as exc:
+        logger.info("Invite payload invalid", extra={"error": str(exc), "tenant_id": tenant_id})
+        return jsonify({"error": "Invalid payload", "code": "INVALID_ARGUMENT", "details": str(exc)}), 400
+
+    try:
+        invite = service.create_invite(schema)
+    except InviteRateLimitError as exc:
+        logger.info("Invite quota exceeded", extra={"tenant_id": tenant_id, "error": str(exc)})
+        return jsonify({"error": "Rate limited", "code": "RATE_LIMITED"}), 429
+    except InviteConflictError as exc:
+        logger.info("Invite conflict detected", extra={"tenant_id": tenant_id, "error": str(exc)})
+        return jsonify({"error": "Invite already exists", "code": "CONFLICT"}), 409
+    except ServiceConfigurationError as exc:
+        logger.error("Invite service misconfigured", extra={"tenant_id": tenant_id, "error": str(exc)})
+        return jsonify({"error": "Invite service unavailable", "code": "SERVICE_DISABLED"}), 503
+    except UpstreamServiceError as exc:
+        logger.error("Invite upstream dependency error", extra={"tenant_id": tenant_id, "error": str(exc)})
+        return jsonify({"error": "Upstream service error", "code": "UPSTREAM_ERROR"}), 502
+    except Exception:  # noqa: BLE001
+        logger.exception("Invite creation failed")
+        return jsonify({"error": "Internal server error"}), 500
+
+    body = {
+        "invite_id": invite.invite_id,
+        "status": invite.status.value,
+    }
+    if invite.token:
+        body["token"] = invite.token
+    return jsonify(body), 201
+
+
+@auth_bp.route("/auth/events/email-verified", methods=["POST"])
+def handle_email_verified_event() -> Any:
+    service = getattr(request, "verification_service", None)
+    if service is None:
+        logger.warning("Verification event received but service disabled")
+        return jsonify({"error": "Verification handling disabled", "code": "SERVICE_DISABLED"}), 503
+
+    raw_body = request.get_data(cache=True, as_text=False) or b""
+    try:
+        service.validate_signature(request.headers, raw_body)
+    except ServiceConfigurationError as exc:
+        logger.error("Verification signature validation misconfigured", extra={"error": str(exc)})
+        return jsonify({"error": "Verification unavailable", "code": "SERVICE_DISABLED"}), 503
+    except UnauthorizedRequestError as exc:
+        logger.info("Verification signature rejected", extra={"error": str(exc)})
+        return jsonify({"error": "Forbidden", "code": "FORBIDDEN"}), 403
+
+    payload = request.get_json(silent=True) or {}
+    try:
+        event = parse_email_verified_event(payload)
+    except SchemaValidationError as exc:
+        logger.info("Verification payload invalid", extra={"error": str(exc)})
+        return jsonify({"error": "Invalid payload", "code": "INVALID_ARGUMENT", "details": str(exc)}), 400
+
+    try:
+        service.process_email_verified(event)
+    except DuplicateEventError:
+        logger.info("Duplicate verification event ignored", extra={"event_id": event.event_id})
+        return "", 202
+    except ServiceConfigurationError as exc:
+        logger.error("Verification service misconfigured", extra={"error": str(exc)})
+        return jsonify({"error": "Verification unavailable", "code": "SERVICE_DISABLED"}), 503
+    except UpstreamServiceError as exc:
+        logger.error("Verification forwarding failed", extra={"error": str(exc), "event_id": event.event_id})
+        return jsonify({"error": "Upstream service error", "code": "UPSTREAM_ERROR"}), 502
+    except Exception:  # noqa: BLE001
+        logger.exception("Verification event processing failed")
+        return jsonify({"error": "Internal server error"}), 500
+
+    return "", 204
 
 
 @auth_bp.route("/auth/login", methods=["POST"])

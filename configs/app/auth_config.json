@@ -4,6 +4,8 @@
   "use_firestore_telemetry": true,
   "use_firestore_auth": false,
   "use_firestore_audit": true,
+  "org_signup_v2_enabled": false,
+  "device_rbac_enforcement": false,
   "gcp_project_id": "bas-system-project",
   "firestore_emulator_host": "",
   "tenant_id_header": "X-BAS-Tenant",
@@ -16,6 +18,19 @@
   "password_history_count": 5,
   "rate_limit_per_ip": 100,
   "rate_limit_per_user": 50,
-  "auth_attempts_per_15min": 5
+  "auth_attempts_per_15min": 5,
+  "provisioning_key_id": null,
+  "provisioning_private_key_secret": null,
+  "provisioning_jwt_ttl_seconds": 60,
+  "invite_quota_per_tenant": 20,
+  "invite_quota_window_minutes": 60,
+  "invite_ttl_hours": 72,
+  "default_device_quota": 100,
+  "idempotency_ttl_hours": 24,
+  "replay_cache_ttl_seconds": 120,
+  "captcha_provider": "recaptcha",
+  "captcha_site_key": "dev-site-key",
+  "captcha_secret_handle": "projects/dev/secrets/captcha-secret",
+  "captcha_min_score": 0.5
 }
 

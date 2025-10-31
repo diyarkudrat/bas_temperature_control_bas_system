@@ -25,11 +25,14 @@ import os
 from dataclasses import dataclass
 from typing import Any, Optional
 
+import requests
+
 from flask import Flask, jsonify, request
 
 from app_platform.config.auth import AuthConfig
 from app_platform.config.config import ServerConfig, get_server_config
 from app_platform.config.rate_limit import AtomicRateLimitConfig
+from app_platform.utils.circuit_breaker import CircuitBreaker
 from app_platform.security import (
     ReplayCache,
     ServiceKeySet,
@@ -41,6 +44,14 @@ from application.auth.managers import SessionManager, UserManager
 from application.auth.services import AuditLogger, RateLimiter
 from logging_lib import configure as configure_structured_logging, get_logger as get_structured_logger
 from logging_lib.flask_ext import register_flask_context
+
+from apps.auth_service.services import (
+    Auth0ManagementClient,
+    EmailVerificationService,
+    InviteService,
+    ProvisioningTokenService,
+    ServiceConfigurationError,
+)
 
 logger = get_structured_logger("auth.main")
 service_token_logger = get_structured_logger("auth.service_tokens")
@@ -63,6 +74,11 @@ class AuthRuntime:
     rate_limiter: RateLimiter
     firestore_factory: Optional[Any] = None
     service_tokens: Optional["ServiceTokenSettings"] = None
+    http_session: Optional[requests.Session] = None
+    provisioning_service: Optional[ProvisioningTokenService] = None
+    invite_service: Optional[InviteService] = None
+    verification_service: Optional[EmailVerificationService] = None
+    auth0_mgmt_client: Optional[Auth0ManagementClient] = None
 
 
 @dataclass(slots=True)
@@ -187,6 +203,9 @@ def bootstrap_runtime(app: Flask, *, config_path: str | None = None) -> AuthRunt
     auth_config = AuthConfig.from_file(cfg_path)
     auth_config.validate()
 
+    app.config.setdefault("ORG_SIGNUP_V2_ENABLED", auth_config.org_signup_v2_enabled)
+    app.config.setdefault("DEVICE_RBAC_ENFORCEMENT", auth_config.device_rbac_enforcement)
+
     server_config = get_server_config()
 
     firestore_factory = None
@@ -215,6 +234,68 @@ def bootstrap_runtime(app: Flask, *, config_path: str | None = None) -> AuthRunt
 
     service_tokens = _build_service_token_settings()
 
+    http_session = requests.Session()
+    http_session.headers.update({"User-Agent": "bas-auth-service/1.0"})
+
+    breaker_cfg = server_config.breaker
+    mgmt_breaker = CircuitBreaker(
+        failure_threshold=getattr(breaker_cfg, "failure_threshold", 5),
+        window_seconds=getattr(breaker_cfg, "window_seconds", 30),
+        half_open_after_s=getattr(breaker_cfg, "half_open_after_seconds", 15),
+    )
+
+    auth0_client: Optional[Auth0ManagementClient] = None
+    try:
+        auth0_client = Auth0ManagementClient(server_config.auth0_mgmt, http_session, breaker=mgmt_breaker)
+        if not auth0_client.enabled:
+            auth0_client = None
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Auth0 management client initialization failed: %s", exc)
+        auth0_client = None
+
+    provisioning_service: Optional[ProvisioningTokenService] = None
+    if auth_config.org_signup_v2_enabled:
+        try:
+            provisioning_service = ProvisioningTokenService(auth_config)
+        except ServiceConfigurationError as exc:
+            logger.error("Provisioning service initialization failed: %s", exc)
+            provisioning_service = None
+
+    invite_service: Optional[InviteService] = None
+    if auth_config.org_signup_v2_enabled:
+        invite_service = InviteService(
+            config=auth_config,
+            firestore_factory=firestore_factory,
+            auth0_client=auth0_client,
+        )
+
+    verification_service: Optional[EmailVerificationService] = None
+    if service_tokens is not None:
+        api_base_url = os.getenv("API_SERVICE_URL") or os.getenv("ORG_API_BASE_URL") or "http://localhost:8080"
+        events_replay = load_replay_cache_from_env(
+            prefix="AUTH_EVENTS",
+            namespace="auth-email-events",
+            default_ttl_seconds=getattr(auth_config, "replay_cache_ttl_seconds", 120) or 120,
+            default_max_entries=2048,
+        )
+        try:
+            verification_service = EmailVerificationService(
+                api_base_url=api_base_url,
+                http_client=http_session,
+                replay_cache=events_replay,
+                signing_keyset=service_tokens.keyset,
+                signing_subject="auth.events.email_verified",
+                signing_audience=service_tokens.audience,
+                signing_issuer=service_tokens.issuer,
+                signing_scopes=service_tokens.required_scopes,
+                request_timeout_s=float(os.getenv("AUTH_EVENTS_TIMEOUT_S", "5")),
+                ttl_seconds=min(getattr(auth_config, "provisioning_jwt_ttl_seconds", 60), 60),
+                webhook_secret=getattr(auth_config, "auth0_webhook_secret", None),
+            )
+        except ServiceConfigurationError as exc:
+            logger.error("Verification service initialization failed: %s", exc)
+            verification_service = None
+
     runtime = AuthRuntime(
         config=auth_config,
         server_config=server_config,
@@ -225,6 +306,11 @@ def bootstrap_runtime(app: Flask, *, config_path: str | None = None) -> AuthRunt
         rate_limiter=rate_limiter,
         firestore_factory=firestore_factory,
         service_tokens=service_tokens,
+        http_session=http_session,
+        provisioning_service=provisioning_service,
+        invite_service=invite_service,
+        verification_service=verification_service,
+        auth0_mgmt_client=auth0_client,
     )
 
     app.config.setdefault("AUTH_SERVICE_RUNTIME", runtime)
@@ -240,6 +326,8 @@ def bootstrap_runtime(app: Flask, *, config_path: str | None = None) -> AuthRunt
             "db_path": db_path,
             "service_tokens_enabled": service_tokens is not None,
             "rate_limit_per_ip": getattr(auth_config, "rate_limit_per_ip", None),
+            "org_signup_v2": auth_config.org_signup_v2_enabled,
+            "device_rbac_enforcement": auth_config.device_rbac_enforcement,
         },
     )
 
@@ -275,11 +363,22 @@ def _register_request_hooks(app: Flask, runtime: AuthRuntime) -> None:
             request.firestore_factory = runtime.firestore_factory
         if runtime.service_tokens is not None:
             request.service_tokens = runtime.service_tokens
+        if runtime.provisioning_service is not None:
+            request.provisioning_service = runtime.provisioning_service
+        if runtime.invite_service is not None:
+            request.invite_service = runtime.invite_service
+        if runtime.verification_service is not None:
+            request.verification_service = runtime.verification_service
+        if runtime.auth0_mgmt_client is not None:
+            request.auth0_mgmt_client = runtime.auth0_mgmt_client
         logger.debug(
             "Request context hydrated",
             extra={
                 "firestore_attached": runtime.firestore_factory is not None,
                 "service_tokens_attached": runtime.service_tokens is not None,
+                "provisioning_attached": runtime.provisioning_service is not None,
+                "invite_service_attached": runtime.invite_service is not None,
+                "auth0_mgmt_attached": runtime.auth0_mgmt_client is not None,
             },
         )
 

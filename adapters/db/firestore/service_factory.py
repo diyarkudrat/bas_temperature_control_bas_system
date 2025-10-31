@@ -11,6 +11,11 @@ from .users_store import UsersRepository
 from .sessions_store import SessionsStore
 from .audit_store import AuditLogStore
 from .devices_store import DevicesStore
+from .tenant_store import TenantRepository
+from .member_store import TenantMemberRepository
+from .invite_store import InviteRepository
+from .idempotency_store import IdempotencyKeyRepository
+from .outbox_store import OutboxRepository
 # Import Firestore client from auth package which owns client factory
 from auth.firestore_client import get_firestore_client
 
@@ -93,6 +98,34 @@ class FirestoreServiceFactory:
             cache = self._resolve_cache_client()
             self._repositories['devices'] = DevicesStore(self.client, cache=cache)
         return self._repositories['devices']
+
+    def get_tenant_service(self) -> TenantRepository:
+        if 'tenants' not in self._repositories:
+            self._repositories['tenants'] = TenantRepository(self.client)
+        return self._repositories['tenants']
+
+    def get_member_service(self) -> TenantMemberRepository:
+        if 'members' not in self._repositories:
+            self._repositories['members'] = TenantMemberRepository(self.client)
+        return self._repositories['members']
+
+    def get_invite_service(self) -> InviteRepository:
+        if 'invites' not in self._repositories:
+            self._repositories['invites'] = InviteRepository(self.client)
+        return self._repositories['invites']
+
+    def get_idempotency_service(self) -> IdempotencyKeyRepository:
+        if 'idempotency' not in self._repositories:
+            self._repositories['idempotency'] = IdempotencyKeyRepository(self.client)
+        return self._repositories['idempotency']
+
+    def get_outbox_service(self) -> OutboxRepository:
+        if 'outbox' not in self._repositories:
+            self._repositories['outbox'] = OutboxRepository(self.client)
+        return self._repositories['outbox']
+
+    def get_outbox_repository(self) -> OutboxRepository:
+        return self.get_outbox_service()
     
     # Alias methods for repository naming (for test compatibility)
     def get_telemetry_repository(self) -> TelemetryRepository:
@@ -114,6 +147,18 @@ class FirestoreServiceFactory:
     def get_devices_repository(self) -> DevicesStore:
         """Get devices repository instance (alias for get_devices_service)."""
         return self.get_devices_service()
+
+    def get_tenant_repository(self) -> TenantRepository:
+        return self.get_tenant_service()
+
+    def get_member_repository(self) -> TenantMemberRepository:
+        return self.get_member_service()
+
+    def get_invite_repository(self) -> InviteRepository:
+        return self.get_invite_service()
+
+    def get_idempotency_repository(self) -> IdempotencyKeyRepository:
+        return self.get_idempotency_service()
     
     def get_all_repositories(self) -> Dict[str, Any]:
         """Get all repository instances."""
@@ -122,7 +167,12 @@ class FirestoreServiceFactory:
             'users': self.get_users_repository(),
             'sessions': self.get_sessions_repository(),
             'audit': self.get_audit_repository(),
-            'devices': self.get_devices_repository()
+            'devices': self.get_devices_repository(),
+            'tenants': self.get_tenant_repository(),
+            'members': self.get_member_repository(),
+            'invites': self.get_invite_repository(),
+            'idempotency': self.get_idempotency_repository(),
+            'outbox': self.get_outbox_service(),
         }
     
     def _resolve_cache_client(self) -> Optional[Any]:
