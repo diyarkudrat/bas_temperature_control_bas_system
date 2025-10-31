@@ -382,11 +382,12 @@ def _get_store() -> InMemoryIdempotencyStore:
 - ✅ Added `POST /tenants/<tenantId>/users/invite` with admin-only auth, tenant isolation, signed request JWT validation, per-tenant rate limiting, Auth-service orchestration, Firestore member/sentinel persistence, audit logging, and resilient outbox enqueueing.
 - ✅ Implemented `/auth/accept-invite` to validate tokens, handle expiration/conflicts, finalize member activation within Firestore, emit audit/outbox events, and mint short-lived acceptance JWTs for downstream onboarding.
 
-### Step 4 — Device Provisioning Lifecycle
+### Step 4 — Device Provisioning Lifecycle *(complete)*
 
-- Introduce `/tenants/{tenantId}/devices` (POST/GET) and `/tenants/{tenantId}/devices/{deviceId}` (DELETE) endpoints enforcing `require_device_access`, tenant isolation, and idempotency.
-- Wire device creation transactions to a Secret Manager adapter for credential generation, persisting only credential references and scheduling asynchronous rotation hooks.
-- Ensure delete operations perform soft delete with audit logging and outbox event emission, delegating credential revocation to background workers.
+- ✅ Implemented `/tenants/{tenantId}/devices` (POST/GET) and `/tenants/{tenantId}/devices/{deviceId}` (DELETE) in `apps/api/http/org_routes.py` with stacked `require_auth`, `enforce_tenant_isolation`, `require_device_access`, and `enforce_idempotency` decorators to guard multi-tenant access.
+- ✅ Device registration allocates credentials via the new `DeviceCredentialService` (`apps/api/services/device_credentials.py`) backed by `SecretManagerAdapter`, storing only credential references, scheduling rotation outbox events, and capturing audit trails.
+- ✅ Soft delete path updates counters, emits `tenant.device_deleted` / credential revocation outbox events, and preserves replay-safe status codes while leaving revocation to asynchronous workers.
+- 🚧 Unit/integration coverage for the device lifecycle is planned for a follow-up iteration.
 
 ### Step 5 — Observability, Reliability, and Security Hardening
 

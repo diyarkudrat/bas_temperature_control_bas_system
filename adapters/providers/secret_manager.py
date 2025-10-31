@@ -1,8 +1,10 @@
 """Secret Manager adapter with graceful local fallback.
 
-This module provides a small abstraction over Google Cloud Secret Manager that
+- This module provides a small abstraction over Google Cloud Secret Manager that
 is safe to import even when the dependency or project configuration is
-missing. The adapter follows a boundary-first approach so callers can provide
+missing.
+
+- The adapter follows a boundary-first approach so callers can provide
 mock clients during tests while production code can rely on ADC credentials
 and env configuration.
 """
@@ -51,20 +53,26 @@ class SecretManagerAdapter:
         client: Optional[Any] = None,
         fallback_prefix: str = "local",
     ) -> None:
+        """Initialize the Secret Manager adapter."""
+
         self._project_id = (project_id or os.getenv("GOOGLE_CLOUD_PROJECT") or "").strip()
         self._client = client
+
         if self._client is None and secretmanager is not None and self._project_id:
             try:  # pragma: no cover - exercise in integration environments
                 self._client = secretmanager.SecretManagerServiceClient()
             except Exception:  # pragma: no cover - best effort initialization
                 logger.warning("Secret Manager client initialization failed; falling back to in-memory store", exc_info=True)
                 self._client = None
+
         self._fallback_prefix = fallback_prefix.rstrip(":")
         self._fallback_store: Dict[str, bytes] = {}
         self._lock = threading.RLock()
 
     @property
     def project_id(self) -> Optional[str]:
+        """Get the project ID."""
+
         return self._project_id or None
 
     def store_secret(
@@ -76,6 +84,11 @@ class SecretManagerAdapter:
     ) -> StoredSecret:
         """Persist secret bytes and return a stable reference."""
 
+        if not secret_id or not isinstance(secret_id, str):
+            raise ValueError("secret_id must be a non-empty string")
+        if not payload or not isinstance(payload, bytes):
+            raise ValueError("payload must be a non-empty bytes")
+
         normalized_id = secret_id.strip().replace(" ", "-")
         if not normalized_id:
             raise SecretManagerError("secret_id is required")
@@ -84,6 +97,7 @@ class SecretManagerAdapter:
         if self._client is not None and self._project_id:
             parent = f"projects/{self._project_id}"
             secret_name = f"{parent}/secrets/{normalized_id}"
+
             try:  # pragma: no cover - requires live service or emulator
                 self._client.get_secret(name=secret_name)
             except Exception as exc:  # pragma: no cover - handled to create lazily
@@ -101,6 +115,7 @@ class SecretManagerAdapter:
                     parent=secret_name,
                     payload={"data": payload},
                 )
+
                 return StoredSecret(reference=version.name, secret_id=normalized_id, created_at=time.time())
             except Exception as exc:  # pragma: no cover - degrade gracefully
                 logger.error("Failed to add secret version; falling back to in-memory store", exc_info=True)
@@ -109,10 +124,23 @@ class SecretManagerAdapter:
         return self._store_fallback(normalized_id, payload)
 
     def generate_secret_id(self, *, tenant_id: str, device_id: str) -> str:
+        """Generate a secret ID."""
+
+        if not tenant_id or not isinstance(tenant_id, str):
+            raise ValueError("tenant_id must be a non-empty string")
+        if not device_id or not isinstance(device_id, str):
+            raise ValueError("device_id must be a non-empty string")
+
         random_suffix = secrets.token_hex(6)
+
         return f"device-{tenant_id}-{device_id}-{random_suffix}".lower()
 
     def get_fallback_secret(self, reference: str) -> Optional[bytes]:
+        """Get a fallback secret."""
+
+        if not reference or not isinstance(reference, str):
+            raise ValueError("reference must be a non-empty string")
+
         with self._lock:
             return self._fallback_store.get(reference)
 
@@ -124,8 +152,11 @@ class SecretManagerAdapter:
         parent: str,
         labels: Optional[Dict[str, str]] = None,
     ) -> None:
+        """Create a secret."""
+
         if self._client is None:
             return
+
         try:  # pragma: no cover - requires live service or emulator
             self._client.create_secret(
                 parent=parent,
@@ -139,13 +170,22 @@ class SecretManagerAdapter:
             logger.debug("Secret creation skipped or failed", exc_info=True)
 
     def _store_fallback(self, secret_id: str, payload: bytes) -> StoredSecret:
+        """Store a fallback secret."""
+
+        if not secret_id or not isinstance(secret_id, str):
+            raise ValueError("secret_id must be a non-empty string")
+        if not payload or not isinstance(payload, bytes):
+            raise ValueError("payload must be a non-empty bytes")
+
         with self._lock:
             reference = f"{self._fallback_prefix}://{secret_id}-{secrets.token_hex(4)}"
             self._fallback_store[reference] = payload
+
             logger.info(
                 "Stored secret material in fallback store",
                 extra={"reference": reference, "secret_id": secret_id},
             )
+            
             return StoredSecret(reference=reference, secret_id=secret_id, created_at=time.time())
 
 

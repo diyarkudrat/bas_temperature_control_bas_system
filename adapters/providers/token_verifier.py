@@ -2,14 +2,16 @@ from __future__ import annotations
 
 from typing import Any, Dict
 
-from jose import jwt
-from jose.exceptions import JWTError
+from jose import jwt  # type: ignore[import]
+from jose.exceptions import JWTError  # type: ignore[import]
 
 
 class TokenVerifier:
     """Strict RS256 verifier enforcing audience/issuer and standard claims."""
 
     def verify(self, *, token: str, key: Any, audience: str, issuer: str, clock_skew_s: int) -> Dict[str, Any]:
+        """Verify a token and return the claims."""
+
         try:
             claims = jwt.decode(
                 token,
@@ -28,6 +30,5 @@ class TokenVerifier:
             )
         except JWTError as exc:
             raise ValueError(f"invalid token: {exc}") from exc
-        return dict(claims)
 
-
+        return dict[str, Any](claims)
