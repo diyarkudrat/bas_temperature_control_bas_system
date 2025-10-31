@@ -10,11 +10,11 @@ from datetime import datetime
 from freezegun import freeze_time
 
 from tests.unit.firestore.mock import (
-    MockBaseEntity as BaseEntity, MockTelemetryRecord as TelemetryRecord, MockUser as User, 
+    MockBaseEntity as BaseEntity, MockUser as User,
     MockSession as Session, MockAuditEvent as AuditEvent, MockDevice as Device,
-    create_mock_telemetry_record as create_telemetry_record, create_mock_user as create_user, 
-    create_mock_session as create_session, create_mock_audit_event as create_audit_event, 
-    create_mock_device as create_device, validate_mock_username as validate_username, 
+    create_mock_user as create_user,
+    create_mock_session as create_session, create_mock_audit_event as create_audit_event,
+    create_mock_device as create_device, validate_mock_username as validate_username,
     validate_mock_role as validate_role
 )
 # Firestore models under test (server/services/firestore/models.py)
@@ -184,171 +184,6 @@ class TestBaseEntity:
         # Should match our expected frozen timestamp
         expected_timestamp = 1641038400000  # 2022-01-01T12:00:00Z
         assert_equals(timestamp1, expected_timestamp, "Should match frozen timestamp")
-
-
-@pytest.mark.auth
-@pytest.mark.unit
-@pytest.mark.contract
-class TestTelemetryRecord:
-    """Test cases for TelemetryRecord."""
-    
-    def test_telemetry_record_init_success(self):
-        """Test successful TelemetryRecord initialization."""
-        record = TelemetryRecord(
-            tenant_id="e6f7a8b9-c0d1-4e2f-3a4b-5c6d7e8f9a0b",
-            device_id="h8c9d0e1-f2a3-4b5c-9d0e-1f2a3b4c5d6e",
-            timestamp_ms=1640995200000,
-            utc_timestamp="2022-01-01T00:00:00Z",
-            temp_tenths=230,
-            setpoint_tenths=240,
-            deadband_tenths=10,
-            cool_active=False,
-            heat_active=True,
-            state="HEATING",
-            sensor_ok=True
-        )
-        
-        assert_equals(record.tenant_id, "e6f7a8b9-c0d1-4e2f-3a4b-5c6d7e8f9a0b", "Should set tenant_id")
-        assert_equals(record.device_id, "h8c9d0e1-f2a3-4b5c-9d0e-1f2a3b4c5d6e", "Should set device_id")
-        assert_equals(record.timestamp_ms, 1640995200000, "Should set timestamp_ms")
-        assert_equals(record.utc_timestamp, "2022-01-01T00:00:00Z", "Should set utc_timestamp")
-        assert_equals(record.temp_tenths, 230, "Should set temp_tenths")
-        assert_equals(record.setpoint_tenths, 240, "Should set setpoint_tenths")
-        assert_equals(record.deadband_tenths, 10, "Should set deadband_tenths")
-        assert_false(record.cool_active, "Should set cool_active")
-        assert_true(record.heat_active, "Should set heat_active")
-        assert_equals(record.state, "HEATING", "Should set state")
-        assert_true(record.sensor_ok, "Should set sensor_ok")
-    
-    def test_telemetry_record_init_missing_tenant_id(self):
-        """Test TelemetryRecord initialization with missing tenant_id."""
-        with assert_raises(ValueError) as exc_info:
-            TelemetryRecord(
-                tenant_id="",  # Empty tenant_id
-                device_id="h8c9d0e1-f2a3-4b5c-9d0e-1f2a3b4c5d6e",
-                timestamp_ms=1640995200000,
-                utc_timestamp="2022-01-01T00:00:00Z",
-                temp_tenths=230,
-                setpoint_tenths=240,
-                deadband_tenths=10,
-                cool_active=False,
-                heat_active=True,
-                state="HEATING",
-                sensor_ok=True
-            )
-        
-        assert_true('tenant_id' in str(exc_info.value), "Should mention tenant_id requirement")
-    
-    def test_telemetry_record_init_missing_device_id(self):
-        """Test TelemetryRecord initialization with missing device_id."""
-        with assert_raises(ValueError) as exc_info:
-            TelemetryRecord(
-                tenant_id="e6f7a8b9-c0d1-4e2f-3a4b-5c6d7e8f9a0b",
-                device_id="",  # Empty device_id
-                timestamp_ms=1640995200000,
-                utc_timestamp="2022-01-01T00:00:00Z",
-                temp_tenths=230,
-                setpoint_tenths=240,
-                deadband_tenths=10,
-                cool_active=False,
-                heat_active=True,
-                state="HEATING",
-                sensor_ok=True
-            )
-        
-        assert_true('device_id' in str(exc_info.value), "Should mention device_id requirement")
-    
-    def test_telemetry_record_init_invalid_timestamp(self):
-        """Test TelemetryRecord initialization with invalid timestamp."""
-        with assert_raises(ValueError) as exc_info:
-            TelemetryRecord(
-                tenant_id="e6f7a8b9-c0d1-4e2f-3a4b-5c6d7e8f9a0b",
-                device_id="h8c9d0e1-f2a3-4b5c-9d0e-1f2a3b4c5d6e",
-                timestamp_ms=0,  # Invalid timestamp
-                utc_timestamp="2022-01-01T00:00:00Z",
-                temp_tenths=230,
-                setpoint_tenths=240,
-                deadband_tenths=10,
-                cool_active=False,
-                heat_active=True,
-                state="HEATING",
-                sensor_ok=True
-            )
-        
-        assert_true('timestamp_ms must be positive' in str(exc_info.value), "Should mention timestamp requirement")
-    
-    def test_telemetry_record_to_dict(self):
-        """Test TelemetryRecord to_dict method."""
-        record = TelemetryRecord(
-            tenant_id="e6f7a8b9-c0d1-4e2f-3a4b-5c6d7e8f9a0b",
-            device_id="h8c9d0e1-f2a3-4b5c-9d0e-1f2a3b4c5d6e",
-            timestamp_ms=1640995200000,
-            utc_timestamp="2022-01-01T00:00:00Z",
-            temp_tenths=230,
-            setpoint_tenths=240,
-            deadband_tenths=10,
-            cool_active=False,
-            heat_active=True,
-            state="HEATING",
-            sensor_ok=True
-        )
-        
-        result = record.to_dict()
-        
-        assert_equals(result['tenant_id'], "e6f7a8b9-c0d1-4e2f-3a4b-5c6d7e8f9a0b", "Should include tenant_id")
-        assert_equals(result['device_id'], "h8c9d0e1-f2a3-4b5c-9d0e-1f2a3b4c5d6e", "Should include device_id")
-        assert_equals(result['timestamp_ms'], 1640995200000, "Should include timestamp_ms")
-        assert_equals(result['temp_tenths'], 230, "Should include temp_tenths")
-        assert_false(result['cool_active'], "Should include cool_active")
-        assert_true(result['heat_active'], "Should include heat_active")
-    
-    def test_telemetry_record_from_dict(self):
-        """Test TelemetryRecord from_dict method."""
-        data = {
-            'tenant_id': 'e6f7a8b9-c0d1-4e2f-3a4b-5c6d7e8f9a0b',
-            'device_id': 'h8c9d0e1-f2a3-4b5c-9d0e-1f2a3b4c5d6e',
-            'timestamp_ms': 1640995200000,
-            'utc_timestamp': '2022-01-01T00:00:00Z',
-            'temp_tenths': 230,
-            'setpoint_tenths': 240,
-            'deadband_tenths': 10,
-            'cool_active': False,
-            'heat_active': True,
-            'state': 'HEATING',
-            'sensor_ok': True
-        }
-        
-        record = TelemetryRecord.from_dict(data)
-        
-        assert_equals(record.tenant_id, "e6f7a8b9-c0d1-4e2f-3a4b-5c6d7e8f9a0b", "Should set tenant_id")
-        assert_equals(record.device_id, "h8c9d0e1-f2a3-4b5c-9d0e-1f2a3b4c5d6e", "Should set device_id")
-        assert_equals(record.timestamp_ms, 1640995200000, "Should set timestamp_ms")
-        assert_equals(record.temp_tenths, 230, "Should set temp_tenths")
-        assert_false(record.cool_active, "Should set cool_active")
-        assert_true(record.heat_active, "Should set heat_active")
-    
-    def test_create_telemetry_record(self):
-        """Test create_telemetry_record factory function."""
-        data = {
-            'tenant_id': 'e6f7a8b9-c0d1-4e2f-3a4b-5c6d7e8f9a0b',
-            'device_id': 'h8c9d0e1-f2a3-4b5c-9d0e-1f2a3b4c5d6e',
-            'timestamp_ms': 1640995200000,
-            'utc_timestamp': '2022-01-01T00:00:00Z',
-            'temp_tenths': 230,
-            'setpoint_tenths': 240,
-            'deadband_tenths': 10,
-            'cool_active': False,
-            'heat_active': True,
-            'state': 'HEATING',
-            'sensor_ok': True
-        }
-        
-        record = create_telemetry_record(data)
-        
-        assert_is_instance(record, TelemetryRecord, "Should return TelemetryRecord instance")
-        assert_equals(record.tenant_id, "e6f7a8b9-c0d1-4e2f-3a4b-5c6d7e8f9a0b", "Should set tenant_id")
-        assert_equals(record.device_id, "h8c9d0e1-f2a3-4b5c-9d0e-1f2a3b4c5d6e", "Should set device_id")
-
 
 @pytest.mark.auth
 @pytest.mark.unit
@@ -1517,14 +1352,6 @@ class TestFsDevice:
 @pytest.mark.unit
 class TestFsFactoryFunctions:
     def test_fs_create_functions(self):
-        # TelemetryRecord
-        tr = fs_models.create_telemetry_record({
-            "tenant_id": "t1", "device_id": "d1", "timestamp_ms": 1,
-            "utc_timestamp": "2022-01-01T00:00:00Z", "temp_tenths": 1, "setpoint_tenths": 1,
-            "deadband_tenths": 1, "cool_active": False, "heat_active": True, "state": "OK", "sensor_ok": True
-        })
-        assert_is_instance(tr, fs_models.TelemetryRecord, "Factory should return TelemetryRecord")
-
         # User
         u = fs_models.create_user({"username": "abc", "password_hash": "p", "salt": "s"})
         assert_is_instance(u, fs_models.User, "Factory should return User")
@@ -1578,30 +1405,6 @@ class TestFsValidationFunctions:
         for st in ["active", "inactive", "maintenance", "error", "offline", "ACTIVE"]:
             assert_true(fs_models.validate_device_status(st), f"status {st} valid")
         assert_false(fs_models.validate_device_status("unknown"), "invalid status")
-
-
-@pytest.mark.firestore
-@pytest.mark.unit
-class TestFsTelemetryRecord:
-    def test_fs_telemetry_record_missing_fields_raise(self):
-        with assert_raises(ValueError):
-            fs_models.TelemetryRecord(
-                tenant_id="", device_id="d1", timestamp_ms=1, utc_timestamp="Z",
-                temp_tenths=1, setpoint_tenths=1, deadband_tenths=1,
-                cool_active=False, heat_active=False, state="S", sensor_ok=True
-            )
-        with assert_raises(ValueError):
-            fs_models.TelemetryRecord(
-                tenant_id="t1", device_id="", timestamp_ms=1, utc_timestamp="Z",
-                temp_tenths=1, setpoint_tenths=1, deadband_tenths=1,
-                cool_active=False, heat_active=False, state="S", sensor_ok=True
-            )
-        with assert_raises(ValueError):
-            fs_models.TelemetryRecord(
-                tenant_id="t1", device_id="d1", timestamp_ms=0, utc_timestamp="Z",
-                temp_tenths=1, setpoint_tenths=1, deadband_tenths=1,
-                cool_active=False, heat_active=False, state="S", sensor_ok=True
-            )
 
 
 @pytest.mark.firestore

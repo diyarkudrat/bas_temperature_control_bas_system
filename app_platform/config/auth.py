@@ -17,7 +17,6 @@ class AuthConfig:
     auth_mode: str = "user_password"  # "disabled" | "shadow" | "enforced"
 
     # Firestore feature flags
-    use_firestore_telemetry: bool = False
     use_firestore_auth: bool = False
     use_firestore_audit: bool = False
 
@@ -72,7 +71,6 @@ class AuthConfig:
         return cls(
             auth_enabled=os.getenv("BAS_AUTH_ENABLED", "true").lower() == "true",
             auth_mode=os.getenv("BAS_AUTH_MODE", "user_password"),
-            use_firestore_telemetry=os.getenv("USE_FIRESTORE_TELEMETRY", "0") == "1",
             use_firestore_auth=os.getenv("USE_FIRESTORE_AUTH", "0") == "1",
             use_firestore_audit=os.getenv("USE_FIRESTORE_AUDIT", "0") == "1",
             org_signup_v2_enabled=os.getenv("ORG_SIGNUP_V2", "0") in {"1", "true", "True"},

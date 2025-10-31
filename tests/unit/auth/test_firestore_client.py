@@ -175,7 +175,6 @@ class TestGetFirestoreClient:
     def mock_config(self):
         """Create mock config for testing."""
         config = Mock()
-        config.use_firestore_telemetry = False
         config.use_firestore_auth = False
         config.use_firestore_audit = False
         config.gcp_project_id = None
@@ -187,23 +186,6 @@ class TestGetFirestoreClient:
         result = get_firestore_client(mock_config)
         
         assert_is_none(result, "Should return None when no features enabled")
-    
-    def test_get_firestore_client_telemetry_enabled(self, mock_config):
-        """Test get_firestore_client when telemetry is enabled."""
-        mock_config.use_firestore_telemetry = True
-        mock_config.gcp_project_id = "test-project"
-        
-        with patch('adapters.db.firestore.client.FirestoreClientFactory.create_client') as mock_create:
-            mock_client = Mock()
-            mock_create.return_value = mock_client
-            
-            result = get_firestore_client(mock_config)
-            
-            assert_equals(result, mock_client, "Should return client when telemetry enabled")
-            mock_create.assert_called_once_with(
-                project_id="test-project",
-                emulator_host=None
-            )
     
     def test_get_firestore_client_auth_enabled(self, mock_config):
         """Test get_firestore_client when auth is enabled."""
@@ -241,7 +223,6 @@ class TestGetFirestoreClient:
     
     def test_get_firestore_client_multiple_features_enabled(self, mock_config):
         """Test get_firestore_client when multiple features are enabled."""
-        mock_config.use_firestore_telemetry = True
         mock_config.use_firestore_auth = True
         mock_config.use_firestore_audit = True
         mock_config.gcp_project_id = "test-project"
@@ -260,7 +241,7 @@ class TestGetFirestoreClient:
     
     def test_get_firestore_client_with_emulator_host(self, mock_config):
         """Test get_firestore_client with emulator host."""
-        mock_config.use_firestore_telemetry = True
+        mock_config.use_firestore_auth = True
         mock_config.firestore_emulator_host = "127.0.0.1:8080"
         
         with patch('adapters.db.firestore.client.FirestoreClientFactory.create_client') as mock_create:
@@ -277,7 +258,7 @@ class TestGetFirestoreClient:
     
     def test_get_firestore_client_no_config(self, mock_config):
         """Test get_firestore_client with no project ID or emulator host."""
-        mock_config.use_firestore_telemetry = True
+        mock_config.use_firestore_auth = True
         # gcp_project_id and firestore_emulator_host are None by default
         
         result = get_firestore_client(mock_config)
@@ -286,7 +267,7 @@ class TestGetFirestoreClient:
     
     def test_get_firestore_client_factory_exception(self, mock_config):
         """Test get_firestore_client when factory raises exception."""
-        mock_config.use_firestore_telemetry = True
+        mock_config.use_firestore_auth = True
         mock_config.gcp_project_id = "test-project"
         
         with patch('adapters.db.firestore.client.FirestoreClientFactory.create_client') as mock_create:
@@ -299,14 +280,14 @@ class TestGetFirestoreClient:
     def test_get_firestore_client_validation_priority(self, mock_config):
         """Test that get_firestore_client validates configuration properly."""
         # Test with features enabled but no project ID or emulator
-        mock_config.use_firestore_telemetry = True
+        mock_config.use_firestore_auth = True
         
         result = get_firestore_client(mock_config)
         
         assert_is_none(result, "Should return None when features enabled but no config")
         
         # Test with project ID but no features enabled
-        mock_config.use_firestore_telemetry = False
+        mock_config.use_firestore_auth = False
         mock_config.gcp_project_id = "test-project"
         
         result = get_firestore_client(mock_config)
@@ -315,7 +296,7 @@ class TestGetFirestoreClient:
     
     def test_get_firestore_client_emulator_priority(self, mock_config):
         """Test that emulator host takes priority over project ID."""
-        mock_config.use_firestore_telemetry = True
+        mock_config.use_firestore_auth = True
         mock_config.gcp_project_id = "production-project"
         mock_config.firestore_emulator_host = "127.0.0.1:8080"
         
@@ -334,8 +315,7 @@ class TestGetFirestoreClient:
     
     def test_get_firestore_client_config_attributes(self, mock_config):
         """Test that get_firestore_client accesses correct config attributes."""
-        mock_config.use_firestore_telemetry = True
-        mock_config.use_firestore_auth = False
+        mock_config.use_firestore_auth = True
         mock_config.use_firestore_audit = False
         mock_config.gcp_project_id = "test-project"
         mock_config.firestore_emulator_host = None
@@ -347,7 +327,6 @@ class TestGetFirestoreClient:
             get_firestore_client(mock_config)
             
             # Verify all config attributes were accessed
-            assert_true(hasattr(mock_config, 'use_firestore_telemetry'), "Should check telemetry flag")
             assert_true(hasattr(mock_config, 'use_firestore_auth'), "Should check auth flag")
             assert_true(hasattr(mock_config, 'use_firestore_audit'), "Should check audit flag")
             assert_true(hasattr(mock_config, 'gcp_project_id'), "Should check project ID")
@@ -358,7 +337,7 @@ class TestGetFirestoreClient:
         from app_platform.config.auth import AuthConfig
         
         config = AuthConfig()
-        config.use_firestore_telemetry = True
+        config.use_firestore_auth = True
         config.gcp_project_id = "test-project"
         
         with patch('adapters.db.firestore.client.FirestoreClientFactory.create_client') as mock_create:
@@ -377,7 +356,6 @@ class TestGetFirestoreClient:
         """Ensure getattr exception for _is_mock is handled and function proceeds."""
         class WeirdConfig:
             def __init__(self):
-                self.use_firestore_telemetry = False
                 self.use_firestore_auth = False
                 self.use_firestore_audit = False
                 self.gcp_project_id = None

@@ -27,29 +27,6 @@ class MockBaseEntity:
 
 
 @dataclass
-class MockTelemetryRecord(MockBaseEntity):
-    """Mock telemetry data record."""
-    tenant_id: str = ""
-    device_id: str = ""
-    timestamp_ms: int = 0
-    utc_timestamp: str = ""
-    temp_tenths: int = 0
-    setpoint_tenths: int = 0
-    deadband_tenths: int = 0
-    cool_active: bool = False
-    heat_active: bool = False
-    state: str = ""
-    sensor_ok: bool = True
-    
-    def __post_init__(self):
-        """Validate required fields after initialization."""
-        if not self.tenant_id or not self.device_id:
-            raise ValueError("tenant_id and device_id are required")
-        if self.timestamp_ms <= 0:
-            raise ValueError("timestamp_ms must be positive")
-
-
-@dataclass
 class MockUser(MockBaseEntity):
     """Mock user entity."""
     user_id: str = field(default_factory=lambda: str(uuid.uuid4()))
@@ -188,11 +165,6 @@ class MockDevice(MockBaseEntity):
 
 
 # Factory functions for creating mock entities from data
-def create_mock_telemetry_record(data: Dict[str, Any]) -> MockTelemetryRecord:
-    """Create MockTelemetryRecord from dictionary data."""
-    return MockTelemetryRecord.from_dict(data)
-
-
 def create_mock_user(data: Dict[str, Any]) -> MockUser:
     """Create MockUser from dictionary data."""
     return MockUser.from_dict(data)

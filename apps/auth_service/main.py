@@ -212,7 +212,6 @@ def bootstrap_runtime(app: Flask, *, config_path: str | None = None) -> AuthRunt
     if any([
         getattr(auth_config, "use_firestore_auth", False),
         getattr(auth_config, "use_firestore_audit", False),
-        getattr(auth_config, "use_firestore_telemetry", False),
     ]):
         try:
             # Lazy import keeps Firestore optional for lightweight deployments.

@@ -1,7 +1,6 @@
 {
   "auth_enabled": true,
   "auth_mode": "user_password",
-  "use_firestore_telemetry": true,
   "use_firestore_auth": false,
   "use_firestore_audit": true,
   "org_signup_v2_enabled": false,

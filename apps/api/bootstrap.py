@@ -65,7 +65,6 @@ def build_firestore_factory(cfg) -> Optional["FirestoreServiceFactory"]:
         # Lazy import to avoid hard dependency on google libs when Firestore is disabled
         from adapters.db.firestore import build_service_factory_with_config, FirestoreServiceFactory  # type: ignore
         if any([
-            cfg.firestore.use_firestore_telemetry,
             cfg.firestore.use_firestore_auth,
             cfg.firestore.use_firestore_audit,
         ]):

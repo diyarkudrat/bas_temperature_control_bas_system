@@ -23,8 +23,7 @@ from tests.utils.assertions import (
 
 
 class SimpleConfig:
-    def __init__(self, use_firestore_telemetry=True, use_firestore_auth=True, use_firestore_audit=True):
-        self.use_firestore_telemetry = use_firestore_telemetry
+    def __init__(self, use_firestore_auth=True, use_firestore_audit=True):
         self.use_firestore_auth = use_firestore_auth
         self.use_firestore_audit = use_firestore_audit
 
@@ -74,7 +73,6 @@ class TestFirestoreServiceFactory:
 
     def test_client_property_uses_noop_when_config_is_mock_and_factory_returns_none(self):
         mock_config = Mock()
-        mock_config.use_firestore_telemetry = True
         mock_config.use_firestore_auth = True
         mock_config.use_firestore_audit = True
         factory = FirestoreServiceFactory(mock_config)
@@ -93,53 +91,40 @@ class TestFirestoreServiceFactory:
                 _ = factory.client
 
     def test_repository_methods_create_and_cache(self, factory_with_client):
-        t1 = factory_with_client.get_telemetry_repository()
-        t2 = factory_with_client.get_telemetry_repository()
-        assert_equals(t1, t2, "Telemetry should be cached")
-
-        u1 = factory_with_client.get_users_repository()
-        u2 = factory_with_client.get_users_repository()
+        u1 = factory_with_client.get_users_service()
+        u2 = factory_with_client.get_users_service()
         assert_equals(u1, u2, "Users should be cached")
 
-        s1 = factory_with_client.get_sessions_repository()
-        s2 = factory_with_client.get_sessions_repository()
+        s1 = factory_with_client.get_sessions_service()
+        s2 = factory_with_client.get_sessions_service()
         assert_equals(s1, s2, "Sessions should be cached")
 
-        a1 = factory_with_client.get_audit_repository()
-        a2 = factory_with_client.get_audit_repository()
+        a1 = factory_with_client.get_audit_service()
+        a2 = factory_with_client.get_audit_service()
         assert_equals(a1, a2, "Audit should be cached")
 
-        d1 = factory_with_client.get_devices_repository()
-        d2 = factory_with_client.get_devices_repository()
+        d1 = factory_with_client.get_devices_service()
+        d2 = factory_with_client.get_devices_service()
         assert_equals(d1, d2, "Devices should be cached")
 
     def test_get_all_repositories_includes_all(self, factory_with_client):
         repos = factory_with_client.get_all_repositories()
-        assert_equals(set(repos.keys()), {"telemetry", "users", "sessions", "audit", "devices"})
+        assert_equals(set(repos.keys()), {"users", "sessions", "audit", "devices", "tenants", "members", "invites", "idempotency", "outbox"})
 
     def test_reset_repositories_clears_cache_but_keeps_client(self, factory_with_client):
-        _ = factory_with_client.get_users_repository()
-        _ = factory_with_client.get_devices_repository()
+        _ = factory_with_client.get_users_service()
+        _ = factory_with_client.get_devices_service()
         assert_true(len(factory_with_client._repositories) >= 2)
         factory_with_client.reset_repositories()
         assert_equals(len(factory_with_client._repositories), 0)
         assert_is_not_none(factory_with_client.client)
 
-    def test_configure_client_behavior_noop(self, factory_with_client):
-        factory_with_client.configure_client_behavior({"x": 1})
-        assert_true(True, "No-op should not raise")
-
-    def test_simulate_error_noop(self, factory_with_client):
-        factory_with_client.simulate_error('create', Exception("x"))
-        assert_true(True, "No-op should not raise")
-
     def test_feature_flags_reflect_config(self):
-        cfg = SimpleConfig(use_firestore_telemetry=False, use_firestore_auth=True, use_firestore_audit=False)
+        cfg = SimpleConfig(use_firestore_auth=True, use_firestore_audit=False)
         factory = FirestoreServiceFactory(cfg)
         # Patch client creation to avoid real init
         with patch('adapters.db.firestore.service_factory.get_firestore_client', return_value=Mock()):
             _ = factory.client
-        assert_false(factory.is_telemetry_enabled())
         assert_true(factory.is_auth_enabled())
         assert_false(factory.is_audit_enabled())
 
@@ -148,7 +133,6 @@ class TestFirestoreServiceFactory:
         result = factory.health_check()
         assert_equals(result['status'], 'healthy')
         assert_true(result['client_initialized'])
-        assert_true(result['services']['telemetry'])
         assert_true(result['services']['auth'])
         assert_true(result['services']['audit'])
 

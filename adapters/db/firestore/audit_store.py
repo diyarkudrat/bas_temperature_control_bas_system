@@ -22,13 +22,26 @@ class AuditLogStore:
         Cache is feature-flagged via AUDIT_CACHE_ENABLED (default off). Only
         query_recent_events uses cache with short TTL, to avoid complex invalidation.
         """
-        self.client = client
-        self.collection = client.collection('audit_log')
-        self._cache_enabled = os.getenv('AUDIT_CACHE_ENABLED', '0') in {'1', 'true', 'True'}
-        self._cache: Optional[CacheClient] = cache if self._cache_enabled else None
-        self._cache_prefix = os.getenv('AUDIT_CACHE_PREFIX', 'audit:')
-        self._ttl_s = int(os.getenv('AUDIT_CACHE_TTL_S', '20'))
+
+        self._client = client # Firestore client
+        self._collection = client.collection('audit_log') # Audit log collection
+        self._cache_enabled = os.getenv('AUDIT_CACHE_ENABLED', '0') in {'1', 'true', 'True'} # Cache enabled
+        self._cache: Optional[CacheClient] = cache if self._cache_enabled else None # Cache client
+        self._cache_prefix = os.getenv('AUDIT_CACHE_PREFIX', 'audit:') # Cache prefix
+        self._ttl_s = int(os.getenv('AUDIT_CACHE_TTL_S', '20')) # Cache TTL
         
+    @property
+    def client(self) -> firestore.Client:
+        """Firestore client (read-only)."""
+
+        return self._client
+
+    @property
+    def collection(self) -> firestore.CollectionReference:
+        """Audit log collection reference (read-only)."""
+
+        return self._collection
+
     def log_event(self, event_type: str, user_id: Optional[str] = None, username: Optional[str] = None,
                  ip_address: Optional[str] = None, user_agent: Optional[str] = None,
                  details: Optional[Dict[str, Any]] = None, tenant_id: Optional[str] = None) -> bool:
@@ -64,9 +77,10 @@ class AuditLogStore:
             }
             
             # Add document with auto-generated ID
-            doc_ref = self.collection.add(audit_doc)
+            self._collection.add(audit_doc)
             
             logger.debug(f"Logged audit event: {event_type} for user {username}")
+            
             return True
             
         except PermissionDenied as e:
@@ -90,6 +104,7 @@ class AuditLogStore:
         Returns:
             True if successful, False otherwise
         """
+
         return self.log_event(
             event_type='LOGIN_SUCCESS',
             username=username,
@@ -112,6 +127,7 @@ class AuditLogStore:
         Returns:
             True if successful, False otherwise
         """
+
         return self.log_event(
             event_type='LOGIN_FAILURE',
             username=username,
@@ -134,6 +150,7 @@ class AuditLogStore:
         Returns:
             True if successful, False otherwise
         """
+
         return self.log_event(
             event_type='SESSION_CREATED',
             username=username,
@@ -156,6 +173,7 @@ class AuditLogStore:
         Returns:
             True if successful, False otherwise
         """
+
         return self.log_event(
             event_type='SESSION_DESTROYED',
             username=username,
@@ -181,6 +199,7 @@ class AuditLogStore:
         Returns:
             True if successful, False otherwise
         """
+
         return self.log_event(
             event_type='PERMISSION_DENIED',
             username=username,
@@ -206,6 +225,7 @@ class AuditLogStore:
         Returns:
             True if successful, False otherwise
         """
+
         return self.log_event(
             event_type='TENANT_VIOLATION',
             username=username,
@@ -229,8 +249,9 @@ class AuditLogStore:
         Returns:
             List of audit events
         """
+
         try:
-            query = (self.collection
+            query = (self._collection
                     .where('user_id', '==', user_id)
                     .order_by('timestamp_ms', direction=firestore.Query.DESCENDING)
                     .limit(limit))
@@ -244,6 +265,7 @@ class AuditLogStore:
                 results.append(data)
                 
             logger.debug(f"Retrieved {len(results)} audit events for user {user_id}")
+
             return results
             
         except PermissionDenied as e:
@@ -264,8 +286,9 @@ class AuditLogStore:
         Returns:
             List of audit events
         """
+
         try:
-            query = (self.collection
+            query = (self._collection
                     .where('event_type', '==', event_type)
                     .order_by('timestamp_ms', direction=firestore.Query.DESCENDING)
                     .limit(limit))
@@ -279,6 +302,7 @@ class AuditLogStore:
                 results.append(data)
                 
             logger.debug(f"Retrieved {len(results)} audit events of type {event_type}")
+
             return results
             
         except PermissionDenied as e:
@@ -298,9 +322,11 @@ class AuditLogStore:
         Returns:
             List of audit events
         """
+
         try:
             # Cache key per page size; short TTL is acceptable for dashboards
             cache_key = f"{self._cache_prefix}recent:{normalize_key_part(limit)}"
+
             if self._cache is not None:
                 try:
                     cached = ensure_text(self._cache.get(cache_key))
@@ -309,7 +335,7 @@ class AuditLogStore:
                 except Exception:
                     pass
 
-            query = (self.collection
+            query = (self._collection
                     .order_by('timestamp_ms', direction=firestore.Query.DESCENDING)
                     .limit(limit))
             
@@ -329,6 +355,7 @@ class AuditLogStore:
                     pass
 
             logger.debug(f"Retrieved {len(results)} recent audit events")
+
             return results
             
         except PermissionDenied as e:
@@ -349,8 +376,9 @@ class AuditLogStore:
         Returns:
             List of audit events
         """
+
         try:
-            query = (self.collection
+            query = (self._collection
                     .where('tenant_id', '==', tenant_id)
                     .order_by('timestamp_ms', direction=firestore.Query.DESCENDING)
                     .limit(limit))
@@ -364,6 +392,7 @@ class AuditLogStore:
                 results.append(data)
                 
             logger.debug(f"Retrieved {len(results)} audit events for tenant {tenant_id}")
+
             return results
             
         except PermissionDenied as e:
@@ -387,8 +416,9 @@ class AuditLogStore:
         Returns:
             List of audit events
         """
+
         try:
-            query = (self.collection
+            query = (self._collection
                     .where('timestamp_ms', '>=', start_time_ms)
                     .where('timestamp_ms', '<=', end_time_ms)
                     .order_by('timestamp_ms', direction=firestore.Query.DESCENDING)
@@ -407,6 +437,7 @@ class AuditLogStore:
                 results.append(data)
                 
             logger.debug(f"Retrieved {len(results)} audit events in time window")
+            
             return results
             
         except PermissionDenied as e:

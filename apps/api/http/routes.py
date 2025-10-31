@@ -6,11 +6,11 @@ from typing import Any, Dict, Tuple
 
 import time
 
-from flask import g, jsonify, render_template, request
+from flask import jsonify, render_template, request
 
 from logging_lib import get_logger as get_structured_logger
 logger = get_structured_logger("api.http.routes")
-telemetry_logger = get_structured_logger("api.http.routes.telemetry")
+sensor_logger = get_structured_logger("api.http.routes.sensor")
 health_logger = get_structured_logger("api.http.routes.health")
 controller_logger = get_structured_logger("api.http.routes.controller")
 
@@ -64,10 +64,10 @@ def receive_sensor_data(controller, firestore_factory) -> Tuple[Any, int]:
     try:
         data = request.get_json()
         if not data:
-            telemetry_logger.warning("Sensor data missing payload")
+            sensor_logger.warning("Sensor data missing payload")
             return make_error("No data received", "MISSING_FIELDS")
 
-        telemetry_logger.debug(
+        sensor_logger.debug(
             "Sensor data received",
             extra={
                 "has_temp": 'temp_tenths' in data,
@@ -80,42 +80,10 @@ def receive_sensor_data(controller, firestore_factory) -> Tuple[Any, int]:
             data.get('sensor_ok', False),
         )
 
-        telemetry_data = {
-            'timestamp': data.get('timestamp', time.time() * 1000),
-            'temp_tenths': data.get('temp_tenths', 0),
-            'sensor_ok': data.get('sensor_ok', False),
-            'setpoint_tenths': controller.setpoint_tenths,
-            'deadband_tenths': controller.deadband_tenths,
-            'cool_active': controller.cool_active,
-            'heat_active': controller.heat_active,
-            'state': controller.state,
-        }
-
-        if firestore_factory and firestore_factory.is_telemetry_enabled():
-            try:
-                tenant_id = getattr(g, 'tenant_id', 'default')
-                device_id = data.get('device_id', 'unknown')
-                telemetry_service = firestore_factory.get_telemetry_service()
-                telemetry_service.add_telemetry(
-                    tenant_id=tenant_id,
-                    device_id=device_id,
-                    data=telemetry_data,
-                )
-                telemetry_logger.debug(
-                    "Telemetry persisted",
-                    extra={"tenant": tenant_id, "device": device_id},
-                )
-            except Exception:
-                telemetry_logger.warning(
-                    "Failed to persist telemetry",
-                    extra={"tenant": getattr(g, 'tenant_id', 'default')},
-                    exc_info=True,
-                )
-
         commands = controller.get_control_commands()
         return jsonify(commands), 200
     except Exception:
-        telemetry_logger.exception("Sensor data handling failed")
+        sensor_logger.exception("Sensor data handling failed")
         return make_error("Internal server error", "INTERNAL_ERROR")
 
 
@@ -173,37 +141,6 @@ def set_setpoint(controller) -> Tuple[Any, int]:
         }), 200
     except Exception:
         controller_logger.exception("set_setpoint failed")
-        return make_error("Internal server error", "INTERNAL_ERROR")
-
-
-def get_telemetry(firestore_factory) -> Tuple[Any, int]:
-    try:
-        limit = request.args.get('limit', 100, type=int)
-        device_id = request.args.get('device_id', 'unknown')
-        data = []
-        if firestore_factory and firestore_factory.is_telemetry_enabled():
-            try:
-                tenant_id = getattr(g, 'tenant_id', 'default')
-                telemetry_service = firestore_factory.get_telemetry_service()
-                data = telemetry_service.query_recent(
-                    tenant_id=tenant_id,
-                    device_id=device_id,
-                    limit=limit,
-                )
-                telemetry_logger.debug(
-                    "Telemetry query executed",
-                    extra={"tenant": tenant_id, "device": device_id, "limit": limit, "count": len(data)},
-                )
-            except Exception:
-                telemetry_logger.warning(
-                    "Telemetry query failed",
-                    extra={"tenant": getattr(g, 'tenant_id', 'default'), "device": device_id},
-                    exc_info=True,
-                )
-                data = []
-        return jsonify(data), 200
-    except Exception:
-        telemetry_logger.exception("get_telemetry failed")
         return make_error("Internal server error", "INTERNAL_ERROR")
 
 

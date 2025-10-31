@@ -12,7 +12,6 @@ from logging_lib import get_logger as get_structured_logger
 from .ui_routes import ui_bp
 from .health_routes import health_bp
 from .control_routes import control_bp
-from .telemetry_routes import telemetry_bp
 from .auth_routes import auth_bp
 from .org_routes import org_bp
 
@@ -28,9 +27,6 @@ def register_routes(app: Flask) -> None:
 
     app.register_blueprint(control_bp)
     logger.debug("Registered control blueprint")
-
-    app.register_blueprint(telemetry_bp)
-    logger.debug("Registered telemetry blueprint")
 
     app.register_blueprint(auth_bp)
     logger.debug("Registered auth blueprint")

@@ -1,12 +1,13 @@
 """Firestore devices data access layer with optional Redis read-through cache for by-ID reads."""
 
+from adapters.db.firestore.base import PaginatedResult
+from adapters.db.firestore.models import Device
 import time
 import os
-import json
 import logging
-from typing import Dict, Any, Optional, List
+from typing import Dict, Any, Optional
 from google.cloud import firestore
-from google.api_core.exceptions import NotFound, PermissionDenied
+from google.api_core.exceptions import PermissionDenied
 
 from .base import OperationResult, PaginatedResult, QueryOptions, TenantAwareRepository, TimestampedRepository
 from .cache_utils import (
@@ -31,17 +32,23 @@ class DevicesStore(TenantAwareRepository[Device, str], TimestampedRepository[Dev
 
         Cache client is expected to provide: get(key), setex(key, ttl_seconds, value), delete(key)
         """
+
         super().__init__(client, 'devices')
-        self.required_fields = ['tenant_id', 'device_id']
-        self._cache = cache
-        self._cache_prefix = os.getenv('DEVICES_CACHE_PREFIX', 'dev:')
-        self._ttl_s = int(os.getenv('DEVICES_MAX_TTL_S', '60'))
-        self._lru = LRUCache(capacity=int(os.getenv('DEVICES_LRU_CAPACITY', '128')), ttl_s=int(os.getenv('DEVICES_LRU_TTL_S', '3')))
+
+        self.required_fields = ['tenant_id', 'device_id'] # Required fields
+        self._cache = cache # Cache client
+        self._cache_prefix = os.getenv('DEVICES_CACHE_PREFIX', 'dev:') # Cache prefix
+        self._ttl_s = int(os.getenv('DEVICES_MAX_TTL_S', '60')) # Cache TTL
+        self._lru = LRUCache(capacity=int(os.getenv('DEVICES_LRU_CAPACITY', '128')), ttl_s=int(os.getenv('DEVICES_LRU_TTL_S', '3'))) # LRU cache
 
     def _cache_key_id(self, entity_id: str) -> str:
+        """Get the cache key for the entity ID."""
+
         return f"{self._cache_prefix}{self._normalize_id(entity_id)}"
 
     def _normalize_id(self, entity_id: Any) -> str:
+        """Normalize the entity ID."""
+
         return normalize_key_part(entity_id)
         
     def create(self, entity: Device) -> OperationResult[str]:
@@ -54,6 +61,7 @@ class DevicesStore(TenantAwareRepository[Device, str], TimestampedRepository[Dev
         Returns:
             OperationResult with device ID on success
         """
+
         try:
             # Validate required fields
             entity_dict = entity.to_dict()
@@ -74,13 +82,16 @@ class DevicesStore(TenantAwareRepository[Device, str], TimestampedRepository[Dev
             doc_ref.set(data)
 
             self.logger.info(f"Created device {entity.device_id} for tenant {entity.tenant_id}")
+
             return OperationResult(success=True, data=doc_id)
 
         except PermissionDenied as e:
             self.logger.error(f"Permission denied creating device: {e}")
+
             return OperationResult(success=False, error="Permission denied", error_code="PERMISSION_DENIED")
         except Exception as e:
             self.logger.error(f"Failed to create device: {e}")
+
             return OperationResult(success=False, error=str(e), error_code="CREATE_FAILED")
     
     def get_by_id(self, entity_id: str) -> OperationResult[Device]:
@@ -93,6 +104,7 @@ class DevicesStore(TenantAwareRepository[Device, str], TimestampedRepository[Dev
         Returns:
             OperationResult with Device entity on success
         """
+
         result: Optional[OperationResult[Device]] = None
         
         try:
@@ -108,6 +120,7 @@ class DevicesStore(TenantAwareRepository[Device, str], TimestampedRepository[Dev
                     result = OperationResult(success=True, data=device)
                 except Exception:
                     result = None
+                    
             # 2) Redis/external cache
             if result is None and self._cache is not None:
                 try:
@@ -163,6 +176,7 @@ class DevicesStore(TenantAwareRepository[Device, str], TimestampedRepository[Dev
         Returns:
             OperationResult with updated Device entity on success
         """
+
         try:
             # Add update timestamp
             updates = self._add_update_timestamp(updates)
@@ -173,24 +187,29 @@ class DevicesStore(TenantAwareRepository[Device, str], TimestampedRepository[Dev
             # Return updated device
             # Invalidate cache to avoid stale reads
             key = self._cache_key_id(entity_id)
+
             # 1) LRU
             try:
                 self._lru.delete(key)
             except Exception:
                 pass
+
             # 2) Redis
             if self._cache is not None:
                 try:
                     self._cache.delete(key)
                 except Exception:
                     pass
+
             return self.get_by_id(entity_id)
 
         except PermissionDenied as e:
             self.logger.error(f"Permission denied updating device: {e}")
+
             return OperationResult(success=False, error="Permission denied", error_code="PERMISSION_DENIED")
         except Exception as e:
             self.logger.error(f"Failed to update device {entity_id}: {e}")
+
             return OperationResult(success=False, error=str(e), error_code="UPDATE_FAILED")
     
     def delete(self, entity_id: str) -> OperationResult[bool]:
@@ -203,8 +222,10 @@ class DevicesStore(TenantAwareRepository[Device, str], TimestampedRepository[Dev
         Returns:
             OperationResult with success boolean
         """
+
         try:
             result: OperationResult[bool]
+
             # Check if device exists first
             get_result = self.get_by_id(entity_id)
             if not get_result.success:
@@ -215,11 +236,13 @@ class DevicesStore(TenantAwareRepository[Device, str], TimestampedRepository[Dev
 
                 # Invalidate cache
                 key = self._cache_key_id(entity_id)
+
                 # 1) LRU
                 try:
                     self._lru.delete(key)
                 except Exception:
                     pass
+
                 # 2) Redis
                 if self._cache is not None:
                     try:
@@ -228,17 +251,23 @@ class DevicesStore(TenantAwareRepository[Device, str], TimestampedRepository[Dev
                         pass
 
                 self.logger.info(f"Deleted device {entity_id}")
+
                 result = OperationResult(success=True, data=True)
+
             return result
 
         except PermissionDenied as e:
             self.logger.error(f"Permission denied deleting device: {e}")
+
             return OperationResult(success=False, error="Permission denied", error_code="PERMISSION_DENIED")
         except Exception as e:
             self.logger.error(f"Failed to delete device {entity_id}: {e}")
+
             return OperationResult(success=False, error=str(e), error_code="DELETE_FAILED")
     
     def _build_doc_id(self, tenant_id: str, device_id: str) -> str:
+        """Build the document ID for the device."""
+        
         return f"{tenant_id}_{device_id}"
 
     def get_device(self, tenant_id: str, device_id: str) -> OperationResult[Device]:
@@ -252,12 +281,15 @@ class DevicesStore(TenantAwareRepository[Device, str], TimestampedRepository[Dev
         Returns:
             OperationResult with Device entity on success
         """
+
         try:
             doc_id = self._build_doc_id(tenant_id, device_id)
+
             return self.get_by_id(doc_id)
 
         except Exception as e:
             self.logger.error(f"Failed to get device {device_id} for tenant {tenant_id}: {e}")
+
             return OperationResult(success=False, error=str(e), error_code="GET_FAILED")
 
     def update_device_metadata(self, tenant_id: str, device_id: str, metadata: Dict[str, Any]) -> OperationResult[Device]:
@@ -272,8 +304,10 @@ class DevicesStore(TenantAwareRepository[Device, str], TimestampedRepository[Dev
         Returns:
             OperationResult with updated Device entity on success
         """
+
         try:
             doc_id = self._build_doc_id(tenant_id, device_id)
+
             return self.update(doc_id, {'metadata': metadata})
 
         except Exception as e:
@@ -291,13 +325,16 @@ class DevicesStore(TenantAwareRepository[Device, str], TimestampedRepository[Dev
         Returns:
             OperationResult with updated Device entity on success
         """
+
         try:
             doc_id = self._build_doc_id(tenant_id, device_id)
             current_time = int(time.time() * 1000)
+
             return self.update(doc_id, {'last_seen': current_time})
 
         except Exception as e:
             self.logger.error(f"Failed to update last seen for {device_id} in tenant {tenant_id}: {e}")
+            
             return OperationResult(success=False, error=str(e), error_code="UPDATE_FAILED")
 
     def set_status(self, tenant_id: str, device_id: str, status: str) -> OperationResult[Device]:
@@ -312,12 +349,15 @@ class DevicesStore(TenantAwareRepository[Device, str], TimestampedRepository[Dev
         Returns:
             OperationResult with updated Device entity on success
         """
+
         try:
             doc_id = self._build_doc_id(tenant_id, device_id)
+
             return self.update(doc_id, {'status': status})
 
         except Exception as e:
             self.logger.error(f"Failed to set status for {device_id} in tenant {tenant_id}: {e}")
+
             return OperationResult(success=False, error=str(e), error_code="UPDATE_FAILED")
 
     def delete_device(self, tenant_id: str, device_id: str) -> OperationResult[bool]:
@@ -331,12 +371,15 @@ class DevicesStore(TenantAwareRepository[Device, str], TimestampedRepository[Dev
         Returns:
             OperationResult with success boolean
         """
+
         try:
             doc_id = self._build_doc_id(tenant_id, device_id)
+
             return self.delete(doc_id)
 
         except Exception as e:
             self.logger.error(f"Failed to delete device {device_id} for tenant {tenant_id}: {e}")
+
             return OperationResult(success=False, error=str(e), error_code="DELETE_FAILED")
     
     def list_for_tenant(self, tenant_id: str, options: Optional[QueryOptions] = None) -> OperationResult[PaginatedResult[Device]]:
@@ -350,6 +393,7 @@ class DevicesStore(TenantAwareRepository[Device, str], TimestampedRepository[Dev
         Returns:
             OperationResult with paginated device results
         """
+
         try:
             options = options or QueryOptions()
             options.filters = {'tenant_id': tenant_id}
@@ -359,13 +403,16 @@ class DevicesStore(TenantAwareRepository[Device, str], TimestampedRepository[Dev
                 options.order_direction = 'DESCENDING'
 
             result = self._execute_query(options)
-            return OperationResult(success=True, data=result)
+
+            return OperationResult[PaginatedResult[Device]](success=True, data=result)
 
         except PermissionDenied as e:
             self.logger.error(f"Permission denied listing devices for tenant {tenant_id}: {e}")
+
             return OperationResult(success=False, error="Permission denied", error_code="PERMISSION_DENIED")
         except Exception as e:
             self.logger.error(f"Failed to list devices for tenant {tenant_id}: {e}")
+            
             return OperationResult(success=False, error=str(e), error_code="LIST_FAILED")
 
     def check_exists(self, tenant_id: str, device_id: str) -> OperationResult[bool]:
@@ -379,12 +426,15 @@ class DevicesStore(TenantAwareRepository[Device, str], TimestampedRepository[Dev
         Returns:
             OperationResult with existence boolean
         """
+
         try:
             result = self.get_device(tenant_id, device_id)
+
             return OperationResult(success=True, data=result.success)
 
         except Exception as e:
             self.logger.error(f"Failed to check device existence: {e}")
+
             return OperationResult(success=False, error=str(e), error_code="CHECK_FAILED")
     
     def get_by_status(self, tenant_id: str, status: str, options: Optional[QueryOptions] = None) -> OperationResult[PaginatedResult[Device]]:
@@ -399,6 +449,7 @@ class DevicesStore(TenantAwareRepository[Device, str], TimestampedRepository[Dev
         Returns:
             OperationResult with paginated device results
         """
+
         try:
             options = options or QueryOptions()
             options.filters = {
@@ -411,14 +462,17 @@ class DevicesStore(TenantAwareRepository[Device, str], TimestampedRepository[Dev
                 options.order_direction = 'DESCENDING'
 
             result = self._execute_query(options)
-            return OperationResult(success=True, data=result)
+
+            return OperationResult[PaginatedResult[Device]](success=True, data=result)
 
         except PermissionDenied as e:
             self.logger.error(f"Permission denied getting devices by status: {e}")
-            return OperationResult(success=False, error="Permission denied", error_code="PERMISSION_DENIED")
+
+            return OperationResult[PaginatedResult[Device]](success=False, error="Permission denied", error_code="PERMISSION_DENIED")
         except Exception as e:
             self.logger.error(f"Failed to get devices by status: {e}")
-            return OperationResult(success=False, error=str(e), error_code="QUERY_FAILED")
+
+            return OperationResult[PaginatedResult[Device]](success=False, error=str(e), error_code="QUERY_FAILED")
     
     def get_inactive_devices(self, tenant_id: str, inactive_threshold_ms: int = 3600000,
                             options: Optional[QueryOptions] = None) -> OperationResult[PaginatedResult[Device]]:
@@ -433,6 +487,7 @@ class DevicesStore(TenantAwareRepository[Device, str], TimestampedRepository[Dev
         Returns:
             OperationResult with paginated inactive device results
         """
+
         try:
             options = options or QueryOptions()
             current_time = int(time.time() * 1000)
@@ -448,14 +503,17 @@ class DevicesStore(TenantAwareRepository[Device, str], TimestampedRepository[Dev
                 options.order_direction = 'ASCENDING'
 
             result = self._execute_query(options)
-            return OperationResult(success=True, data=result)
+
+            return OperationResult[PaginatedResult[Device]](success=True, data=result)
 
         except PermissionDenied as e:
             self.logger.error(f"Permission denied getting inactive devices: {e}")
-            return OperationResult(success=False, error="Permission denied", error_code="PERMISSION_DENIED")
+
+            return OperationResult[PaginatedResult[Device]](success=False, error="Permission denied", error_code="PERMISSION_DENIED")
         except Exception as e:
             self.logger.error(f"Failed to get inactive devices: {e}")
-            return OperationResult(success=False, error=str(e), error_code="QUERY_FAILED")
+
+            return OperationResult[PaginatedResult[Device]](success=False, error=str(e), error_code="QUERY_FAILED")
 
     def get_device_count(self, tenant_id: str) -> OperationResult[int]:
         """
@@ -467,6 +525,7 @@ class DevicesStore(TenantAwareRepository[Device, str], TimestampedRepository[Dev
         Returns:
             OperationResult with device count
         """
+
         try:
             query = self.collection.where('tenant_id', '==', tenant_id)
             docs = list(query.stream())
@@ -475,20 +534,25 @@ class DevicesStore(TenantAwareRepository[Device, str], TimestampedRepository[Dev
 
         except PermissionDenied as e:
             self.logger.error(f"Permission denied getting device count: {e}")
+
             return OperationResult(success=False, error="Permission denied", error_code="PERMISSION_DENIED")
         except Exception as e:
             self.logger.error(f"Failed to get device count for tenant {tenant_id}: {e}")
+
             return OperationResult(success=False, error=str(e), error_code="COUNT_FAILED")
 
     def _add_update_timestamp(self, updates: Dict[str, Any]) -> Dict[str, Any]:
         """Add update timestamp to the updates dictionary."""
+
         now = time.time()
         timestamps = self._normalize_timestamp(now)
         updates['updated_at'] = timestamps['timestamp_ms']
+
         return updates
 
     def _execute_query(self, options: QueryOptions) -> PaginatedResult[Device]:
         """Execute a query with the given options."""
+
         # Build the query step by step to ensure proper mocking
         query = self.collection
 
@@ -510,7 +574,7 @@ class DevicesStore(TenantAwareRepository[Device, str], TimestampedRepository[Dev
         has_more = len(docs) == options.limit if options.limit else False
         next_offset = docs[-1].id if has_more and docs else None
 
-        return PaginatedResult(
+        return PaginatedResult[Device](
             items=devices,
             has_more=has_more,
             next_offset=next_offset

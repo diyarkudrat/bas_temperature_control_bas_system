@@ -213,7 +213,6 @@ def init_auth():
             extra={
                 "auth_mode": getattr(auth_config, "auth_mode", None),
                 "use_firestore": any([
-                    auth_config.use_firestore_telemetry,
                     auth_config.use_firestore_auth,
                     auth_config.use_firestore_audit,
                 ]),
@@ -223,7 +222,7 @@ def init_auth():
         )
 
         # Initialize Firestore if enabled for tenant middleware or other features
-        if any([auth_config.use_firestore_telemetry, auth_config.use_firestore_auth, auth_config.use_firestore_audit]):
+        if any([auth_config.use_firestore_auth, auth_config.use_firestore_audit]):
             firestore_logger.info("Initializing Firestore services")
             firestore_factory = build_firestore_factory(server_config)
 

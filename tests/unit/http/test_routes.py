@@ -49,8 +49,8 @@ def test_protected_route_jwt_valid(monkeypatch):
             from flask import request
             request.auth_provider = provider
 
-        # GET telemetry (read-only)
-        rv = c.get("/api/telemetry", headers={"Authorization": "Bearer good", "X-BAS-Tenant": "t1"})
+        # GET status (read-only)
+        rv = c.get("/api/status", headers={"Authorization": "Bearer good", "X-BAS-Tenant": "t1"})
         assert rv.status_code == 200
 
         # POST set_setpoint (operator)
@@ -69,7 +69,7 @@ def test_protected_route_jwt_invalid(monkeypatch):
             from flask import request
             request.auth_provider = provider
 
-        rv = c.get("/api/telemetry", headers={"Authorization": "Bearer bad", "X-BAS-Tenant": "t1"})
+        rv = c.get("/api/status", headers={"Authorization": "Bearer bad", "X-BAS-Tenant": "t1"})
         assert rv.status_code == 401
         data = rv.get_json()
         assert data["code"] in {"INVALID_TOKEN", "TOKEN_EXPIRED"}
@@ -80,7 +80,7 @@ def test_unauth_401_consistency():
     app = srv.app
     with app.test_client() as c:
         # No Authorization and no session
-        rv = c.get("/api/telemetry")
+        rv = c.get("/api/status")
         assert rv.status_code == 401
 
 
