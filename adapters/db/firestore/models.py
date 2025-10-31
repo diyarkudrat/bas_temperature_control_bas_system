@@ -5,7 +5,7 @@ from typing import Dict, Any, Optional, List
 from datetime import datetime
 import uuid
 
-from app_platform.contracts import InviteStatus, MemberRole, TenantStatus
+from app_platform.contracts import DeviceLifecycle, InviteStatus, MemberRole, TenantStatus
 
 @dataclass
 class BaseEntity:
@@ -215,38 +215,48 @@ def validate_role(role: str) -> bool:
 
 def validate_device_status(status: str) -> bool:
     """Validate device status."""
-    valid_statuses = {"active", "inactive", "maintenance", "error", "offline"}
+    valid_statuses = {"active", "disabled", "decommissioned", "inactive", "maintenance", "error", "offline"}
     return status.lower() in valid_statuses
 
 
 @dataclass
 class Device(BaseEntity):
     """Device entity."""
+
     tenant_id: str
     device_id: str
+    display_name: str = ""
+    hardware_id: str = ""
     metadata: Dict[str, Any] = field(default_factory=dict)
+    tags: List[str] = field(default_factory=list)
+    status: str = DeviceLifecycle.ACTIVE.value
     last_seen: int = 0
-    status: str = "active"
-    
+    credentials_ref: Optional[str] = None
+    deleted_at: Optional[int] = None
+    added_by_user_id: Optional[str] = None
+    added_by_email: Optional[str] = None
+
     def __post_init__(self):
         """Validate required fields after initialization."""
         if not self.tenant_id or not self.device_id:
             raise ValueError("tenant_id and device_id are required")
-    
+        if not isinstance(self.tags, list):
+            self.tags = list(self.tags) if self.tags else []
+
     @property
     def is_online(self) -> bool:
         """Check if device is online (seen within last hour)."""
         if self.last_seen == 0:
             return False
-        
+
         one_hour_ago = datetime.utcnow().timestamp() * 1000 - 3600000  # 1 hour in ms
         return self.last_seen > one_hour_ago
-    
+
     @property
     def is_active(self) -> bool:
         """Check if device status is active."""
-        return self.status.lower() == "active"
-    
+        return str(self.status).lower() == DeviceLifecycle.ACTIVE.value
+
     def update_last_seen(self) -> None:
         """Update last seen timestamp to now."""
         self.last_seen = int(datetime.utcnow().timestamp() * 1000)

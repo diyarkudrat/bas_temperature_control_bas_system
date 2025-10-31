@@ -61,6 +61,7 @@ class OrgFlowsConfig:
     idempotency_ttl_hours: int = 24
     replay_cache_ttl_seconds: int = 120
     secret_manager_project: str | None = None
+    device_credential_rotation_hours: int = 24 * 30
 
     @classmethod
     def from_env(cls) -> "OrgFlowsConfig":
@@ -81,6 +82,7 @@ class OrgFlowsConfig:
             idempotency_ttl_hours=_int_env("IDEMPOTENCY_TTL_HOURS", 24, minimum=1),
             replay_cache_ttl_seconds=_int_env("REQUEST_JWT_REPLAY_TTL_SECONDS", 120, minimum=30),
             secret_manager_project=os.getenv("ORG_SECRET_PROJECT"),
+            device_credential_rotation_hours=_int_env("DEVICE_CREDENTIAL_ROTATION_HOURS", 24 * 30, minimum=1),
         )
 
 

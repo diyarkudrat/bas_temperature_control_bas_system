@@ -15,6 +15,18 @@ class InviteConflictError(RuntimeError):
     """Raised when an invite already exists for the given tenant/email."""
 
 
+class InviteNotFoundError(RuntimeError):
+    """Raised when an invite cannot be located."""
+
+
+class InviteExpiredError(RuntimeError):
+    """Raised when an invite is no longer valid due to expiration."""
+
+
+class InviteTokenError(RuntimeError):
+    """Raised when an invite token is invalid or mismatched."""
+
+
 class DuplicateEventError(RuntimeError):
     """Raised when a webhook event has already been processed."""
 

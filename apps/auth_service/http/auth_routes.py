@@ -20,12 +20,16 @@ from apps.auth_service.http.schemas import (
     SchemaValidationError,
     parse_email_verified_event,
     parse_invite_create,
+    parse_invite_accept,
     parse_org_provisioning,
 )
 from apps.auth_service.services import (
     DuplicateEventError,
     InviteConflictError,
+    InviteExpiredError,
+    InviteNotFoundError,
     InviteRateLimitError,
+    InviteTokenError,
     ServiceConfigurationError,
     UnauthorizedRequestError,
     UpstreamServiceError,
@@ -198,6 +202,48 @@ def create_invite() -> Any:
     if invite.token:
         body["token"] = invite.token
     return jsonify(body), 201
+
+
+@auth_bp.route("/auth/accept-invite", methods=["POST"])
+def accept_invite() -> Any:
+    service = getattr(request, "invite_service", None)
+    if service is None or not getattr(service, "enabled", False):
+        logger.warning("Invite acceptance attempted while service disabled")
+        return jsonify({"error": "Invite service unavailable", "code": "SERVICE_DISABLED"}), 503
+
+    payload = request.get_json(silent=True) or {}
+    try:
+        schema = parse_invite_accept(payload)
+    except SchemaValidationError as exc:
+        logger.info("Invite acceptance payload invalid", extra={"error": str(exc)})
+        return jsonify({"error": "Invalid payload", "code": "INVALID_ARGUMENT", "details": str(exc)}), 400
+
+    try:
+        result = service.accept_invite(schema)
+    except InviteNotFoundError:
+        return jsonify({"error": "Invite not found", "code": "INVITE_NOT_FOUND"}), 404
+    except InviteExpiredError:
+        return jsonify({"error": "Invite expired", "code": "INVITE_EXPIRED"}), 410
+    except InviteTokenError:
+        return jsonify({"error": "Invalid invite token", "code": "INVITE_TOKEN_INVALID"}), 401
+    except ServiceConfigurationError as exc:
+        logger.error("Invite acceptance misconfigured", extra={"error": str(exc)})
+        return jsonify({"error": "Invite service unavailable", "code": "SERVICE_DISABLED"}), 503
+    except UpstreamServiceError as exc:
+        logger.error("Invite acceptance upstream failure", extra={"error": str(exc)})
+        return jsonify({"error": "Upstream service error", "code": "UPSTREAM_ERROR"}), 502
+    except Exception:  # noqa: BLE001
+        logger.exception("Invite acceptance failed")
+        return jsonify({"error": "Internal server error"}), 500
+
+    body = {
+        "status": result.status,
+        "tenant_id": result.tenant_id,
+        "member_id": result.member_id,
+    }
+    if result.token:
+        body["token"] = result.token
+    return jsonify(body), 200
 
 
 @auth_bp.route("/auth/events/email-verified", methods=["POST"])

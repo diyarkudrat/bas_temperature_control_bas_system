@@ -376,11 +376,11 @@ def _get_store() -> InMemoryIdempotencyStore:
 - ✅ Signup handler chains `enforce_idempotency`, CAPTCHA verification (`app_platform/security/captcha.py`), provisioning JWT validation, and a Firestore transaction that creates the tenant document, admin placeholder, counters, audit log entry, and an `OutboxEvent` seeded through the new repository (`adapters/db/firestore/outbox_store.py`).
 - ✅ Durable idempotency persistence leverages the Firestore `IdempotencyKeyRepository` for request hashing and replay-safe 202 responses, while provisioning JWTs rely on `load_service_keyset_from_env` + `ReplayCache` to dedupe `jti`/`nonce` values and interoperate with the auth-service callbacks.
 
-### Step 3 — Admin Verification & Invite Workflow
+### Step 3 — Admin Verification & Invite Workflow *(complete)*
 
-- Implement webhook or background processing to activate tenants/admins when Auth0 verification events arrive, updating counters and audit logs inside a Firestore transaction.
-- Add `POST /tenants/{tenantId}/users/invite` guarded by `require_auth(role="admin")`, tenant isolation, request-JWT enforcement, and rate limiting. Persist invites plus uniqueness sentinels and enqueue ESP delivery via an outbox worker for resilience.
-- Provide `/auth/accept-invite` public handler that validates invite tokens, updates the member document, attaches Auth0 metadata, deletes sentinel docs, and issues tokens via the auth-service.
+- ✅ Email verification webhook now triggers `_activate_verified_admin` transactional flow in `apps/api/http/org_routes.py`, promoting the pending admin, updating tenant counters, emitting audit/outbox records, and tolerating replays.
+- ✅ Added `POST /tenants/<tenantId>/users/invite` with admin-only auth, tenant isolation, signed request JWT validation, per-tenant rate limiting, Auth-service orchestration, Firestore member/sentinel persistence, audit logging, and resilient outbox enqueueing.
+- ✅ Implemented `/auth/accept-invite` to validate tokens, handle expiration/conflicts, finalize member activation within Firestore, emit audit/outbox events, and mint short-lived acceptance JWTs for downstream onboarding.
 
 ### Step 4 — Device Provisioning Lifecycle
 

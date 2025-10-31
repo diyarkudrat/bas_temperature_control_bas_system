@@ -43,10 +43,12 @@ from adapters.providers.mock_auth0 import MockAuth0Provider
 from adapters.providers.base import AuthProvider
 from adapters.providers.factory import build_auth0_provider
 from adapters.providers.deny_all import DenyAllAuthProvider
+from adapters.providers.secret_manager import SecretManagerAdapter
 from application.hardware.bas_hardware_controller import BASController
 from app_platform.config.rate_limit import AtomicRateLimitConfig
 from apps.api.http.router import register_routes
 from apps.api.clients import AuthServiceClient, AuthServiceClientConfig
+from apps.api.services import DeviceCredentialService
 
 # Configure logging early to ensure consistent format/level
 logging.basicConfig(level=logging.INFO)
@@ -261,6 +263,26 @@ def init_auth():
 
         # Update app config with Firestore factory for handlers
         app.config["firestore_factory"] = firestore_factory
+
+        org_config = getattr(server_config, "org_flows", None)
+        secret_project = None
+        if org_config is not None:
+            secret_project = getattr(org_config, "secret_manager_project", None)
+        if not secret_project:
+            secret_project = getattr(server_config, "gcp_project_id", None)
+
+        secret_adapter = SecretManagerAdapter(secret_project)
+        rotation_hours = 24 * 30
+        if org_config is not None:
+            rotation_hours = int(getattr(org_config, "device_credential_rotation_hours", rotation_hours) or rotation_hours)
+
+        device_credentials = DeviceCredentialService(
+            secret_adapter,
+            rotation_hours=rotation_hours,
+            namespace="device",
+        )
+        app.config["secret_manager_adapter"] = secret_adapter
+        app.config["device_credential_service"] = device_credentials
         logger.info(
             "Authentication system initialized successfully",
             extra={

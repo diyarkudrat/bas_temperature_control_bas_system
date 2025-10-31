@@ -533,6 +533,26 @@ class TestTenantMiddleware:
                 assert_equals(result, "success", "Should call decorated function")
                 assert_equals(mock_g.device_id, "device_456", "Should set device_id from args")
 
+    def test_require_device_access_decorator_device_id_from_view_args(self, tenant_middleware, mock_request):
+        """require_device_access should pick device_id from Flask view args."""
+        mock_request.is_json = False
+        mock_request.json = None
+        mock_request.args = {}
+        mock_request.view_args = {"device_id": "device_path_123"}
+
+        @tenant_middleware.require_device_access
+        def test_func():
+            return "success"
+
+        with patch('apps.api.http.middleware.tenant.request', mock_request):
+            with patch('apps.api.http.middleware.tenant.g') as mock_g:
+                mock_g.tenant_id = "tenant-xyz"
+
+                result = test_func()
+
+                assert_equals(result, "success", "Should call decorated function")
+                assert_equals(mock_g.device_id, "device_path_123", "Should set device_id from view args")
+
 
 @pytest.mark.auth
 @pytest.mark.unit

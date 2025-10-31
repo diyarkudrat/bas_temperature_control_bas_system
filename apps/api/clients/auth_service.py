@@ -243,6 +243,22 @@ class AuthServiceClient:
             headers.update(self._sanitize_outbound_headers(extra_headers))
         return self._request("POST", "/auth/limits", json_body=payload, headers=headers)
 
+    def create_invite(
+        self,
+        *,
+        tenant_id: str,
+        payload: Mapping[str, Any],
+        extra_headers: Optional[Mapping[str, str]] = None,
+    ) -> AuthServiceResponse:
+        """Create an invite via the auth service."""
+
+        body = dict(payload)
+        body.setdefault("tenantId", tenant_id)
+        headers: MutableMapping[str, str] = {}
+        if extra_headers:
+            headers.update(self._sanitize_outbound_headers(extra_headers))
+        return self._request("POST", "/auth/invite", json_body=body, headers=headers)
+
     # --------------------- Internal helpers ---------------------
     def _load_service_keyset(self, prefix: str) -> ServiceKeySet:
         keyset = load_service_keyset_from_env(prefix=prefix)

@@ -455,6 +455,8 @@ class TenantMiddleware:
                 device_id = req.json.get('device_id')
             elif hasattr(req, 'args') and 'device_id' in req.args:
                 device_id = req.args.get('device_id')
+            elif hasattr(req, 'view_args') and isinstance(req.view_args, dict):
+                device_id = req.view_args.get('device_id') or req.view_args.get('deviceId')
 
             if not device_id:
                 logger.warning(

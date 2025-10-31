@@ -145,6 +145,7 @@ class DeviceRegistrationRequest(BaseSchema):
 class DeviceRegistrationResponse(BaseSchema):
     device_id: str
     lifecycle: str
+    credential_ref: Optional[str] = None
 
 
 def parse_device_registration(

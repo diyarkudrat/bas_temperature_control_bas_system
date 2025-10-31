@@ -84,6 +84,21 @@ class InviteCreateResponse(BaseSchema):
     token: Optional[str] = None
 
 
+@dataclass(slots=True)
+class InviteAcceptRequest(BaseSchema):
+    invite_id: str
+    tenant_id: str
+    token: str
+
+
+@dataclass(slots=True)
+class InviteAcceptResponse(BaseSchema):
+    tenant_id: str
+    member_id: str
+    status: str
+    token: Optional[str] = None
+
+
 def parse_invite_create(
     payload: Mapping[str, Any] | MutableMapping[str, Any],
     *,
@@ -116,12 +131,30 @@ def parse_invite_create(
     )
 
 
+def parse_invite_accept(payload: Mapping[str, Any] | MutableMapping[str, Any]) -> InviteAcceptRequest:
+    if not isinstance(payload, Mapping):
+        raise SchemaValidationError("Payload must be an object")
+
+    invite_id = _normalize_str(_extract(payload, "inviteId", "invite_id"), "invite_id")
+    tenant_id = _normalize_str(_extract(payload, "tenantId", "tenant_id"), "tenant_id")
+    token = _normalize_str(_extract(payload, "token", "inviteToken"), "token")
+
+    return InviteAcceptRequest(
+        invite_id=invite_id,
+        tenant_id=tenant_id,
+        token=token,
+    )
+
+
 __all__ = [
     "InviteCreateRequest",
     "InviteCreateResponse",
+    "InviteAcceptRequest",
+    "InviteAcceptResponse",
     "OrgProvisioningRequest",
     "OrgProvisioningResponse",
     "parse_invite_create",
+    "parse_invite_accept",
     "parse_org_provisioning",
 ]
 
