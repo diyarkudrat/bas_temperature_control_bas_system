@@ -1,4 +1,5 @@
 """Factory for constructing SSEService with config defaults."""
+
 import os
 from .service import SSEService
 from .breakers import CircuitBreaker
@@ -14,6 +15,7 @@ def get_sse_service(
 	Create a configured SSEService instance.
 	Keep API surface minimal; callers should not depend on internals.
 	"""
+	
 	# Configure circuit breaker (env-tunable; defaults match Phase 3 plan)
 	br_threshold = int(os.getenv("SSE_BREAKER_THRESHOLD", "5"))
 	br_window_s = float(os.getenv("SSE_BREAKER_WINDOW_S", "30"))
