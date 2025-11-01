@@ -12,6 +12,7 @@ import json
 import logging
 import os
 from dataclasses import dataclass
+from types import MappingProxyType
 from typing import Any, Mapping, MutableMapping, Optional
 
 import requests
@@ -23,7 +24,7 @@ class CaptchaVerificationError(Exception):
     """Raised when a CAPTCHA challenge fails verification."""
 
 
-@dataclass(slots=True)
+@dataclass(slots=True, frozen=True)
 class CaptchaConfig:
     """Configuration describing how to verify CAPTCHA challenges."""
 
@@ -45,16 +46,19 @@ class CaptchaVerifier:
         http_client: Optional[requests.Session] = None,
         request_timeout_s: float = 3.0,
     ) -> None:
+        """Initialize the CaptchaVerifier."""
+
         provider = (config.provider or "").strip().lower()
+
         if not provider:
             raise CaptchaVerificationError("captcha provider is not configured")
 
-        self._provider = provider
-        self._secret = _resolve_secret(config.secret_handle)
-        self._min_score = max(0.0, min(config.min_score, 1.0))
-        self._http = http_client or requests.Session()
-        self._timeout = max(1.0, request_timeout_s)
-        self._site_key = config.site_key
+        self._provider = provider # Provider name
+        self._secret = _resolve_secret(config.secret_handle) # Secret handle
+        self._min_score = max(0.0, min(config.min_score, 1.0)) # Minimum score
+        self._http = http_client or requests.Session() # HTTP client
+        self._timeout = max(1.0, request_timeout_s) # Request timeout
+        self._site_key = config.site_key # Site key
 
     def verify(self, token: Optional[str], *, remote_addr: Optional[str] = None) -> Mapping[str, Any]:
         """Verify the provided CAPTCHA token.
@@ -66,7 +70,10 @@ class CaptchaVerifier:
 
         if self._provider == "disabled":
             logger.debug("CAPTCHA provider disabled; skipping verification")
-            return {"provider": self._provider, "skipped": True}
+
+            result: dict[str, Any] = {"provider": self._provider, "skipped": True}
+
+            return MappingProxyType[str, Any](result)
 
         normalized_token = (token or "").strip()
         if not normalized_token:
@@ -82,7 +89,10 @@ class CaptchaVerifier:
     # ------------------------------------------------------------------
 
     def _verify_recaptcha(self, token: str, *, remote_addr: Optional[str]) -> Mapping[str, Any]:
+        """Verify a reCAPTCHA token."""
+
         payload: MutableMapping[str, str] = {"secret": self._secret, "response": token}
+
         if remote_addr:
             payload["remoteip"] = remote_addr
 
@@ -123,29 +133,37 @@ class CaptchaVerifier:
         if score is not None and score < self._min_score:
             raise CaptchaVerificationError("captcha score below minimum threshold")
 
-        return {
+        result: dict[str, Any] = {
             "provider": self._provider,
             "score": score,
             "action": action,
         }
 
+        return MappingProxyType[str, Any](result)
+
 
 def _resolve_secret(handle: str) -> str:
+    """Resolve a secret handle to a secret value."""
+
     normalized = (handle or "").strip()
     if not normalized:
         raise CaptchaVerificationError("captcha secret handle is not configured")
 
     if normalized.startswith("env://"):
         env_name = normalized[6:].strip()
+
         if not env_name:
             raise CaptchaVerificationError("captcha secret env handle is empty")
+
         value = os.getenv(env_name)
         if not value:
             raise CaptchaVerificationError(f"environment variable '{env_name}' is not set for captcha secret")
+
         return value.strip()
 
     if normalized.startswith("file://"):
         path = normalized[7:].strip()
+        
         if not path:
             raise CaptchaVerificationError("captcha secret file handle is empty")
         try:

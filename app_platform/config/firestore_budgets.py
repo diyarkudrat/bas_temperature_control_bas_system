@@ -16,6 +16,8 @@ class FirestoreBudgets:
 
     @classmethod
     def from_env(cls) -> "FirestoreBudgets":
+        """Load configuration from environment variables."""
+        
         return cls(
             read_timeout_ms=int(os.getenv("BAS_FS_READ_TIMEOUT_MS", "50")),
             write_timeout_ms=int(os.getenv("BAS_FS_WRITE_TIMEOUT_MS", "70")),

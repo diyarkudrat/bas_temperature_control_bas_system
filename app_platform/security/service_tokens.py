@@ -10,6 +10,7 @@ import threading
 import time
 from collections import OrderedDict
 from dataclasses import dataclass
+from types import MappingProxyType
 from typing import Any, Iterable, Mapping, MutableMapping, Optional, Sequence
 
 try:
@@ -60,7 +61,7 @@ class ServiceTokenValidationError(ServiceTokenError):
     """Raised when a service token fails validation."""
 
 
-@dataclass(slots=True)
+@dataclass(slots=True, frozen=True)
 class ServiceKey:
     """Represents a single signing/verification key for service JWTs."""
 
@@ -77,6 +78,7 @@ class ServiceKey:
 
         if not self.private_key:
             raise ServiceTokenError(f"private key not configured for kid={self.kid}")
+
         return _normalize_pem(self.private_key)
 
     def verification_material(self) -> Any:
@@ -84,10 +86,14 @@ class ServiceKey:
 
         if self.public_key is not None:
             if isinstance(self.public_key, str):
+
                 return _normalize_pem(self.public_key)
+
             return self.public_key
+
         if self.private_key is not None:
             return _normalize_pem(self.private_key)
+
         raise ServiceTokenError(f"no verification material available for kid={self.kid}")
 
     def header(self) -> Mapping[str, str]:
@@ -106,7 +112,9 @@ class ServiceKeySet:
         default_kid: Optional[str] = None,
         allowed_algorithms: Optional[Sequence[str]] = None,
     ) -> None:
-        key_list = list(keys)
+        """Initialize the ServiceKeySet."""
+        
+        key_list = list[ServiceKey](keys)
         if not key_list:
             raise ServiceTokenError("service key set cannot be empty")
 
@@ -122,47 +130,70 @@ class ServiceKeySet:
         allowed = tuple(allowed_algorithms) if allowed_algorithms else tuple({key.alg for key in key_list})
         if not allowed:
             allowed = _DEFAULT_ALLOWED_ALGORITHMS
+
         for alg in allowed:
             if alg not in _DEFAULT_ALLOWED_ALGORITHMS:
                 raise ServiceTokenError(f"unsupported algorithm '{alg}' in key set")
+
         self._allowed_algorithms = allowed
 
     def _select_default_kid(self) -> str:
+        """Select the default key identifier."""
+
         for key in self._keys.values():
             if key.private_key:
+
                 return key.kid
+
         return next(iter(self._keys))
 
     @property
     def default_kid(self) -> str:
+        """Return the default key identifier."""
+
         return self._default_kid
 
     @property
     def allowed_algorithms(self) -> Sequence[str]:
+        """Return the allowed algorithms."""
+
         return self._allowed_algorithms
 
     def get(self, kid: str) -> ServiceKey:
+        """Return the key for the given key identifier."""
+
         try:
             return self._keys[kid]
         except KeyError as exc:
             raise ServiceTokenValidationError(f"unknown key identifier '{kid}'") from exc
 
     def get_signing_key(self, kid: Optional[str] = None) -> ServiceKey:
+        """Return the signing key for the given key identifier."""
+
         key_id = kid or self._default_kid
         key = self.get(key_id)
+
         # ensure it has private key
         key.ensure_signing_material()
+
         return key
 
     def keys(self) -> Sequence[ServiceKey]:
-        return list(self._keys.values())
+        """Return all keys in the key set."""
+
+        return tuple(self._keys.values())
 
     def as_jwks(self) -> Mapping[str, Any]:
-        jwks: list[Any] = []
+        """Return the key set as a JWKS."""
+
+        jwks: list[Mapping[str, Any]] = []
         for key in self._keys.values():
             if isinstance(key.public_key, Mapping):
                 jwks.append(dict(key.public_key))
-        return {"keys": jwks}
+
+        result: dict[str, Any] = {"keys": tuple(jwks)}
+
+        return MappingProxyType(result)
 
     @classmethod
     def from_key_definitions(
@@ -172,17 +203,24 @@ class ServiceKeySet:
         default_kid: Optional[str] = None,
         allowed_algorithms: Optional[Sequence[str]] = None,
     ) -> "ServiceKeySet":
+        """Create a ServiceKeySet from a list of key definitions."""
+
         keys: list[ServiceKey] = []
+
         for definition in definitions:
             kid = definition.get("kid")
             alg = definition.get("alg")
+
             if not kid or not alg:
                 raise ServiceTokenError("each key definition must include 'kid' and 'alg'")
+
             private_key = definition.get("private_key")
             public_key = definition.get("public_key") or definition.get("public_jwk")
+
             use = definition.get("use", "sig")
             not_before = definition.get("nbf") or definition.get("not_before")
             expires_at = definition.get("exp") or definition.get("expires_at")
+
             keys.append(
                 ServiceKey(
                     kid=str(kid),
@@ -194,10 +232,11 @@ class ServiceKeySet:
                     expires_at=int(expires_at) if expires_at is not None else None,
                 )
             )
+
         return cls(keys, default_kid=default_kid, allowed_algorithms=allowed_algorithms)
 
 
-@dataclass(slots=True)
+@dataclass(slots=True, frozen=True)
 class IssuedServiceToken:
     """Represents a freshly minted service JWT and its metadata."""
 
@@ -209,6 +248,8 @@ class IssuedServiceToken:
     expires_at: int
 
     def as_bearer(self) -> str:
+        """Return the token as a Bearer token."""
+
         return f"Bearer {self.token}"
 
 
@@ -224,13 +265,15 @@ class ReplayCache:
         max_local_entries: int = _DEFAULT_LOCAL_CACHE_SIZE,
         metrics=security_metrics,
     ) -> None:
-        self._redis = redis_client
-        self._namespace = namespace
-        self._ttl_seconds = max(1, int(ttl_seconds))
-        self._max_local_entries = max(1, int(max_local_entries))
-        self._metrics = metrics
-        self._lock = threading.RLock()
-        self._local: "OrderedDict[str, float]" = OrderedDict()
+        """Initialize the ReplayCache."""
+
+        self._redis = redis_client # Redis client
+        self._namespace = namespace # Namespace
+        self._ttl_seconds = max(1, int(ttl_seconds)) # TTL seconds
+        self._max_local_entries = max(1, int(max_local_entries)) # Max local entries
+        self._metrics = metrics # Metrics
+        self._lock = threading.RLock() # Lock for thread safety
+        self._local: OrderedDict[str, float] = OrderedDict[str, float]()  # Local cache
 
     def check_and_store(self, token_id: str, *, expires_at: Optional[int] = None) -> bool:
         """Return True if the identifier is new, False if it's a replay."""
@@ -242,59 +285,83 @@ class ReplayCache:
 
         if self._redis is not None:
             namespaced_key = f"{self._namespace}:{token_id}"
+
             try:
                 stored = self._redis.set(namespaced_key, "1", nx=True, ex=ttl)
-            except Exception as exc:  # noqa: BLE001
+            except Exception as exc:
                 logger.warning("Redis replay cache failure; using local fallback", exc_info=exc)
+
                 if self._metrics:
                     self._metrics.incr(_METRIC_REPLAY_CACHE_REDIS_ERROR)
             else:
                 if stored:
                     if self._metrics:
                         self._metrics.incr(_METRIC_REPLAY_CACHE_REDIS_STORE)
+
                     return True
                 else:
                     if self._metrics:
                         self._metrics.incr(_METRIC_REPLAY_CACHE_REDIS_HIT)
+
                     return False
 
         return self._check_local(token_id, ttl)
 
     def _check_local(self, token_id: str, ttl: int) -> bool:
-        now = time.time()
+        """Check the local cache for the given token identifier."""
+
+        now = time.monotonic()
         expiry = now + ttl
+
         with self._lock:
             self._evict_expired(now)
+
             if token_id in self._local:
                 if self._metrics:
                     self._metrics.incr(_METRIC_REPLAY_CACHE_LOCAL_HIT)
+
                 return False
+
             self._local[token_id] = expiry
             self._local.move_to_end(token_id)
+
             if len(self._local) > self._max_local_entries:
                 self._local.popitem(last=False)
+
                 if self._metrics:
                     self._metrics.incr(_METRIC_REPLAY_CACHE_LOCAL_EVICT)
+
             if self._metrics:
                 self._metrics.incr(_METRIC_REPLAY_CACHE_LOCAL_STORE)
+
             return True
 
     def _evict_expired(self, now: float) -> None:
+        """Evict expired entries from the local cache."""
+
         expired = [key for key, expiry in self._local.items() if expiry <= now]
         for key in expired:
             self._local.pop(key, None)
 
     def _derive_ttl(self, expires_at: Optional[int]) -> int:
+        """Derive the TTL for the given expiration time."""
+
         ttl = self._ttl_seconds
+
         if expires_at is not None:
             remaining = int(expires_at) - int(time.time())
+
             if remaining <= 0:
                 # Already expired; we still insert with minimal TTL to prevent replays in the same tick.
                 return 1
+
             ttl = min(ttl, remaining)
+
         return max(1, ttl)
 
     def clear(self) -> None:
+        """Clear the local cache."""
+
         with self._lock:
             self._local.clear()
 
@@ -347,6 +414,7 @@ def issue_service_jwt(
         for key, value in additional_claims.items():
             if key in claims:
                 raise ServiceTokenError(f"claim '{key}' cannot be overridden")
+
             claims[key] = value
 
     signing_key = keyset.get_signing_key(signing_kid)
@@ -354,11 +422,14 @@ def issue_service_jwt(
 
     token = jwt.encode(claims, signing_key.ensure_signing_material(), algorithm=signing_key.alg, headers=headers)
 
+    claims_view = MappingProxyType[str, Any](dict[str, Any](claims))
+    headers_view = MappingProxyType[str, str](dict[str, str](headers))
+
     return IssuedServiceToken(
         token=token,
         kid=signing_key.kid,
-        claims=dict(claims),
-        headers=dict(headers),
+        claims=claims_view,
+        headers=headers_view,
         issued_at=now,
         expires_at=exp,
     )
@@ -412,32 +483,39 @@ def verify_service_jwt(
 
     if required_scope:
         token_scope = claims.get("scope")
+
         if isinstance(token_scope, str):
-            token_scopes = set(token_scope.split())
+            token_scopes = set[str](token_scope.split())
         elif isinstance(token_scope, Sequence):
-            token_scopes = set(str(s) for s in token_scope)
+            token_scopes = {str(s) for s in token_scope}
         else:
             token_scopes = set()
+
         missing = [scope for scope in required_scope if scope not in token_scopes]
         if missing:
             raise ServiceTokenValidationError(f"token missing required scope(s): {', '.join(missing)}")
 
     if replay_cache is not None:
         replay_id = _build_replay_identifier(claims)
+
         expires_at = claims.get("exp")
         if not replay_cache.check_and_store(replay_id, expires_at=expires_at):
             raise ServiceTokenValidationError("token replay detected")
 
-    return claims
+    return MappingProxyType[str, Any](dict[str, Any](claims))
 
 
 def build_auth_headers(token: str | IssuedServiceToken, *, header: str = "Authorization") -> Mapping[str, str]:
     """Construct request headers for passing the service token."""
 
     value = token.token if isinstance(token, IssuedServiceToken) else token
+
     if header.lower() == "authorization":
-        return {header: f"Bearer {value}"}
-    return {header: value}
+        result = {header: f"Bearer {value}"}
+    else:
+        result = {header: value}
+
+    return MappingProxyType[str, str](result)
 
 
 def load_service_keyset_from_env(prefix: str = "SERVICE_JWT") -> ServiceKeySet:
@@ -460,6 +538,7 @@ def load_service_keyset_from_env(prefix: str = "SERVICE_JWT") -> ServiceKeySet:
             parsed = json.loads(keyset_env)
         except json.JSONDecodeError as exc:
             raise ServiceTokenError(f"{prefix}_KEYSET_JSON must be valid JSON") from exc
+
         if isinstance(parsed, Mapping):
             definitions.extend(parsed.get("keys", []))
             default_kid = parsed.get("default_kid", default_kid)
@@ -473,6 +552,7 @@ def load_service_keyset_from_env(prefix: str = "SERVICE_JWT") -> ServiceKeySet:
             jwks = json.loads(jwks_env)
         except json.JSONDecodeError as exc:
             raise ServiceTokenError(f"{prefix}_JWKS_JSON must be valid JSON") from exc
+
         if isinstance(jwks, Mapping):
             for entry in jwks.get("keys", []):
                 if isinstance(entry, Mapping):
@@ -481,20 +561,24 @@ def load_service_keyset_from_env(prefix: str = "SERVICE_JWT") -> ServiceKeySet:
     if not definitions:
         # Fallback to single-key env variables
         kid = default_kid or os.getenv(f"{prefix}_KID")
+
         if not kid:
             raise ServiceTokenError(
                 f"{prefix}_KEYSET_JSON or {prefix}_KID must be configured for service JWT keys"
             )
+
         alg = os.getenv(f"{prefix}_ALGORITHM", "RS256")
         private_key = _load_secret(f"{prefix}_PRIVATE_KEY")
         public_key = _load_secret(f"{prefix}_PUBLIC_KEY")
         jwk_json = os.getenv(f"{prefix}_PUBLIC_JWK")
         jwk: Optional[Any] = None
+
         if jwk_json:
             try:
                 jwk = json.loads(jwk_json)
             except json.JSONDecodeError:
                 logger.warning("Invalid JSON in %s_PUBLIC_JWK; falling back to PEM", prefix)
+
         definitions.append(
             {
                 "kid": kid,
@@ -506,15 +590,18 @@ def load_service_keyset_from_env(prefix: str = "SERVICE_JWT") -> ServiceKeySet:
 
     # Ensure we don't duplicate entries for the same kid: prefer definitions with private keys.
     merged: dict[str, dict[str, Any]] = {}
+
     for entry in definitions:
         kid = entry.get("kid")
+
         if not kid:
             continue
+
         existing = merged.get(kid)
         if existing is None or entry.get("private_key"):
-            merged[kid] = dict(entry)
+            merged[kid] = dict[str, Any](entry)
         elif not existing.get("public_key"):
-            merged[kid] = dict(entry)
+            merged[kid] = dict[str, Any](entry)
 
     return ServiceKeySet.from_key_definitions(merged.values(), default_kid=default_kid, allowed_algorithms=allowed_algorithms)
 
@@ -553,22 +640,31 @@ def load_replay_cache_from_env(
 
 
 def _build_replay_identifier(claims: Mapping[str, Any]) -> str:
+    """Build a replay identifier from the given claims."""
+
     issuer = claims.get("iss", "?")
     subject = claims.get("sub", "?")
     jti = claims.get("jti")
+
     if not jti:
         raise ServiceTokenValidationError("token missing 'jti' claim for replay protection")
+
     nonce = claims.get("nonce")
     token_id = f"{issuer}:{subject}:{jti}"
+
     if nonce:
         token_id = f"{token_id}:{nonce}"
+
     return token_id
 
 
 def _load_secret(name: str) -> Optional[str]:
+    """Load a secret from the given name."""
+
     value = os.getenv(name)
     if value:
         return _normalize_pem(value)
+
     file_path = os.getenv(f"{name}_FILE")
     if file_path:
         try:
@@ -576,17 +672,24 @@ def _load_secret(name: str) -> Optional[str]:
                 return _normalize_pem(handle.read())
         except FileNotFoundError as exc:
             raise ServiceTokenError(f"secret file not found for {name}") from exc
+
     return None
 
 
 def _normalize_pem(value: Optional[str]) -> Optional[str]:
+    """Normalize a PEM value."""
+
     if value is None:
         return None
+
     value = value.strip()
+
     # Support \n-delimited environment secrets
     return value.replace("\\n", "\n")
 
 
 def _random_identifier(length: int = 32) -> str:
+    """Generate a random identifier."""
+    
     return secrets.token_urlsafe(length // 2)
 

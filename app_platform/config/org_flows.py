@@ -7,37 +7,54 @@ from dataclasses import dataclass
 
 
 def _bool_env(name: str, default: bool = False) -> bool:
+    """Get a boolean from the environment variables."""
+
     value = os.getenv(name)
+
     if value is None:
         return default
+
     return value.strip().lower() in {"1", "true", "yes", "on"}
 
 
 def _int_env(name: str, default: int, *, minimum: int | None = None) -> int:
+    """Get an integer from the environment variables with optional bounds checking."""
+
     raw = os.getenv(name)
+
     if raw is None:
         return default
+
     try:
         parsed = int(raw)
+
         if minimum is not None and parsed < minimum:
             return minimum
+
         return parsed
     except ValueError:
         return default
 
 
 def _float_env(name: str, default: float, *, minimum: float | None = None, maximum: float | None = None) -> float:
+    """Get a float from the environment variables with optional bounds checking."""
+
     raw = os.getenv(name)
+
     if raw is None:
         return default
+
     try:
         parsed = float(raw)
     except ValueError:
         return default
+
     if minimum is not None and parsed < minimum:
         parsed = minimum
+
     if maximum is not None and parsed > maximum:
         parsed = maximum
+
     return parsed
 
 
@@ -65,6 +82,8 @@ class OrgFlowsConfig:
 
     @classmethod
     def from_env(cls) -> "OrgFlowsConfig":
+        """Load configuration from environment variables."""
+        
         return cls(
             org_signup_v2_enabled=_bool_env("ORG_SIGNUP_V2", False),
             device_rbac_enforcement=_bool_env("DEVICE_RBAC_ENFORCEMENT", False),

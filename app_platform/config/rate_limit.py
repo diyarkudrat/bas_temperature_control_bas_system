@@ -14,6 +14,7 @@ class RateLimitConfig:
     shadow_mode: bool = False  # log-only
     requests_per_second: float = 50.0
     burst_capacity: int = 100
+
     # Dynamic per-user endpoint limits; set via admin API at runtime
     # Shape: {endpoint: {"window_s": int, "max_req": int}}
     per_user_limits: Dict[str, Dict[str, int]] = field(default_factory=dict)
@@ -139,6 +140,7 @@ class AtomicRateLimitConfig:
         """Get a snapshot of the RateLimitConfig."""
 
         with self._lock:
+
             # Return a fresh instance to discourage external mutation
             return RateLimitConfig(
                 enabled=self._cfg.enabled,
@@ -182,6 +184,7 @@ class AtomicRateLimitConfig:
 
             if enabled is not None:
                 base.enabled = bool(enabled)
+                
             if shadow_mode is not None:
                 base.shadow_mode = bool(shadow_mode)
 

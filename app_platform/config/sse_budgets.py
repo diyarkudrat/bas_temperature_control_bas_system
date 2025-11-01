@@ -14,6 +14,8 @@ class SSEBudgets:
 
     @classmethod
     def from_env(cls) -> "SSEBudgets":
+        """Load configuration from environment variables."""
+        
         return cls(
             keepalive_seconds=int(os.getenv("BAS_SSE_KEEPALIVE_S", "20")),
             retry_base_ms=int(os.getenv("BAS_SSE_RETRY_BASE_MS", "250")),

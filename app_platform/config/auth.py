@@ -1,4 +1,4 @@
-"""Authentication configuration management."""
+"""Utilities for loading and validating authentication configuration."""
 
 import json
 import logging
@@ -10,7 +10,7 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class AuthConfig:
-    """Authentication system configuration."""
+    """Structured settings that drive the authentication subsystem."""
 
     # Feature flags
     auth_enabled: bool = True
@@ -68,6 +68,7 @@ class AuthConfig:
         """Load configuration from environment variables."""
 
         logger.info("Loading auth configuration from environment variables")
+
         return cls(
             auth_enabled=os.getenv("BAS_AUTH_ENABLED", "true").lower() == "true",
             auth_mode=os.getenv("BAS_AUTH_MODE", "user_password"),
@@ -104,10 +105,13 @@ class AuthConfig:
         
         try:
             logger.info(f"Loading auth configuration from file: {config_path}")
+
             with open(config_path, "r") as f:
                 data = json.load(f)
+
             config = cls(**data)
             logger.info("Auth configuration loaded successfully")
+
             return config
         except FileNotFoundError:
             logger.warning(f"Auth config file not found: {config_path}, using defaults")
@@ -141,8 +145,10 @@ class AuthConfig:
         if self.org_signup_v2_enabled:
             if not self.provisioning_key_id:
                 logger.warning("ORG_SIGNUP_V2 enabled without provisioning key id")
+
             if not self.provisioning_private_key_secret:
                 logger.warning("ORG_SIGNUP_V2 enabled without provisioning key secret handle")
+
             if self.provisioning_jwt_ttl_seconds < 30 or self.provisioning_jwt_ttl_seconds > 300:
                 logger.warning(
                     "Provisioning JWT TTL outside recommended range",
@@ -161,5 +167,3 @@ class AuthConfig:
         logger.info("Auth configuration validation completed")
         
         return True
-
-

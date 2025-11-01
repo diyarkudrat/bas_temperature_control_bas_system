@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import Enum
+from types import MappingProxyType
 from typing import Mapping, MutableMapping, Optional
 
 
@@ -81,15 +82,28 @@ class ProvisioningClaims:
     plan: Optional[str] = None
 
     def to_claims(self, *, mutable: bool = False) -> Mapping[str, Optional[str]] | MutableMapping[str, Optional[str]]:
+        """Return the provisioning claims as a mapping.
+
+        Defaults to a read-only mapping proxy to keep shared claims immutable.
+        Set ``mutable=True`` to receive a mutable dictionary copy when callers
+        need to modify values before signing.
+        """
+
         payload: dict[str, Optional[str]] = {
             "tenant_name": self.tenant_name,
             "admin_email": self.admin_email,
         }
+
         if self.tenant_slug is not None:
             payload["tenant_slug"] = self.tenant_slug
+
         if self.plan is not None:
             payload["plan"] = self.plan
-        return payload if mutable else dict(payload)
+
+        if mutable:
+            return payload
+
+        return MappingProxyType[str, str | None](payload)
 
 
 PROVISIONING_HEADERS = ProvisioningHeaders()
