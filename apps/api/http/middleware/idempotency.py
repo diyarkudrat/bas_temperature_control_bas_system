@@ -16,8 +16,9 @@ import base64
 import hashlib
 import threading
 import time
-from dataclasses import dataclass
-from typing import Any, Dict, Iterable, Optional, Tuple
+from dataclasses import dataclass, replace
+from types import MappingProxyType
+from typing import Any, Dict, Iterable, Mapping, Optional, Tuple
 
 from flask import Response, current_app, jsonify, make_response, request
 
@@ -32,40 +33,68 @@ _REPLAY_HEADER = "Idempotent-Replay"
 _PERSISTED_HEADERS: Iterable[str] = ("Content-Type", "Content-Encoding", "Content-Language")
 
 
-@dataclass
+def _empty_headers() -> Mapping[str, str]:
+    """Return an immutable empty headers mapping."""
+
+    return MappingProxyType[str, str]({})
+
+
+def _wrap_headers(headers: Optional[Dict[str, str]]) -> Optional[Mapping[str, str]]:
+    """Return an immutable copy of provided headers mapping."""
+
+    if headers is None:
+        return None
+
+    return MappingProxyType[str, str](dict[str, str](headers))
+
+
+@dataclass(slots=True, frozen=True)
 class IdempotencyEntry:
+    """Idempotency entry."""
+
     status: str  # "in_progress" | "completed"
-    method: str
-    path: str
-    tenant_id: Optional[str]
-    created_at: float
-    expires_at: float
-    status_code: Optional[int] = None
-    body_base64: Optional[str] = None
-    headers: Optional[Dict[str, str]] = None
+    method: str # HTTP method
+    path: str # HTTP path
+    tenant_id: Optional[str] # Tenant ID
+    created_at: float # Creation time
+    expires_at: float # Expiration time
+    status_code: Optional[int] = None # Status code
+    body_base64: Optional[str] = None # Body base64
+    headers: Optional[Mapping[str, str]] = None # Headers
 
 
 class InMemoryIdempotencyStore:
     """Thread-safe, TTL-based idempotency store."""
 
     def __init__(self, ttl_seconds: int = 24 * 3600) -> None:
+        """Initialize the idempotency store."""
+
         self._ttl_seconds = max(60, int(ttl_seconds))
         self._entries: Dict[str, IdempotencyEntry] = {}
         self._lock = threading.RLock()
 
     def _purge_expired(self, now: float) -> None:
+        """Purge expired entries."""
+        
         expired = [key for key, entry in self._entries.items() if entry.expires_at <= now]
+
         for key in expired:
             self._entries.pop(key, None)
 
     def reserve(self, key: str, *, method: str, path: str, tenant_id: Optional[str]) -> Tuple[str, IdempotencyEntry]:
+        """Reserve an entry."""
+
         now = time.monotonic()
+
         with self._lock:
             self._purge_expired(now)
             entry = self._entries.get(key)
+
             if entry:
                 return entry.status, entry
+
             expires_at = now + self._ttl_seconds
+
             entry = IdempotencyEntry(
                 status="in_progress",
                 method=method,
@@ -73,8 +102,10 @@ class InMemoryIdempotencyStore:
                 tenant_id=tenant_id,
                 created_at=now,
                 expires_at=expires_at,
+                headers=_empty_headers(),
             )
             self._entries[key] = entry
+
             return "reserved", entry
 
     def record_response(
@@ -85,56 +116,85 @@ class InMemoryIdempotencyStore:
         body_base64: str,
         headers: Dict[str, str],
     ) -> None:
+        """Record a response."""
+
         with self._lock:
             entry = self._entries.get(key)
+
             if not entry:
                 return
-            entry.status = "completed"
-            entry.status_code = status_code
-            entry.body_base64 = body_base64
-            entry.headers = headers
+
+            updated_entry = replace(
+                entry,
+                status="completed",
+                status_code=status_code,
+                body_base64=body_base64 or "",
+                headers=_wrap_headers(headers) if headers else _empty_headers(),
+            )
+
+            self._entries[key] = updated_entry
 
     def release(self, key: str) -> None:
+        """Release an entry."""
+
         with self._lock:
             self._entries.pop(key, None)
 
 
 def _get_store() -> InMemoryIdempotencyStore:
+    """Get the idempotency store."""
+
     store = current_app.config.get("idempotency_store")
+
     if isinstance(store, InMemoryIdempotencyStore):
         return store
+
     store = InMemoryIdempotencyStore()
     current_app.config["idempotency_store"] = store
+    
     return store
 
 
 def _hash_key(raw_key: str, *, method: str, path: str, tenant_id: Optional[str]) -> str:
+    """Hash a key."""
+
     material = "||".join([raw_key.strip(), method.upper(), path, tenant_id or "-"])
     digest = hashlib.sha256(material.encode("utf-8")).hexdigest()
+
     return digest
 
 
 def _store_headers(response: Response) -> Dict[str, str]:
+    """Store headers."""
+
     captured: Dict[str, str] = {}
+
     for header in _PERSISTED_HEADERS:
         if header in response.headers:
             captured[header] = response.headers[header]
+
     return captured
 
 
 def _build_response_from_entry(entry: IdempotencyEntry) -> Response:
+    """Build a response from an entry."""
+
     if entry.status_code is None or entry.body_base64 is None:
         # Gracefully degrade to 202 replay if incomplete.
         resp = jsonify({"status": "pending"})
         resp.status_code = 202
+
         return resp
 
     body_bytes = base64.b64decode(entry.body_base64.encode("ascii")) if entry.body_base64 else b""
     response = current_app.response_class(body_bytes, status=entry.status_code)
+
     if entry.headers:
         for key, value in entry.headers.items():
             response.headers[key] = value
+            
     response.headers[_REPLAY_HEADER] = "true"
+    
     return response
 
 
@@ -151,6 +211,7 @@ def enforce_idempotency(header_name: str = _DEFAULT_HEADER, methods: Tuple[str, 
             provided_key = request.headers.get(header_name)
             if not provided_key or not provided_key.strip():
                 logger.warning("Missing idempotency key", extra={"endpoint": request.endpoint})
+
                 return jsonify({
                     "error": "Idempotency key required",
                     "code": "IDEMPOTENCY_KEY_MISSING",
@@ -159,6 +220,7 @@ def enforce_idempotency(header_name: str = _DEFAULT_HEADER, methods: Tuple[str, 
             tenant_id = getattr(request, "tenant_id", None)
             hashed_key = _hash_key(provided_key, method=request.method, path=request.path, tenant_id=tenant_id)
             store = _get_store()
+
             status, entry = store.reserve(
                 hashed_key,
                 method=request.method,
@@ -171,6 +233,7 @@ def enforce_idempotency(header_name: str = _DEFAULT_HEADER, methods: Tuple[str, 
                     "Idempotent replay",
                     extra={"endpoint": request.endpoint, "tenant": tenant_id},
                 )
+
                 return _build_response_from_entry(entry)
 
             if status == "in_progress":
@@ -178,6 +241,7 @@ def enforce_idempotency(header_name: str = _DEFAULT_HEADER, methods: Tuple[str, 
                     "Idempotent request already in progress",
                     extra={"endpoint": request.endpoint, "tenant": tenant_id},
                 )
+
                 return jsonify({
                     "error": "Request already in progress",
                     "code": "REQUEST_IN_PROGRESS",
@@ -203,10 +267,12 @@ def enforce_idempotency(header_name: str = _DEFAULT_HEADER, methods: Tuple[str, 
                 headers=headers,
             )
             response.headers.setdefault("Idempotency-Key", provided_key)
+
             return response
 
         _inner.__name__ = getattr(func, "__name__", "idempotent_wrapped")
         _inner.__doc__ = getattr(func, "__doc__")
+        
         return _inner
 
     return decorator

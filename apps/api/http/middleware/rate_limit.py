@@ -3,72 +3,41 @@
 from __future__ import annotations
 
 import threading
-import time
 from typing import Dict, Optional, Tuple, Any
 
 from flask import jsonify, request
 
 from logging_lib import get_logger as get_structured_logger
+from .limiters import TokenBucket
 
 
 logger = get_structured_logger("api.http.middleware.rate_limit")
-
-
-class _TokenBucket:
-    """Token bucket rate limiter."""
-    
-    def __init__(self, capacity: int, refill_rate_per_sec: float) -> None:
-        self.capacity = max(1, capacity)
-        self.refill_rate_per_sec = max(0.1, refill_rate_per_sec)
-        self.tokens = float(self.capacity)
-        self.last_refill = time.monotonic()
-        self.lock = threading.Lock()
-
-    def update(self, capacity: int, refill_rate_per_sec: float) -> None:
-        with self.lock:
-            capacity = max(1, capacity)
-            refill_rate_per_sec = max(0.1, refill_rate_per_sec)
-            now = time.monotonic()
-            elapsed = now - self.last_refill
-            if elapsed > 0:
-                self.tokens = min(self.capacity, self.tokens + elapsed * self.refill_rate_per_sec)
-                self.last_refill = now
-            self.capacity = capacity
-            self.refill_rate_per_sec = refill_rate_per_sec
-            self.tokens = min(self.tokens, float(self.capacity))
-
-    def allow(self) -> Tuple[bool, float]:
-        now = time.monotonic()
-        with self.lock:
-            elapsed = now - self.last_refill
-            if elapsed > 0:
-                self.tokens = min(self.capacity, self.tokens + elapsed * self.refill_rate_per_sec)
-                self.last_refill = now
-            if self.tokens >= 1.0:
-                self.tokens -= 1.0
-                return True, self.tokens
-            return False, self.tokens
 
 
 class GlobalRateLimiter:
     """Token bucket rate limiter keyed by client IP."""
 
     def __init__(self) -> None:
-        self._buckets: Dict[str, _TokenBucket] = {}
+        self._buckets: Dict[str, TokenBucket] = {}
         self._lock = threading.Lock()
 
-    def _get_bucket(self, key: str, capacity: int, refill_rate: float) -> _TokenBucket:
+    def _get_bucket(self, key: str, capacity: int, refill_rate: float) -> TokenBucket:
+        """Get the bucket."""
+
         with self._lock:
             bucket = self._buckets.get(key)
+
             if bucket is None:
-                bucket = _TokenBucket(capacity, refill_rate)
+                bucket = TokenBucket(capacity, refill_rate)
                 self._buckets[key] = bucket
             else:
-                bucket.update(capacity, refill_rate)
+                bucket.configure(capacity, refill_rate)
+
             return bucket
 
     def check(self, *, key: str, capacity: int, refill_rate: float) -> Tuple[bool, float]:
         bucket = self._get_bucket(key, capacity, refill_rate)
+
         return bucket.allow()
 
 
@@ -76,6 +45,7 @@ def enforce_global_rate_limit() -> Optional[Tuple[Any, int]]:
     """Apply IP-based rate limiting using server configuration."""
 
     cfg = getattr(request, "rate_limit_snapshot", None)
+
     if cfg is None:
         server_cfg = getattr(request, "server_config", None)
         cfg = getattr(server_cfg, "rate_limit", None)
@@ -107,6 +77,7 @@ def enforce_global_rate_limit() -> Optional[Tuple[Any, int]]:
                 "Global rate limit shadow hit",
                 extra={"ip": remote_addr, "endpoint": endpoint, "remaining": remaining},
             )
+
         return None
 
     logger.warning(
@@ -120,6 +91,7 @@ def enforce_global_rate_limit() -> Optional[Tuple[Any, int]]:
         "ip": remote_addr,
     })
     response.status_code = 429
+    
     return response, 429
 
 

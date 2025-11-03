@@ -6,10 +6,8 @@ import base64
 import json
 import os
 import re
-import threading
 import time
 import uuid
-from collections import deque
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, List, Mapping, MutableMapping, Optional, Tuple
@@ -46,6 +44,7 @@ from apps.api.http.middleware import (
     require_auth,
     require_device_access,
 )
+from apps.api.http.middleware.limiters import SlidingWindowLimiter
 from apps.api.http.schemas import SchemaValidationError
 from apps.api.services.device_credentials import DeviceCredentialRecord
 from apps.api.http.schemas.org import (
@@ -1293,30 +1292,12 @@ class _InviteRateLimiter:
     """Simple in-memory per-tenant sliding window limiter."""
 
     def __init__(self) -> None:
-        self._lock = threading.RLock()
-        self._windows: dict[str, deque[float]] = {}
+        self._limiter = SlidingWindowLimiter()
 
     def allow(self, tenant_id: str, quota: int, window_seconds: int) -> bool:
         """Allow the invite rate limiter."""
 
-        if quota <= 0:
-            return False
-
-        now = time.monotonic()
-
-        with self._lock:
-            window = self._windows.setdefault(tenant_id, deque())
-            cutoff = now - max(1.0, float(window_seconds))
-
-            while window and window[0] < cutoff:
-                window.popleft()
-
-            if len(window) >= quota:
-                return False
-
-            window.append(now)
-
-            return True
+        return self._limiter.allow(tenant_id, quota, window_seconds)
 
 
 def _invite_rate_limiter_allow(tenant_id: str, quota: int, window_seconds: int) -> bool:

@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Mapping, MutableMapping, Optional
+from types import MappingProxyType
+from typing import Any, Mapping, MutableMapping, Optional, cast
 
 from app_platform.contracts import InviteStatus, MemberRole, TenantStatus
 
@@ -18,42 +19,70 @@ from .base import (
 
 
 def _extract(payload: Mapping[str, Any] | MutableMapping[str, Any], *names: str) -> Any:
+    """Extract a value from the payload."""
+
     for name in names:
         if name in payload:
             return payload[name]
+
     return None
 
 
 def _normalize_str(value: Any, field: str) -> str:
+    """Normalize a string value."""
+
     if not isinstance(value, str):
         raise SchemaValidationError(f"Field '{field}' must be a string")
+
     normalized = value.strip()
     if not normalized:
         raise SchemaValidationError(f"Field '{field}' is required")
+
     return normalized
 
 
-@dataclass(slots=True)
+def _empty_metadata() -> Mapping[str, Any]:
+    """Return an immutable empty metadata mapping."""
+
+    return MappingProxyType({})
+
+
+def _wrap_metadata(metadata: Mapping[str, Any] | None) -> Mapping[str, Any]:
+    """Return an immutable copy of provided metadata mapping."""
+
+    if metadata is None:
+        return _empty_metadata()
+
+    return MappingProxyType(dict(metadata))
+
+
+@dataclass(slots=True, frozen=True)
 class OrgSignupRequest(BaseSchema):
-    organization_name: str
-    admin_email: str
-    admin_first_name: str
-    admin_last_name: str
-    plan: Optional[str] = None
-    captcha_token: Optional[str] = None
-    provisioning_jwt: Optional[str] = None
-    marketing_opt_in: bool = False
-    metadata: Mapping[str, Any] = field(default_factory=dict)
+    """Request for organization signup."""
+
+    organization_name: str # The name of the organization
+    admin_email: str # The email of the admin user
+    admin_first_name: str # The first name of the admin user
+    admin_last_name: str # The last name of the admin user
+    plan: Optional[str] = None # The plan for the organization
+    captcha_token: Optional[str] = None # The captcha token
+    provisioning_jwt: Optional[str] = None # The provisioning JWT
+    marketing_opt_in: bool = False # Whether the admin user has opted in to marketing
+    metadata: Mapping[str, Any] = field(default_factory=_empty_metadata) # The metadata for the organization
 
 
-@dataclass(slots=True)
+@dataclass(slots=True, frozen=True)
 class OrgSignupResponse(BaseSchema):
-    tenant_id: str
-    status: TenantStatus
-    verification_required: bool = True
+    """Response for organization signup."""
+
+    tenant_id: str # The ID of the tenant
+    status: TenantStatus # The status of the tenant
+    verification_required: bool = True # Whether verification is required
 
 
 def parse_org_signup(payload: Mapping[str, Any] | MutableMapping[str, Any]) -> OrgSignupRequest:
+    """Parse the organization signup request."""
+
     name = _normalize_str(_extract(payload, "organizationName", "organization_name"), "organization_name")
     admin_email = _ensure_email(_extract(payload, "adminEmail", "admin_email"), "admin_email")
     admin_first_name = _normalize_str(_extract(payload, "adminFirstName", "admin_first_name"), "admin_first_name")
@@ -63,7 +92,8 @@ def parse_org_signup(payload: Mapping[str, Any] | MutableMapping[str, Any]) -> O
     captcha = _optional_str(_extract(payload, "captchaToken", "captcha_token"))
     provisioning = _optional_str(_extract(payload, "provisioningJwt", "provisioning_jwt"))
     marketing_opt_in = bool(payload.get("marketingOptIn") or payload.get("marketing_opt_in", False))
-    metadata = payload.get("metadata") if isinstance(payload.get("metadata"), Mapping) else {}
+    metadata_payload = payload.get("metadata")
+    metadata = _wrap_metadata(metadata_payload if isinstance(metadata_payload, Mapping) else None)
 
     return OrgSignupRequest(
         organization_name=name,
@@ -78,8 +108,10 @@ def parse_org_signup(payload: Mapping[str, Any] | MutableMapping[str, Any]) -> O
     )
 
 
-@dataclass(slots=True)
+@dataclass(slots=True, frozen=True)
 class InviteCreateRequest(BaseSchema):
+    """Request for invite creation."""
+
     tenant_id: str
     email: str
     role: MemberRole
@@ -87,11 +119,13 @@ class InviteCreateRequest(BaseSchema):
     send_email: bool = True
     expires_in_hours: Optional[int] = None
     captcha_token: Optional[str] = None
-    metadata: Mapping[str, Any] = field(default_factory=dict)
+    metadata: Mapping[str, Any] = field(default_factory=_empty_metadata)
 
 
-@dataclass(slots=True)
+@dataclass(slots=True, frozen=True)
 class InviteCreateResponse(BaseSchema):
+    """Response for invite creation."""
+
     invite_id: str
     status: InviteStatus
 
@@ -101,8 +135,11 @@ def parse_invite_create(
     *,
     tenant_id: str,
 ) -> InviteCreateRequest:
+    """Parse the invite creation request."""
+
     email = _ensure_email(_extract(payload, "email", "inviteeEmail"), "email")
     role_value = _normalize_str(_extract(payload, "role", "memberRole"), "role").lower()
+
     try:
         role = MemberRole(role_value)
     except ValueError as exc:
@@ -117,7 +154,9 @@ def parse_invite_create(
 
     captcha = _optional_str(_extract(payload, "captchaToken", "captcha_token"))
     invited_by = _optional_str(_extract(payload, "invitedBy", "invited_by"))
-    metadata = payload.get("metadata") if isinstance(payload.get("metadata"), Mapping) else {}
+
+    metadata_payload = payload.get("metadata")
+    metadata = _wrap_metadata(metadata_payload if isinstance(metadata_payload, Mapping) else None)
 
     return InviteCreateRequest(
         tenant_id=_normalize_str(tenant_id, "tenant_id"),
@@ -131,18 +170,22 @@ def parse_invite_create(
     )
 
 
-@dataclass(slots=True)
+@dataclass(slots=True, frozen=True)
 class DeviceRegistrationRequest(BaseSchema):
+    """Request for device registration."""
+
     tenant_id: str
     device_id: Optional[str]
     display_name: str
     hardware_id: str
     tags: tuple[str, ...] = field(default_factory=tuple)
-    metadata: Mapping[str, Any] = field(default_factory=dict)
+    metadata: Mapping[str, Any] = field(default_factory=_empty_metadata)
 
 
-@dataclass(slots=True)
+@dataclass(slots=True, frozen=True)
 class DeviceRegistrationResponse(BaseSchema):
+    """Response for device registration."""
+
     device_id: str
     lifecycle: str
     credential_ref: Optional[str] = None
@@ -153,11 +196,14 @@ def parse_device_registration(
     *,
     tenant_id: str,
 ) -> DeviceRegistrationRequest:
+    """Parse the device registration request."""
+
     display_name = _normalize_str(_extract(payload, "displayName", "display_name"), "display_name")
     hardware_id = _normalize_str(_extract(payload, "hardwareId", "hardware_id"), "hardware_id")
     device_id = _optional_str(_extract(payload, "deviceId", "device_id"))
     tags = _ensure_tags(payload.get("tags"))
-    metadata = payload.get("metadata") if isinstance(payload.get("metadata"), Mapping) else {}
+    metadata_payload = payload.get("metadata")
+    metadata = _wrap_metadata(metadata_payload if isinstance(metadata_payload, Mapping) else None)
 
     return DeviceRegistrationRequest(
         tenant_id=_normalize_str(tenant_id, "tenant_id"),
@@ -169,29 +215,35 @@ def parse_device_registration(
     )
 
 
-@dataclass(slots=True)
+@dataclass(slots=True, frozen=True)
 class EmailVerifiedEvent(BaseSchema):
+    """Event for email verification."""
+
     event_id: str
     auth0_user_id: str
     email: str
     tenant_id: str
     verified_at: int
-    metadata: Mapping[str, Any] = field(default_factory=dict)
+    metadata: Mapping[str, Any] = field(default_factory=_empty_metadata)
 
 
-def parse_email_verified_event(payload: Mapping[str, Any] | MutableMapping[str, Any]) -> EmailVerifiedEvent:
+def parse_email_verified_event(payload: object) -> EmailVerifiedEvent:
+    """Parse the email verified event."""
+    
     if not isinstance(payload, Mapping):
         raise SchemaValidationError("Webhook payload must be an object")
 
-    event_id = _normalize_str(_extract(payload, "eventId", "event_id"), "event_id")
+    payload_mapping = cast(Mapping[str, Any] | MutableMapping[str, Any], payload)
+
+    event_id = _normalize_str(_extract(payload_mapping, "eventId", "event_id"), "event_id")
     auth0_user_id = _normalize_str(
-        _extract(payload, "auth0UserId", "auth0_user_id", "userId", "user_id"),
+        _extract(payload_mapping, "auth0UserId", "auth0_user_id", "userId", "user_id"),
         "auth0_user_id",
     )
-    email = _ensure_email(_extract(payload, "email", "userEmail"), "email")
-    tenant_id = _normalize_str(_extract(payload, "tenantId", "tenant_id"), "tenant_id")
+    email = _ensure_email(_extract(payload_mapping, "email", "userEmail"), "email")
+    tenant_id = _normalize_str(_extract(payload_mapping, "tenantId", "tenant_id"), "tenant_id")
 
-    verified_at_raw = _extract(payload, "verifiedAt", "verified_at", "timestamp")
+    verified_at_raw = _extract(payload_mapping, "verifiedAt", "verified_at", "timestamp")
     if verified_at_raw is None:
         raise SchemaValidationError("Missing verified_at timestamp")
     try:
@@ -199,11 +251,13 @@ def parse_email_verified_event(payload: Mapping[str, Any] | MutableMapping[str, 
     except (TypeError, ValueError) as exc:
         raise SchemaValidationError("verified_at must be an integer epoch seconds") from exc
 
-    metadata = payload.get("metadata")
-    if metadata is None:
-        metadata = {}
-    elif not isinstance(metadata, Mapping):
+    metadata_payload = payload_mapping.get("metadata")
+    if metadata_payload is None:
+        metadata = _empty_metadata()
+    elif not isinstance(metadata_payload, Mapping):
         raise SchemaValidationError("metadata must be an object when provided")
+    else:
+        metadata = _wrap_metadata(metadata_payload)
 
     return EmailVerifiedEvent(
         event_id=event_id,
@@ -211,7 +265,7 @@ def parse_email_verified_event(payload: Mapping[str, Any] | MutableMapping[str, 
         email=email,
         tenant_id=tenant_id,
         verified_at=verified_at,
-        metadata=dict(metadata),
+        metadata=metadata,
     )
 
 

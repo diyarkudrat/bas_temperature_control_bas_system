@@ -1,9 +1,9 @@
 """Auth0 JWT context extraction and helpers for request guards.
 
-This module centralizes token parsing, verification, and claim normalization so
-route decorators (e.g. ``require_role``) can operate on a stable structure that
-is independent from legacy session-based middleware.  The design follows the
-updated organization onboarding plan where Auth0-issued access tokens are the
+- This module centralizes token parsing, verification, and claim normalization so
+route decorators (e.g. ``require_role``) can operate on a stable structure.
+
+- The design follows the updated organization onboarding plan where Auth0-issued access tokens are the
 primary credential for API access and contain tenant metadata in custom
 namespaced claims.
 
@@ -24,6 +24,7 @@ from __future__ import annotations
 import os
 import time
 from dataclasses import dataclass
+from types import MappingProxyType
 from typing import Any, Mapping, Optional, Sequence, Set
 
 from flask import Request
@@ -61,12 +62,16 @@ def parse_authorization_header(header_value: Optional[str]) -> Optional[str]:
 
     if not header_value or not isinstance(header_value, str):
         return None
+        
     parts = header_value.strip().split()
     if len(parts) != 2:
         return None
+
     if parts[0].lower() != "bearer":
         return None
+
     token = parts[1].strip()
+    
     return token or None
 
 
@@ -91,13 +96,12 @@ class AuthContext:
         """Return True when the context meets or exceeds the required role."""
 
         hierarchy = {
-            "read_only": 1,
             "read-only": 1,
             "operator": 2,
             "admin": 3,
         }
 
-        normalized_required = required.replace("-", "_").lower()
+        normalized_required = required.replace("_", "-").lower()
         required_level = hierarchy.get(normalized_required, 0)
 
         if required_level == 0:
@@ -106,11 +110,11 @@ class AuthContext:
 
         highest = 0
         for role in self.roles:
-            normalized = role.replace("-", "_").lower()
+            normalized = role.replace("_", "-").lower()
             level = hierarchy.get(normalized)
             if level is None:
                 # Accept granular scopes that imply read access when requirement is read-only.
-                if normalized_required == "read_only" and (
+                if normalized_required == "read-only" and (
                     normalized.startswith("read:") or normalized.endswith(":read")
                 ):
                     level = 1
@@ -127,15 +131,21 @@ class AuthContext:
         return highest >= required_level
 
     def require_email_verification(self) -> None:
+        """Raise if email is not verified."""
+        
         if _EMAIL_VERIFIED_REQUIRED and not self.email_verified:
             raise AuthContextError("email not verified")
 
 
 def _namespaced_claim(claim_name: str, claims: Mapping[str, Any]) -> Any:
+    """Return the value of a namespaced claim."""
+    
     return claims.get(f"{_CUSTOM_NAMESPACE}{claim_name}")
 
 
 def _extract_roles(claims: Mapping[str, Any]) -> Set[str]:
+    """Return the roles from the claims."""
+    
     roles: Set[str] = set()
 
     def _add(value: Any) -> None:
@@ -169,15 +179,20 @@ def _extract_roles(claims: Mapping[str, Any]) -> Set[str]:
 
 
 def _extract_scopes(claims: Mapping[str, Any]) -> Set[str]:
-    scopes: Set[str] = set()
+    """Return the scopes from the claims."""
+    
+    scopes: Set[str] = set[str]()
     scope_value = claims.get("scope")
+
     if isinstance(scope_value, str):
         scopes.update(scope_value.split())
+
     scopes_value = _namespaced_claim("scopes", claims)
     if isinstance(scopes_value, Sequence):
         for item in scopes_value:
             if isinstance(item, str) and item:
                 scopes.add(item)
+                
     return scopes
 
 
@@ -203,7 +218,7 @@ def build_auth_context(
     if provider is None:
         raise AuthContextError("auth provider unavailable")
 
-    start_ms = time.time() * 1000.0
+    start_ms = time.monotonic() * 1000.0
     if metrics is not None:
         try:
             metrics.inc_jwt_attempt()
@@ -218,6 +233,7 @@ def build_auth_context(
                 metrics.inc_jwt_failure()
             except Exception:
                 pass
+
         raise AuthContextError(str(exc)) from exc
 
     if not isinstance(claims, Mapping):
@@ -230,7 +246,7 @@ def build_auth_context(
 
     if metrics is not None:
         try:
-            metrics.observe_jwt_success(time.time() * 1000.0 - start_ms)
+            metrics.observe_jwt_success(time.monotonic() * 1000.0 - start_ms)
         except Exception:
             pass
 
@@ -246,8 +262,8 @@ def build_auth_context(
     elif tenant_id is not None:
         tenant_id = str(tenant_id)
 
-    roles = frozenset(_extract_roles(claims))
-    scopes = frozenset(_extract_scopes(claims))
+    roles = frozenset[str](_extract_roles(claims))
+    scopes = frozenset[str](_extract_scopes(claims))
 
     email = claims.get("email")
     email_verified = bool(claims.get("email_verified"))
@@ -255,30 +271,36 @@ def build_auth_context(
 
     issued_at = None
     exp = None
+
     try:
         if "iat" in claims:
-            issued_at = int(claims["iat"])  # type: ignore[arg-type]
+            issued_at = int(claims["iat"])
     except Exception:
         issued_at = None
+
     try:
         if "exp" in claims:
-            exp = int(claims["exp"])  # type: ignore[arg-type]
+            exp = int(claims["exp"])
     except Exception:
         exp = None
 
     session_epoch = None
     try:
         value = _namespaced_claim(_SESSION_EPOCH_CLAIM, claims)
+
         if value is None:
             value = claims.get("session_epoch")
+            
         if value is not None:
             session_epoch = int(value)
     except Exception:
         session_epoch = None
 
+    immutable_claims = MappingProxyType(dict(claims))
+
     context = AuthContext(
         token=token,
-        claims=dict(claims),
+        claims=immutable_claims,
         subject=subject,
         tenant_id=tenant_id,
         roles=roles,

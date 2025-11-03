@@ -17,6 +17,8 @@ from .org_routes import org_bp
 
 
 def register_routes(app: Flask) -> None:
+    """Register the routes for the API."""
+    
     logger = get_structured_logger("api.http.router")
 
     app.register_blueprint(ui_bp)

@@ -23,6 +23,29 @@ from app_platform.config.auth import AuthConfig
 logger = get_structured_logger("api.http.middleware.tenant")
 
 
+def _as_response(resp: Any, status: int) -> tuple[Any, int]:
+    """Normalize return value to (Response, status)."""
+
+    return resp if isinstance(resp, tuple) else (resp, status)
+
+
+def _tenant_middleware_missing_response() -> tuple[Any, int]:
+    """Return standardized response when tenant middleware is absent."""
+
+    return _as_response(jsonify({"error": "Tenant middleware not configured", "code": "TENANT_MIDDLEWARE_NOT_CONFIGURED"}), 500)
+
+
+def _get_configured_middleware() -> Optional["TenantMiddleware"]:
+    """Fetch configured tenant middleware or log a warning."""
+
+    middleware = getattr(current_app, "tenant_middleware", None)
+    
+    if middleware is None:
+        logger.warning("Tenant middleware not configured")
+
+    return middleware
+
+
 @runtime_checkable
 class TenantAuditSink(Protocol):
     """Contract for audit sinks used by tenant middleware."""
@@ -51,26 +74,33 @@ class TenantAuditSink(Protocol):
 
 
 def _scrub_identifier(value: Optional[str]) -> Optional[str]:
+    """Scrub an identifier to a short hash."""
+
     if not value:
         return None
+
     digest = hashlib.sha256(value.encode("utf-8")).hexdigest()
+
     return digest[:12]
 
 
 def get_request():
     """Return patched request if provided, else real Flask request proxy."""
+
     return flask_request
 
 
 @dataclass(frozen=True)
 class TenantContext:
-    tenant_id: Optional[str]
-    source: str
-    principal_hash: Optional[str]
-    header_tenant: Optional[str]
-    session_tenant: Optional[str]
-    from_cache: bool = False
-    conflict: bool = False
+    """Tenant context."""
+
+    tenant_id: Optional[str] # Tenant ID
+    source: str # Source
+    principal_hash: Optional[str] # Principal hash
+    header_tenant: Optional[str] # Header tenant
+    session_tenant: Optional[str] # Session tenant
+    from_cache: bool = False # From cache
+    conflict: bool = False # Conflict
 
 
 class TenantResolver:
@@ -83,13 +113,17 @@ class TenantResolver:
         cache_ttl_s: int = 120,
         cache_capacity: int = 1024,
     ) -> None:
-        self._tenant_header = tenant_header
-        self._cache_ttl_s = max(1, int(cache_ttl_s))
-        self._cache_capacity = max(1, int(cache_capacity))
-        self._cache: Dict[str, tuple[str, float]] = {}
-        self._lock = threading.RLock()
+        """Initialize the tenant resolver."""
+
+        self._tenant_header = tenant_header # Tenant header
+        self._cache_ttl_s = max(1, int(cache_ttl_s)) # Cache TTL
+        self._cache_capacity = max(1, int(cache_capacity)) # Cache capacity
+        self._cache: Dict[str, tuple[str, float]] = {} # Cache
+        self._lock = threading.RLock() # Lock for thread safety
 
     def resolve(self, req: Request) -> TenantContext:
+        """Resolve the tenant context."""
+
         principal_id = self._extract_principal(req)
         header_tenant = self._safe_header(req)
         session_tenant = self._safe_session_tenant(req)
@@ -114,7 +148,9 @@ class TenantResolver:
         if session_tenant:
             tenant_id = session_tenant
             source = "session"
+
             self._cache_set(principal_id, tenant_id)
+
             if header_tenant and header_tenant != tenant_id:
                 conflict = True
         elif header_tenant:
@@ -132,6 +168,8 @@ class TenantResolver:
         )
 
     def _extract_principal(self, req: Request) -> Optional[str]:
+        """Extract the principal."""
+
         try:
             header_sid = req.headers.get("X-Session-ID")
         except Exception:
@@ -145,47 +183,67 @@ class TenantResolver:
         return header_sid or cookie_sid
 
     def _safe_header(self, req: Request) -> Optional[str]:
+        """Safe header."""
+
         try:
             return req.headers.get(self._tenant_header)
         except Exception:
             return None
 
     def _safe_session_tenant(self, req: Request) -> Optional[str]:
+        """Safe session tenant."""
+
         try:
             session_obj = getattr(req, "session", None)
+
             return getattr(session_obj, "tenant_id", None) if session_obj else None
         except Exception:
             return None
 
     def _cache_get(self, principal: Optional[str]) -> Optional[str]:
+        """Cache get."""
+
         if not principal:
             return None
+
         now = time.monotonic()
+
         with self._lock:
             entry = self._cache.get(principal)
+
             if not entry:
                 return None
+
             tenant_id, expires_at = entry
+
             if expires_at < now:
                 self._cache.pop(principal, None)
                 return None
+
             return tenant_id
 
     def _cache_set(self, principal: Optional[str], tenant_id: Optional[str]) -> None:
+        """Cache set."""
+
         if not principal or not tenant_id:
             return
+
         expiry = time.monotonic() + float(self._cache_ttl_s)
+
         with self._lock:
             if len(self._cache) >= self._cache_capacity:
                 now = time.monotonic()
+
                 expired = [key for key, (_, exp) in self._cache.items() if exp < now]
                 for key in expired:
                     self._cache.pop(key, None)
+
                 if len(self._cache) >= self._cache_capacity:
                     try:
                         self._cache.pop(next(iter(self._cache)))
                     except StopIteration:
                         pass
+
             self._cache[principal] = (tenant_id, expiry)
 
 
@@ -197,13 +255,17 @@ class TenantMiddleware:
         auth_config: AuthConfig,
         audit_sink: Optional[TenantAuditSink] = None,
     ) -> None:
+        """Initialize the tenant middleware."""
+
         self.auth_config = auth_config
         self.tenant_header = auth_config.tenant_id_header
+
         self._resolver = TenantResolver(
             self.tenant_header,
             cache_ttl_s=120,
             cache_capacity=1024,
         )
+
         if audit_sink is None:
             self._audit_sink: Optional[TenantAuditSink] = None
         else:
@@ -212,24 +274,30 @@ class TenantMiddleware:
                 for name in ("log_permission_denied", "log_tenant_violation")
                 if not hasattr(audit_sink, name)
             ]
+
             if missing:
                 logger.warning(
                     "Provided audit sink is missing required methods",
                     extra={"missing": missing},
                 )
+
                 self._audit_sink = None
             else:
                 self._audit_sink = audit_sink  # type: ignore[assignment]
 
     def _attach_context(self, request_obj: Request, context: TenantContext) -> None:
+        """Attach the tenant context."""
+
         try:
             setattr(request_obj, "_tenant_context", context)
         except Exception:
             pass
+
         try:
             setattr(request_obj, "tenant_id", context.tenant_id)
         except Exception:
             pass
+
         if has_request_context() and context.tenant_id is not None:
             try:
                 g.tenant_id = context.tenant_id
@@ -237,6 +305,8 @@ class TenantMiddleware:
                 pass
 
     def _handle_conflict(self, request_obj: Request, context: TenantContext) -> None:
+        """Handle a tenant conflict."""
+
         if not context.conflict:
             return
 
@@ -255,6 +325,7 @@ class TenantMiddleware:
 
         try:
             session_obj = getattr(request_obj, "session", None)
+
             self._audit_sink.log_tenant_violation(
                 user_id=getattr(session_obj, "user_id", None),
                 username=getattr(session_obj, "username", None),
@@ -279,6 +350,7 @@ class TenantMiddleware:
         wins and a warning is logged (optionally audited). Returns the resolved
         tenant_id or None.
         """
+
         try:
             request_obj = req or get_request()
         except Exception:
@@ -291,9 +363,11 @@ class TenantMiddleware:
         if isinstance(existing_context, TenantContext):
             self._attach_context(request_obj, existing_context)
             self._handle_conflict(request_obj, existing_context)
+
             return existing_context.tenant_id
 
         context = self._resolver.resolve(request_obj)
+
         self._attach_context(request_obj, context)
         self._handle_conflict(request_obj, context)
 
@@ -301,6 +375,7 @@ class TenantMiddleware:
 
     def extract_tenant_id(self, request) -> Optional[str]:
         """Extract tenant ID using cached value or from session/header."""
+
         # Prefer cached value
         try:
             context = getattr(request, "_tenant_context", None)
@@ -311,11 +386,15 @@ class TenantMiddleware:
             return context.tenant_id
 
         context = self._resolver.resolve(request)
+
         self._attach_context(request, context)
         self._handle_conflict(request, context)
+
         return context.tenant_id
 
     def validate_tenant_access(self, user_tenant_id: str, requested_tenant_id: str) -> bool:
+        """Validate tenant access."""
+
         return user_tenant_id == requested_tenant_id
 
     def audit_tenant_violation(
@@ -326,8 +405,11 @@ class TenantMiddleware:
         attempted_tenant: str,
         allowed_tenant: str,
     ) -> None:
+        """Audit a tenant violation."""
+
         if not self._audit_sink:
             return
+
         try:
             self._audit_sink.log_tenant_violation(
                 user_id=user_id,
@@ -343,18 +425,25 @@ class TenantMiddleware:
             )
 
     def require_tenant(self, func: Callable) -> Callable:
+        """Require a tenant."""
+        
         @wraps(func)
         def decorated_function(*args, **kwargs):
+            """Decorated function."""
+            
             req = get_request()
             tenant_id = self.extract_tenant_id(req)
+
             if not tenant_id:
                 logger.warning(
                     "Missing tenant ID in request",
                     extra={"endpoint": getattr(req, "endpoint", None)},
                 )
+
                 self._log_permission_denied(request=req, reason="MISSING_TENANT_ID")
                 resp = jsonify({'error': 'Tenant ID required', 'code': 'MISSING_TENANT_ID'})
-                return resp if isinstance(resp, tuple) else (resp, 400)
+
+                return _as_response(resp, 400)
 
             if has_request_context():
                 g.tenant_id = tenant_id
@@ -364,17 +453,21 @@ class TenantMiddleware:
         return decorated_function
 
     def enforce_tenant_isolation(self, func: Callable) -> Callable:
+        """Enforce tenant isolation."""
+
         @wraps(func)
         def decorated_function(*args, **kwargs):
             req = get_request()
             requested_tenant_id = self.extract_tenant_id(req)
+
             if not requested_tenant_id:
                 logger.warning(
                     "Missing tenant ID in request",
                     extra={"endpoint": getattr(req, 'endpoint', None)},
                 )
                 resp = jsonify({'error': 'Tenant ID required', 'code': 'MISSING_TENANT_ID'})
-                return resp if isinstance(resp, tuple) else (resp, 400)
+
+                return _as_response(resp, 400)
 
             user_tenant_id = None
             if hasattr(req, 'session') and req.session:
@@ -385,8 +478,10 @@ class TenantMiddleware:
                     "No user session for tenant-isolated endpoint",
                     extra={"endpoint": getattr(req, 'endpoint', None)},
                 )
+
                 if has_request_context():
                     g.tenant_id = requested_tenant_id
+
                 return func(*args, **kwargs)
 
             if not self.validate_tenant_access(user_tenant_id, requested_tenant_id):
@@ -409,7 +504,8 @@ class TenantMiddleware:
                 )
 
                 resp = jsonify({'error': 'Access denied to tenant', 'code': 'TENANT_ACCESS_DENIED'})
-                return resp if isinstance(resp, tuple) else (resp, 403)
+
+                return _as_response(resp, 403)
 
             if has_request_context():
                 g.tenant_id = requested_tenant_id
@@ -419,11 +515,15 @@ class TenantMiddleware:
         return decorated_function
 
     def _log_permission_denied(self, *, request: Request, reason: str) -> None:
+        """Log a permission denied."""
+
         if not self._audit_sink:
             return
+
         session_obj = getattr(request, 'session', None)
         username = getattr(session_obj, 'username', None)
         user_id = getattr(session_obj, 'user_id', None)
+
         try:
             self._audit_sink.log_permission_denied(
                 username=username,
@@ -439,18 +539,23 @@ class TenantMiddleware:
             )
 
     def require_device_access(self, func: Callable) -> Callable:
+        """Require device access."""
+
         @wraps(func)
         def decorated_function(*args, **kwargs):
             try:
                 tenant_id = getattr(g, 'tenant_id', None)
             except Exception:
                 tenant_id = None
+
             if not tenant_id:
                 resp = jsonify({'error': 'Tenant ID not available', 'code': 'TENANT_ID_MISSING'})
-                return resp if isinstance(resp, tuple) else (resp, 400)
+
+                return _as_response(resp, 400)
 
             req = get_request()
             device_id = None
+
             if getattr(req, 'is_json', False) and getattr(req, 'json', None):
                 device_id = req.json.get('device_id')
             elif hasattr(req, 'args') and 'device_id' in req.args:
@@ -464,7 +569,8 @@ class TenantMiddleware:
                     extra={"endpoint": getattr(req, 'endpoint', None)},
                 )
                 resp = jsonify({'error': 'Device ID required', 'code': 'MISSING_DEVICE_ID'})
-                return resp if isinstance(resp, tuple) else (resp, 400)
+
+                return _as_response(resp, 400)
 
             logger.debug(
                 "Device access request",
@@ -483,6 +589,8 @@ class TenantMiddleware:
 
 
 def setup_tenant_middleware(app, auth_config: AuthConfig, audit_sink=None):
+    """Setup the tenant middleware."""
+
     middleware = TenantMiddleware(auth_config, audit_sink)
 
     # Store middleware in app context for access in routes
@@ -490,6 +598,8 @@ def setup_tenant_middleware(app, auth_config: AuthConfig, audit_sink=None):
 
     @app.before_request
     def setup_tenant_context():
+        """Setup tenant context."""
+
         req = get_request()
         middleware.setup_tenant_context(req)
 
@@ -497,37 +607,43 @@ def setup_tenant_middleware(app, auth_config: AuthConfig, audit_sink=None):
 
 
 def require_tenant(func: Callable) -> Callable:
+    """Require a tenant."""
+
     @wraps(func)
     def decorated_function(*args, **kwargs):
-        if not hasattr(current_app, 'tenant_middleware'):
-            logger.warning("Tenant middleware not configured")
-            resp = jsonify({'error': 'Tenant middleware not configured'})
-            return resp if isinstance(resp, tuple) else (resp, 500)
-        return current_app.tenant_middleware.require_tenant(func)(*args, **kwargs)
+        middleware = _get_configured_middleware()
+        if middleware is None:
+            return _tenant_middleware_missing_response()
+
+        return middleware.require_tenant(func)(*args, **kwargs)
 
     return decorated_function
 
 
 def enforce_tenant_isolation(func: Callable) -> Callable:
+    """Enforce tenant isolation."""
+
     @wraps(func)
     def decorated_function(*args, **kwargs):
-        if not hasattr(current_app, 'tenant_middleware'):
-            logger.warning("Tenant middleware not configured")
-            resp = jsonify({'error': 'Tenant middleware not configured'})
-            return resp if isinstance(resp, tuple) else (resp, 500)
-        return current_app.tenant_middleware.enforce_tenant_isolation(func)(*args, **kwargs)
+        middleware = _get_configured_middleware()
+        if middleware is None:
+            return _tenant_middleware_missing_response()
+
+        return middleware.enforce_tenant_isolation(func)(*args, **kwargs)
 
     return decorated_function
 
 
 def require_device_access(func: Callable) -> Callable:
+    """Require device access."""
+
     @wraps(func)
     def decorated_function(*args, **kwargs):
-        if not hasattr(current_app, 'tenant_middleware'):
-            logger.warning("Tenant middleware not configured")
-            resp = jsonify({'error': 'Tenant middleware not configured'})
-            return resp if isinstance(resp, tuple) else (resp, 500)
-        return current_app.tenant_middleware.require_device_access(func)(*args, **kwargs)
+        middleware = _get_configured_middleware()
+        if middleware is None:
+            return _tenant_middleware_missing_response()
+
+        return middleware.require_device_access(func)(*args, **kwargs)
 
     return decorated_function
 
