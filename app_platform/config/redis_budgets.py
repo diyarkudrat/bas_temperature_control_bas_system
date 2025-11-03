@@ -13,6 +13,8 @@ class RedisBudgets:
 
     @classmethod
     def from_env(cls) -> "RedisBudgets":
+        """Load configuration from environment variables."""
+        
         return cls(
             op_timeout_ms=int(os.getenv("BAS_REDIS_OP_TIMEOUT_MS", "10")),
             pool_max_connections=int(os.getenv("BAS_REDIS_POOL_MAX", "64")),

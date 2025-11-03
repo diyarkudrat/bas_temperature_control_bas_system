@@ -6,7 +6,7 @@ from dataclasses import dataclass
 
 @dataclass
 class BreakerConfig:
-    """Circuit breaker defaults (see DDR notes)."""
+    """Default parameters used to configure circuit breakers."""
 
     failure_threshold: int = 5            # trips after N failures
     window_seconds: int = 30              # rolling window for failure count
@@ -14,6 +14,8 @@ class BreakerConfig:
 
     @classmethod
     def from_env(cls) -> "BreakerConfig":
+        """Load configuration from environment variables."""
+        
         return cls(
             failure_threshold=int(os.getenv("BAS_BREAKER_FAILURES", "5")),
             window_seconds=int(os.getenv("BAS_BREAKER_WINDOW_S", "30")),

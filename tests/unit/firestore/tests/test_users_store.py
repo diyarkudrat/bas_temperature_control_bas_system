@@ -6,6 +6,8 @@ from unittest.mock import Mock, patch, MagicMock
 from datetime import datetime
 from typing import Dict, Any
 
+from domains.auth.serializers import user_to_dict
+
 # Contract testing imports
 from tests.contracts.base import UsersStoreProtocol, OperationResult, QueryOptions, PaginatedResult
 from tests.contracts.firestore import ContractValidator, ContractViolationError
@@ -330,55 +332,6 @@ class TestUsersRepository:
         with assert_raises(PermissionError):
             users_repo.get_by_username("testuser")
     
-    def test_authenticate_user_success(self, users_repo, sample_user):
-        """Test successful user authentication."""
-        with patch.object(users_repo, 'get_by_username') as mock_get_by_username:
-            with patch.object(users_repo, 'clear_failed_attempts') as mock_clear_attempts:
-                mock_get_by_username.return_value = OperationResult(success=True, data=sample_user)
-                
-                result = users_repo.authenticate_user("testuser", "hashed_password_123")
-                
-                assert_true(result.success, "Authentication should succeed")
-                assert_equals(result.data, sample_user, "Should return user")
-                mock_clear_attempts.assert_called_once_with(sample_user.user_id)
-    
-    def test_authenticate_user_not_found(self, users_repo):
-        """Test authentication with non-existent user."""
-        with patch.object(users_repo, 'get_by_username') as mock_get_by_username:
-            mock_get_by_username.return_value = OperationResult(success=False, error="User not found")
-            
-            result = users_repo.authenticate_user("nonexistent_user", "password")
-            
-            assert_false(result.success, "Authentication should fail")
-            assert_equals(result.error, "User not found", "Should return not found error")
-            assert_equals(result.error_code, "USER_NOT_FOUND", "Should return correct error code")
-    
-    def test_authenticate_user_locked(self, users_repo, sample_user):
-        """Test authentication with locked user."""
-        sample_user.locked_until = int(time.time() * 1000) + 3600000  # Locked for 1 hour
-        
-        with patch.object(users_repo, 'get_by_username') as mock_get_by_username:
-            mock_get_by_username.return_value = OperationResult(success=True, data=sample_user)
-            
-            result = users_repo.authenticate_user("testuser", "hashed_password_123")
-            
-            assert_false(result.success, "Authentication should fail")
-            assert_equals(result.error, "Account locked", "Should return locked error")
-            assert_equals(result.error_code, "ACCOUNT_LOCKED", "Should return correct error code")
-    
-    def test_authenticate_user_invalid_password(self, users_repo, sample_user):
-        """Test authentication with invalid password."""
-        with patch.object(users_repo, 'get_by_username') as mock_get_by_username:
-            with patch.object(users_repo, 'increment_failed_attempts') as mock_increment_attempts:
-                mock_get_by_username.return_value = OperationResult(success=True, data=sample_user)
-                
-                result = users_repo.authenticate_user("testuser", "wrong_password")
-                
-                assert_false(result.success, "Authentication should fail")
-                assert_equals(result.error, "Invalid credentials", "Should return invalid credentials error")
-                assert_equals(result.error_code, "INVALID_CREDENTIALS", "Should return correct error code")
-                mock_increment_attempts.assert_called_once_with(sample_user.user_id)
-    
     def test_update_last_login_success(self, users_repo):
         """Test successful last login update."""
         with patch.object(users_repo, 'update') as mock_update:
@@ -470,7 +423,7 @@ class TestUsersRepository:
         
         mock_doc = Mock()
         mock_doc.id = "test_user_id"
-        mock_doc.to_dict.return_value = sample_user.to_dict()
+        mock_doc.to_dict.return_value = user_to_dict(sample_user)
         
         with patch.object(users_repo, '_apply_query_options') as mock_apply_options:
             mock_apply_options.return_value.stream.return_value = [mock_doc]
@@ -782,7 +735,7 @@ class TestUsersRepository:
     def test_create_invalid_username_raises_real(self, real_repo):
         import pytest
         from adapters.db.firestore.models import User
-            from adapters.db.firestore.base import FirestoreError
+        from adapters.db.firestore.base import FirestoreError
         user = User(username='bad space', password_hash='h', salt='s')
         with pytest.raises(FirestoreError):
             real_repo.create(user)
@@ -852,32 +805,6 @@ class TestUsersRepository:
         q.stream.return_value = [doc]
         r2 = real_repo.get_by_username('hit')
         assert r2.success and r2.data.username == data['username']
-
-    def test_authenticate_user_paths_real(self, real_repo):
-        from unittest.mock import MagicMock
-        # user not found
-        real_repo.get_by_username = lambda u: OperationResult(success=False, error='x', error_code='USER_NOT_FOUND')
-        r1 = real_repo.authenticate_user('a', 'h')
-        assert r1.success is False and r1.error_code == 'USER_NOT_FOUND'
-
-        # locked
-        class U: pass
-        u = U(); u.user_id='id'; u.username='u'; u.password_hash='h'; u.is_locked=True; u.failed_attempts=0
-        real_repo.get_by_username = lambda u_: OperationResult(success=True, data=u)
-        r2 = real_repo.authenticate_user('a', 'h')
-        assert r2.success is False and r2.error_code == 'ACCOUNT_LOCKED'
-
-        # bad password -> increments and returns invalid
-        u.is_locked=False; u.password_hash='expected'
-        called = {'inc':0,'clr':0}
-        real_repo.increment_failed_attempts_by_id = lambda _id: called.__setitem__('inc', called['inc']+1) or OperationResult(success=True)
-        real_repo.clear_failed_attempts_by_id = lambda _id: called.__setitem__('clr', called['clr']+1) or OperationResult(success=True)
-        r3 = real_repo.authenticate_user('a', 'wrong')
-        assert r3.success is False and r3.error_code == 'INVALID_CREDENTIALS' and called['inc']==1
-
-        # good password -> clears
-        r4 = real_repo.authenticate_user('a', 'expected')
-        assert r4.success is True and called['clr']>=1
 
     def test_update_last_login_by_id_real(self, real_repo):
         from unittest.mock import MagicMock

@@ -197,34 +197,6 @@ class MockUsersRepository(MockTimestampedRepository):
         """Clear failed login attempts (alias for reset_failed_attempts)."""
         return self.reset_failed_attempts(user_id)
     
-    def authenticate_user(self, username: str, password_hash: str) -> MockOperationResult[MockUser]:
-        """Authenticate user with username and password hash."""
-        try:
-            # Get user by username
-            result = self.get_by_username(username)
-            if not result.success:
-                return MockOperationResult(success=False, error="User not found", error_code="USER_NOT_FOUND")
-            
-            user = result.data
-            
-            # Check if user is locked
-            if user.is_locked:
-                return MockOperationResult(success=False, error="Account locked", error_code="ACCOUNT_LOCKED")
-            
-            # Check password
-            if user.password_hash != password_hash:
-                # Increment failed attempts
-                self.increment_failed_attempts(user.user_id)
-                return MockOperationResult(success=False, error="Invalid credentials", error_code="INVALID_CREDENTIALS")
-            
-            # Clear failed attempts on successful login
-            self.clear_failed_attempts(user.user_id)
-            
-            return MockOperationResult(success=True, data=user)
-            
-        except Exception as e:
-            self._handle_mock_firestore_error("authenticate user", e)
-    
     def lock_user(self, user_id: str, lock_duration_ms: int) -> MockOperationResult[MockUser]:
         """Lock user account."""
         try:

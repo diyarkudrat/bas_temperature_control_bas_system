@@ -620,42 +620,8 @@
                 // Check connection every 5 seconds
                 setInterval(checkConnection, 5000);
                 
-                // Load telemetry data
-                loadTelemetryData();
             }
         });
-
-        // Load historical telemetry data
-        async function loadTelemetryData() {
-            try {
-                const response = await fetch('/api/telemetry?limit=50', {
-                    credentials: 'include',  // Include cookies
-                    headers: getAuthHeaders()
-                });
-                if (response.ok) {
-                    const data = await response.json();
-                    
-                    // Clear existing data
-                    tempChart.data.labels = [];
-                    tempChart.data.datasets[0].data = [];
-                    tempChart.data.datasets[1].data = [];
-                    
-                    // Add historical data (reverse order to get chronological)
-                    data.reverse().forEach(point => {
-                        const date = new Date(point.timestamp);
-                        const timeLabel = date.toLocaleTimeString();
-                        
-                        tempChart.data.labels.push(timeLabel);
-                        tempChart.data.datasets[0].data.push(point.temp_tenths / 10);
-                        tempChart.data.datasets[1].data.push(point.setpoint_tenths / 10);
-                    });
-                    
-                    tempChart.update();
-                }
-            } catch (error) {
-                console.error('Error loading telemetry data:', error);
-            }
-        }
     </script>
 </body>
 </html>

@@ -1,3 +1,5 @@
+"""Configuration dataclasses for Auth0-related settings."""
+
 from __future__ import annotations
 
 import os
@@ -18,6 +20,8 @@ class Auth0JWTBudgets:
 
     @classmethod
     def from_env(cls) -> "Auth0JWTBudgets":
+        """Load configuration from environment variables."""
+
         return cls(
             jwks_cache_ttl_s=int(os.getenv("AUTH0_JWKS_CACHE_TTL_S", "3600")),
             jwks_timeout_s=int(os.getenv("AUTH0_JWKS_TIMEOUT_S", "5")),
@@ -29,7 +33,7 @@ class Auth0JWTBudgets:
 
 @dataclass
 class Auth0MgmtConfig:
-    """Auth0 Management API credentials and budgets (Phase 2)."""
+    """Auth0 Management API credentials and budgets."""
 
     client_id: Optional[str] = None
     client_secret: Optional[str] = None
@@ -45,6 +49,8 @@ class Auth0MgmtConfig:
 
     @classmethod
     def from_env(cls) -> "Auth0MgmtConfig":
+        """Load configuration from environment variables."""
+        
         return cls(
             client_id=os.getenv("AUTH0_MGMT_CLIENT_ID"),
             client_secret=os.getenv("AUTH0_MGMT_CLIENT_SECRET"),
@@ -57,6 +63,3 @@ class Auth0MgmtConfig:
             rps=float(os.getenv("AUTH0_MGMT_RPS", "5")),
             burst=int(os.getenv("AUTH0_MGMT_BURST", "10")),
         )
-
-
-

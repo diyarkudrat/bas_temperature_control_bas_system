@@ -7,12 +7,10 @@ Import from this module to use the mock framework in your tests.
 # Mock models
 from .mock_models import (
     MockBaseEntity,
-    MockTelemetryRecord,
     MockUser,
     MockSession,
     MockAuditEvent,
     MockDevice,
-    create_mock_telemetry_record,
     create_mock_user,
     create_mock_session,
     create_mock_audit_event,
@@ -90,11 +88,6 @@ from .mock_devices_store import (
     MockDevicesStore  # Backward compatibility alias
 )
 
-from .mock_telemetry_store import (
-    MockTelemetryRepository,
-    MockTelemetryStore  # Backward compatibility alias
-)
-
 # Mock service factory
 from .mock_service_factory import (
     MockFirestoreServiceFactory,
@@ -104,14 +97,12 @@ from .mock_service_factory import (
     get_mock_sessions_repository,
     get_mock_audit_repository,
     get_mock_devices_repository,
-    get_mock_telemetry_repository,
     # Backward compatibility aliases
     FirestoreServiceFactory,
     UsersRepository,
     SessionsRepository,
     AuditRepository,
-    DevicesRepository,
-    TelemetryRepository
+    DevicesRepository
 )
 
 # Mock utilities
@@ -125,7 +116,6 @@ from .mock_utils import (
     create_mock_user_data,
     create_mock_session_data,
     create_mock_device_data,
-    create_mock_telemetry_data,
     create_mock_audit_data,
     create_mock_query_options,
     create_mock_paginated_result,
@@ -134,7 +124,6 @@ from .mock_utils import (
     create_mock_batch_data,
     create_mock_users_batch,
     create_mock_devices_batch,
-    create_mock_telemetry_batch,
     create_mock_sessions_batch,
     create_mock_audit_batch,
     validate_mock_data_structure,
@@ -170,12 +159,10 @@ __author__ = "BAS System Project"
 __all__ = [
     # Models
     'MockBaseEntity',
-    'MockTelemetryRecord', 
     'MockUser',
     'MockSession',
     'MockAuditEvent',
     'MockDevice',
-    'create_mock_telemetry_record',
     'create_mock_user',
     'create_mock_session',
     'create_mock_audit_event',
@@ -233,12 +220,10 @@ __all__ = [
     'MockSessionsRepository',
     'MockAuditRepository',
     'MockDevicesRepository',
-    'MockTelemetryRepository',
     'MockUsersStore',
     'MockSessionsStore',
     'MockAuditStore',
     'MockDevicesStore',
-    'MockTelemetryStore',
     
     # Service factory
     'MockFirestoreServiceFactory',
@@ -248,13 +233,11 @@ __all__ = [
     'get_mock_sessions_repository',
     'get_mock_audit_repository',
     'get_mock_devices_repository',
-    'get_mock_telemetry_repository',
     'FirestoreServiceFactory',
     'UsersRepository',
     'SessionsRepository',
     'AuditRepository',
     'DevicesRepository',
-    'TelemetryRepository',
     
     # Utilities
     'generate_mock_user_id',
@@ -266,7 +249,6 @@ __all__ = [
     'create_mock_user_data',
     'create_mock_session_data',
     'create_mock_device_data',
-    'create_mock_telemetry_data',
     'create_mock_audit_data',
     'create_mock_query_options',
     'create_mock_paginated_result',
@@ -275,7 +257,6 @@ __all__ = [
     'create_mock_batch_data',
     'create_mock_users_batch',
     'create_mock_devices_batch',
-    'create_mock_telemetry_batch',
     'create_mock_sessions_batch',
     'create_mock_audit_batch',
     'validate_mock_data_structure',

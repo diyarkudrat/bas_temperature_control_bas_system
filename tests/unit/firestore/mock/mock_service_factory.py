@@ -8,7 +8,6 @@ from .mock_users_store import MockUsersRepository
 from .mock_sessions_store import MockSessionsRepository
 from .mock_audit_store import MockAuditRepository
 from .mock_devices_store import MockDevicesRepository
-from .mock_telemetry_store import MockTelemetryRepository
 
 logger = logging.getLogger(__name__)
 
@@ -50,44 +49,37 @@ class MockFirestoreServiceFactory:
         
         return mock_client
     
-    def get_users_repository(self) -> MockUsersRepository:
-        """Get or create users repository."""
+    def get_users_service(self) -> MockUsersRepository:
+        """Get or create users service."""
         if 'users' not in self._repositories:
             self._repositories['users'] = MockUsersRepository(self.client)
         return self._repositories['users']
     
-    def get_sessions_repository(self) -> MockSessionsRepository:
-        """Get or create sessions repository."""
+    def get_sessions_service(self) -> MockSessionsRepository:
+        """Get or create sessions service."""
         if 'sessions' not in self._repositories:
             self._repositories['sessions'] = MockSessionsRepository(self.client)
         return self._repositories['sessions']
     
-    def get_audit_repository(self) -> MockAuditRepository:
-        """Get or create audit repository."""
+    def get_audit_service(self) -> MockAuditRepository:
+        """Get or create audit service."""
         if 'audit' not in self._repositories:
             self._repositories['audit'] = MockAuditRepository(self.client)
         return self._repositories['audit']
     
-    def get_devices_repository(self) -> MockDevicesRepository:
-        """Get or create devices repository."""
+    def get_devices_service(self) -> MockDevicesRepository:
+        """Get or create devices service."""
         if 'devices' not in self._repositories:
             self._repositories['devices'] = MockDevicesRepository(self.client)
         return self._repositories['devices']
     
-    def get_telemetry_repository(self) -> MockTelemetryRepository:
-        """Get or create telemetry repository."""
-        if 'telemetry' not in self._repositories:
-            self._repositories['telemetry'] = MockTelemetryRepository(self.client)
-        return self._repositories['telemetry']
-    
     def get_all_repositories(self) -> Dict[str, Any]:
         """Get all repositories."""
         return {
-            'users': self.get_users_repository(),
-            'sessions': self.get_sessions_repository(),
-            'audit': self.get_audit_repository(),
-            'devices': self.get_devices_repository(),
-            'telemetry': self.get_telemetry_repository()
+            'users': self.get_users_service(),
+            'sessions': self.get_sessions_service(),
+            'audit': self.get_audit_service(),
+            'devices': self.get_devices_service()
         }
     
     def reset_repositories(self) -> None:
@@ -145,27 +137,22 @@ def reset_mock_service_factory() -> None:
 # Convenience functions for getting individual repositories
 def get_mock_users_repository() -> MockUsersRepository:
     """Get mock users repository."""
-    return get_mock_service_factory().get_users_repository()
+    return get_mock_service_factory().get_users_service()
 
 
 def get_mock_sessions_repository() -> MockSessionsRepository:
     """Get mock sessions repository."""
-    return get_mock_service_factory().get_sessions_repository()
+    return get_mock_service_factory().get_sessions_service()
 
 
 def get_mock_audit_repository() -> MockAuditRepository:
     """Get mock audit repository."""
-    return get_mock_service_factory().get_audit_repository()
+    return get_mock_service_factory().get_audit_service()
 
 
 def get_mock_devices_repository() -> MockDevicesRepository:
     """Get mock devices repository."""
-    return get_mock_service_factory().get_devices_repository()
-
-
-def get_mock_telemetry_repository() -> MockTelemetryRepository:
-    """Get mock telemetry repository."""
-    return get_mock_service_factory().get_telemetry_repository()
+    return get_mock_service_factory().get_devices_service()
 
 
 # Backward compatibility aliases
@@ -174,4 +161,3 @@ UsersRepository = MockUsersRepository
 SessionsRepository = MockSessionsRepository
 AuditRepository = MockAuditRepository
 DevicesRepository = MockDevicesRepository
-TelemetryRepository = MockTelemetryRepository

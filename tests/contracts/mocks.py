@@ -435,41 +435,6 @@ class UserStoreContractMock(ContractMockStore):
         }
         return self.update(user_id, updates)
 
-    # Additional methods used by legacy tests
-    def authenticate_user(self, username: str, password_hash: str) -> OperationResult[Dict[str, Any]]:
-        result = self.get_by_username(username)
-        if not result.success:
-            return OperationResult(success=False, error="User not found", error_code="USER_NOT_FOUND")
-        user = result.data
-        # Handle object with attributes or dict
-        stored_hash = user.password_hash if hasattr(user, 'password_hash') else user.get('password_hash') or user.get('hashed_password')
-        locked_until_val = getattr(user, 'locked_until', None) if not isinstance(user, dict) else user.get('locked_until')
-        # Ensure user_id exists so patched methods see exact arg
-        user_id_val = getattr(user, 'user_id', None) if not isinstance(user, dict) else user.get('user_id')
-        if not user_id_val:
-            name_for_uuid = getattr(user, 'username', None) if not isinstance(user, dict) else user.get('username')
-            derived_id = str(uuid.uuid5(uuid.NAMESPACE_DNS, str(name_for_uuid))) if name_for_uuid else str(uuid.uuid4())
-            if isinstance(user, dict):
-                user['user_id'] = derived_id
-            else:
-                setattr(user, 'user_id', derived_id)
-            user_id_val = derived_id
-        if isinstance(locked_until_val, int) and locked_until_val > int(time.time() * 1000):
-            return OperationResult(success=False, error="Account locked", error_code="ACCOUNT_LOCKED")
-        if stored_hash != password_hash:
-            # increment failed attempts via method if available
-            try:
-                self.increment_failed_attempts(user_id_val)
-            except Exception:
-                pass
-            return OperationResult(success=False, error="Invalid credentials", error_code="INVALID_CREDENTIALS")
-        # success
-        try:
-            self.clear_failed_attempts(user_id_val)
-        except Exception:
-            pass
-        return OperationResult(success=True, data=user)
-
     def increment_failed_attempts(self, user_id: str) -> OperationResult[None]:
         result = self.get_by_id(user_id)
         if not result.success:

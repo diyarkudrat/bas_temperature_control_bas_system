@@ -58,8 +58,8 @@ def test_auth_provider_init_auth0(monkeypatch):
                 from flask import request
                 request.auth_provider = provider
             snap_before = mod.auth_metrics.snapshot()
-            rv = c.get('/api/telemetry', headers={"Authorization": "Bearer t", "X-BAS-Tenant": "t1"})
-            assert rv.status_code in (200, 500)  # 500 if telemetry not initialized
+            rv = c.get('/api/status', headers={"Authorization": "Bearer t", "X-BAS-Tenant": "t1"})
+            assert rv.status_code == 200
             snap_after = mod.auth_metrics.snapshot()
             assert snap_after["jwt_attempts"] >= snap_before["jwt_attempts"] + 1
 
@@ -418,12 +418,12 @@ class TestBASServerEndpoints:
             # Should require authentication (401 or redirect to login)
             assert response.status_code in [401, 302, 500]  # 500 if auth not initialized
 
-    def test_telemetry_endpoint_requires_auth(self):
-        """Test that telemetry endpoint requires authentication."""
+    def test_status_endpoint_requires_auth(self):
+        """Test that status endpoint requires authentication."""
         from apps.api.main import app
         
         with app.test_client() as client:
-            response = client.get('/api/telemetry')
+            response = client.get('/api/status')
             # Should require authentication (401 or redirect to login)
             assert response.status_code in [401, 302, 500]  # 500 if auth not initialized
 

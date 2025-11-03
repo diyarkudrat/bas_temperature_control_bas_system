@@ -11,7 +11,7 @@ from tests.unit.firestore.mock import (
     FirestoreError, PermissionError, NotFoundError, ValidationError
 )
 from tests.unit.firestore.mock import (
-    MockTelemetryRecord as TelemetryRecord, MockUser as User,
+    MockUser as User,
     MockPermissionDenied, MockNotFound
 )
 from tests.utils.assertions import assert_equals, assert_not_equals, assert_true, assert_false, assert_is_not_none, assert_is_none, assert_is_instance, assert_raises

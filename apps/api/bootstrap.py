@@ -6,29 +6,43 @@ factory, and tenant middleware. Centralizes DI for the API app.
 
 from __future__ import annotations
 
-from typing import Optional
+import logging
+from typing import Optional, TYPE_CHECKING
 
 from app_platform.config.config import get_server_config, ServerConfig
 from adapters.providers.mock_auth0 import MockAuth0Provider
 from adapters.providers.deny_all import DenyAllAuthProvider
 from adapters.providers.factory import build_auth0_provider
 from app_platform.observability.metrics import AuthMetrics
-from apps.api.http.middleware import TenantMiddleware
+from apps.api.http.middleware import TenantAuditSink, TenantMiddleware
+
+
+if TYPE_CHECKING:  # pragma: no cover - imported for type checkers only
+    from adapters.db.firestore.service_factory import FirestoreServiceFactory
+
+
+logger = logging.getLogger(__name__)
 
 
 def load_server_config() -> ServerConfig:
+    """Load the server config."""
+
     return get_server_config()
 
 
 def build_auth_runtime(cfg: ServerConfig):
     """Return (provider, metrics) based on server config."""
+
     provider_kind = (cfg.auth_provider or "mock").lower()
+
     try:
         if provider_kind == "auth0":
             domain = (cfg.auth0_domain or "").strip()
             audience = (cfg.auth0_audience or "").strip()
+
             if not domain or not audience:
                 raise ValueError("AUTH0_DOMAIN and AUTH0_AUDIENCE are required for auth0 provider")
+
             issuer = f"https://{domain}/" if not domain.startswith("https://") else domain
             provider = build_auth0_provider({
                 "issuer": issuer,
@@ -47,29 +61,46 @@ def build_auth_runtime(cfg: ServerConfig):
             provider = DenyAllAuthProvider()
     except Exception:
         provider = DenyAllAuthProvider()
+
     metrics = AuthMetrics()
+
     return provider, metrics
 
 
 def build_firestore_factory(cfg) -> Optional["FirestoreServiceFactory"]:
     """Create Firestore factory if any Firestore feature is enabled."""
+
     try:
         # Lazy import to avoid hard dependency on google libs when Firestore is disabled
-        from adapters.db.firestore import build_service_factory_with_config, FirestoreServiceFactory  # type: ignore
+        from adapters.db.firestore import build_service_factory_with_config
+
         if any([
-            cfg.firestore.use_firestore_telemetry,
             cfg.firestore.use_firestore_auth,
             cfg.firestore.use_firestore_audit,
         ]):
             return build_service_factory_with_config(cfg)
     except Exception:
         pass
+
     return None
 
 
 def build_tenant_middleware(auth_config, firestore_factory) -> Optional[TenantMiddleware]:
-    if firestore_factory:
-        return TenantMiddleware(auth_config, firestore_factory)
-    return None
+    """Build the tenant middleware."""
+    
+    if not firestore_factory:
+        return None
+
+    audit_sink: Optional[TenantAuditSink] = None
+    try:
+        audit_sink = firestore_factory.get_audit_service()
+    except Exception as exc:
+        logger.warning(
+            "Failed to initialize Firestore audit service for tenant middleware",
+            extra={"error": str(exc)},
+            exc_info=True,
+        )
+
+    return TenantMiddleware(auth_config, audit_sink)
 
 

@@ -17,6 +17,7 @@ from .redis_budgets import RedisBudgets
 from .sse_budgets import SSEBudgets
 from .cache_ttls import CacheTTLs
 from .auth0_configs import Auth0JWTBudgets, Auth0MgmtConfig
+from .org_flows import OrgFlowsConfig
 
 logger = logging.getLogger(__name__)
 
@@ -26,9 +27,11 @@ def _validate_path_rules(rules):
 
     Returns only valid entries; logs warnings for invalid patterns.
     """
+
     valid = []
     if not isinstance(rules, (list, tuple)):
         return valid
+
     for item in rules:
         try:
             if isinstance(item, (list, tuple)) and len(item) == 2:
@@ -38,18 +41,22 @@ def _validate_path_rules(rules):
             else:
                 logger.warning(f"Invalid path rule entry (ignored): {item}")
                 continue
+
             # Compile to validate regex; re has no timeout, but compile is quick for sane patterns
             re.compile(pattern)
+
             # Normalize level to lowercase tokens like 'critical'|'standard'|... (free-form)
             valid.append((pattern, level.lower()))
         except re.error as exc:
             logger.warning(f"Invalid path rule regex '{item}': {exc}")
         except Exception as exc:
             logger.warning(f"Failed to parse path rule '{item}': {exc}")
+
     if valid:
         logger.info(f"Loaded {len(valid)} path sensitivity rules")
     else:
         logger.info("No path sensitivity rules configured; default fail-closed applies")
+
     return valid
 
 
@@ -62,22 +69,30 @@ def _load_path_rules_from_env():
 
     try:
         data = json.loads(raw)
+
         return _validate_path_rules(data)
     except Exception as exc:
         logger.warning(f"Failed to parse BAS_PATH_SENS_RULES: {exc}")
+
         return []
 
 
 def _get_int_env(name: str, default: int, *, min_value: int | None = None, max_value: int | None = None) -> int:
+    """Get an integer from the environment variables with optional bounds checking."""
+
     try:
         val = int(os.getenv(name, str(default)))
+
         if min_value is not None and val < min_value:
             raise ValueError(f"{name} must be >= {min_value}")
+
         if max_value is not None and val > max_value:
             raise ValueError(f"{name} must be <= {max_value}")
+
         return val
     except Exception as exc:
         logger.warning(f"Invalid integer for {name}: {exc}; using default {default}")
+
         return int(default)
 
 
@@ -121,6 +136,7 @@ def _load_per_user_limits_from_env() -> dict:
 
 def _load_breaker_thresholds_from_env() -> dict:
     """Load BREAKER_THRESHOLDS JSON with optional keys: failure_threshold, window_seconds, half_open_after_seconds."""
+
     raw = os.getenv("BREAKER_THRESHOLDS", "").strip()
     if not raw:
         return {}
@@ -136,6 +152,7 @@ def _load_breaker_thresholds_from_env() -> dict:
         for k in ("failure_threshold", "window_seconds", "half_open_after_seconds"):
             if k in data:
                 v = int(data[k])
+
                 if v <= 0:
                     raise ValueError(f"{k} must be positive")
 
@@ -155,6 +172,7 @@ class ServerConfig:
     emulator_redis_url: Optional[str] = None
     firestore_emulator_host: Optional[str] = None
     gcp_project_id: Optional[str] = None
+
     # Authentication
     # Grouped under a dedicated dataclass for clarity and future growth
     # (e.g., JWKS caching budgets, token TTL clamps, etc.).
@@ -173,15 +191,19 @@ class ServerConfig:
     redis: RedisBudgets = field(default_factory=RedisBudgets)
     sse: SSEBudgets = field(default_factory=SSEBudgets)
     cache_ttl: CacheTTLs = field(default_factory=CacheTTLs)
+
     # Auth0 Phase 2 budgets and management config
     auth0_jwt: Auth0JWTBudgets = field(default_factory=Auth0JWTBudgets)
     auth0_mgmt: Auth0MgmtConfig = field(default_factory=Auth0MgmtConfig)
+    org_flows: OrgFlowsConfig = field(default_factory=OrgFlowsConfig)
+
     # Path sensitivity rules used by middleware.path_classify()
     # List of (regex_pattern, level). Empty => default fail-closed to 'critical'.
-    PATH_SENSITIVITY_RULES: list[tuple[str, str]] = field(default_factory=list)  # type: ignore
+    PATH_SENSITIVITY_RULES: list[tuple[str, str]] = field(default_factory=list)
+
     # Metadata fetch rate limiting (global/per-user)
     metadata_rate_limit: MetadataFetchRateLimit = field(default_factory=MetadataFetchRateLimit)
-    # Phase 4 additions
+
     revocation_ttl_s: Optional[int] = None
     dynamic_limit_api_key: Optional[str] = None
 
@@ -210,6 +232,7 @@ class ServerConfig:
                 logger.warning(f"Ignoring invalid USER_RATE_WINDOWS: {exc}")
 
         breaker_cfg = BreakerConfig.from_env()
+        
         try:
             if breaker_over.get("failure_threshold"):
                 breaker_cfg.failure_threshold = int(breaker_over["failure_threshold"])  # type: ignore[attr-defined]
@@ -236,6 +259,7 @@ class ServerConfig:
             cache_ttl=CacheTTLs.from_env(),
             auth0_jwt=Auth0JWTBudgets.from_env(),
             auth0_mgmt=Auth0MgmtConfig.from_env(),
+            org_flows=OrgFlowsConfig.from_env(),
             PATH_SENSITIVITY_RULES=path_rules,
             metadata_rate_limit=MetadataFetchRateLimit.from_env(),
             revocation_ttl_s=_get_int_env("REVOCATION_TTL_S", 3600, min_value=1),
@@ -245,6 +269,7 @@ class ServerConfig:
 
 def get_server_config() -> ServerConfig:
     """Convenience accessor for callers that do not manage config lifecycle."""
+    
     return ServerConfig.from_env()
 
 

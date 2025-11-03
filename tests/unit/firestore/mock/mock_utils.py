@@ -86,26 +86,6 @@ def create_mock_device_data(tenant_id: str, device_id: str = None, **kwargs) -> 
     data.update(kwargs)
     return data
 
-
-def create_mock_telemetry_data(tenant_id: str, device_id: str, **kwargs) -> Dict[str, Any]:
-    """Create mock telemetry data."""
-    data = {
-        'tenant_id': tenant_id,
-        'device_id': device_id,
-        'timestamp_ms': get_mock_timestamp_ms(),
-        'utc_timestamp': get_mock_utc_timestamp(),
-        'temp_tenths': 230,  # 23.0°C
-        'setpoint_tenths': 240,  # 24.0°C
-        'deadband_tenths': 10,  # 1.0°C
-        'cool_active': False,
-        'heat_active': True,
-        'state': 'HEATING',
-        'sensor_ok': True
-    }
-    data.update(kwargs)
-    return data
-
-
 def create_mock_audit_data(event_type: str, **kwargs) -> Dict[str, Any]:
     """Create mock audit data."""
     data = {
@@ -181,12 +161,6 @@ def create_mock_devices_batch(count: int, tenant_id: str, device_prefix: str = "
     return create_mock_batch_data(count, create_mock_device_data,
                                  tenant_id=tenant_id,
                                  device_id=lambda i: f"{device_prefix}_{i}")
-
-
-def create_mock_telemetry_batch(count: int, tenant_id: str, device_id: str) -> List[Dict[str, Any]]:
-    """Create a batch of mock telemetry records."""
-    return create_mock_batch_data(count, create_mock_telemetry_data,
-                                 tenant_id=tenant_id, device_id=device_id)
 
 
 def create_mock_sessions_batch(count: int, user_id: str, username: str = "testuser") -> List[Dict[str, Any]]:

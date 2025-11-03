@@ -32,7 +32,17 @@ class _DummySessionManager:
 
 class _MockProvider:
     def __init__(self, claims: Dict[str, Any] | None = None, roles: list[str] | None = None, fail: Exception | None = None):
-        self._claims = claims
+        base_claims: Dict[str, Any] = {
+            "sub": "test-user",
+            "email_verified": True,
+            "tenant_id": "t-tenant",
+        }
+        if roles:
+            base_claims["roles"] = list(roles)
+        if claims:
+            base_claims.update(claims)
+
+        self._claims = base_claims
         self._roles = roles or []
         self._fail = fail
 

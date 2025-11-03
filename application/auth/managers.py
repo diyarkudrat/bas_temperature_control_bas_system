@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 import logging
 import sqlite3
 import threading
@@ -10,6 +9,12 @@ import time
 from typing import Optional, List, Any, Mapping, Dict, Protocol, Tuple
 
 from domains.auth.models import User, Session
+from domains.auth.serializers import (
+    session_from_dict,
+    session_to_dict,
+    user_from_dict,
+    user_to_dict,
+)
 from domains.auth.exceptions import AuthError
 from app_platform.utils.auth import (
     hash_password,
@@ -243,7 +248,7 @@ class UserManager:
             columns = [desc[0] for desc in cursor.description]
             data = dict(zip(columns, row))
 
-            return User.from_dict(data)
+            return user_from_dict(data)
 
         return None
 
@@ -266,6 +271,7 @@ class UserManager:
 
         conn = sqlite3.connect(self.db_path)
         cursor = conn.cursor()
+        record = user_to_dict(user)
         cursor.execute(
             '''
             INSERT OR REPLACE INTO users 
@@ -274,15 +280,15 @@ class UserManager:
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             ''',
             (
-                user.username,
-                user.password_hash,
-                user.salt,
-                user.role,
-                user.created_at,
-                user.last_login,
-                user.failed_attempts,
-                user.locked_until,
-                json.dumps(user.password_history),
+                record["username"],
+                record["password_hash"],
+                record["salt"],
+                record["role"],
+                record["created_at"],
+                record["last_login"],
+                record["failed_attempts"],
+                record["locked_until"],
+                record["password_history"],
             ),
         )
         conn.commit()
@@ -525,7 +531,7 @@ class SessionManager:
             if row:
                 columns = [desc[0] for desc in cursor.description]
                 data = dict(zip(columns, row))
-                session = Session.from_dict(data)
+                session = session_from_dict(data)
 
                 if not session.is_expired():
                     with self._cache_lock:
@@ -579,7 +585,7 @@ class SessionManager:
         for row in rows:
             columns = [desc[0] for desc in cursor.description]
             data = dict(zip(columns, row))
-            session = Session.from_dict(data)
+            session = session_from_dict(data)
             sessions.append(session)
 
         return sessions
@@ -589,6 +595,7 @@ class SessionManager:
 
         conn = sqlite3.connect(self.db_path)
         cursor = conn.cursor()
+        record = session_to_dict(session)
         cursor.execute(
             '''
             INSERT OR REPLACE INTO sessions 
@@ -597,17 +604,17 @@ class SessionManager:
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ''',
             (
-                session.session_id,
-                session.username,
-                session.role,
-                session.created_at,
-                session.expires_at,
-                session.last_access,
-                session.fingerprint,
-                session.ip_address,
-                session.user_agent,
-                session.user_id,
-                session.tenant_id,
+                record["session_id"],
+                record["username"],
+                record["role"],
+                record["created_at"],
+                record["expires_at"],
+                record["last_access"],
+                record["fingerprint"],
+                record["ip_address"],
+                record["user_agent"],
+                record["user_id"],
+                record["tenant_id"],
             ),
         )
         conn.commit()

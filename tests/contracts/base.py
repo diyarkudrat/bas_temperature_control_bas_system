@@ -267,42 +267,6 @@ class DevicesStoreProtocol(BaseRepositoryProtocol[T, K], Protocol):
         ...
 
 
-class TelemetryStoreProtocol(BaseRepositoryProtocol[T, K], Protocol):
-    """Protocol for telemetry store operations."""
-
-    def __init__(self, client: firestore.Client) -> None:
-        """Initialize with Firestore client."""
-        ...
-
-    @abstractmethod
-    def store_sensor_reading(self, device_id: str, sensor_type: str, value: float, timestamp: Optional[int] = None) -> OperationResult[K]:
-        """Store a sensor reading."""
-        ...
-
-    @abstractmethod
-    def get_readings_by_device(self, device_id: str, sensor_type: Optional[str] = None,
-                               start_time: Optional[int] = None, end_time: Optional[int] = None,
-                               limit: int = 1000) -> List[T]:
-        """Get readings by device with optional filters."""
-        ...
-
-    @abstractmethod
-    def get_latest_reading(self, device_id: str, sensor_type: str) -> OperationResult[T]:
-        """Get latest reading for a device sensor."""
-        ...
-
-    @abstractmethod
-    def aggregate_readings(self, device_id: str, sensor_type: str, start_time: int, end_time: int,
-                           aggregation: str = "avg") -> OperationResult[Dict[str, Any]]:
-        """Aggregate readings over a time period."""
-        ...
-
-    @abstractmethod
-    def cleanup_old_readings(self, cutoff_time: int) -> OperationResult[int]:
-        """Clean up old telemetry readings."""
-        ...
-
-
 class ServiceFactoryProtocol(Protocol):
     """Protocol for service factory operations."""
 
@@ -311,26 +275,21 @@ class ServiceFactoryProtocol(Protocol):
         ...
 
     @abstractmethod
-    def get_users_repository(self) -> UsersStoreProtocol:
-        """Get users repository instance."""
+    def get_users_service(self) -> UsersStoreProtocol:
+        """Get users service instance."""
         ...
 
     @abstractmethod
-    def get_sessions_repository(self) -> SessionsStoreProtocol:
-        """Get sessions repository instance."""
+    def get_sessions_service(self) -> SessionsStoreProtocol:
+        """Get sessions service instance."""
         ...
 
     @abstractmethod
-    def get_devices_repository(self) -> DevicesStoreProtocol:
-        """Get devices repository instance."""
+    def get_devices_service(self) -> DevicesStoreProtocol:
+        """Get devices service instance."""
         ...
 
     @abstractmethod
-    def get_telemetry_repository(self) -> TelemetryStoreProtocol:
-        """Get telemetry repository instance."""
-        ...
-
-    @abstractmethod
-    def get_audit_store(self) -> AuditStoreProtocol:
-        """Get audit store instance."""
+    def get_audit_service(self) -> AuditStoreProtocol:
+        """Get audit service instance."""
         ...

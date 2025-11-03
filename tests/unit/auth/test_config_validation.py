@@ -26,7 +26,6 @@ class TestAuthConfigValidation:
         # Test default values
         assert_true(config.auth_enabled)
         assert_equals(config.auth_mode, "user_password")
-        assert_false(config.use_firestore_telemetry)
         assert_false(config.use_firestore_auth)
         assert_false(config.use_firestore_audit)
         assert_equals(config.tenant_id_header, "X-BAS-Tenant")
@@ -45,7 +44,6 @@ class TestAuthConfigValidation:
         env_vars = {
             'BAS_AUTH_ENABLED': 'false',
             'BAS_AUTH_MODE': 'shadow',
-            'USE_FIRESTORE_TELEMETRY': '1',
             'USE_FIRESTORE_AUTH': '1',
             'USE_FIRESTORE_AUDIT': '0',
             'GOOGLE_CLOUD_PROJECT': 'test-project',
@@ -62,7 +60,6 @@ class TestAuthConfigValidation:
             
             assert_false(config.auth_enabled)
             assert_equals(config.auth_mode, "shadow")
-            assert_true(config.use_firestore_telemetry)
             assert_true(config.use_firestore_auth)
             assert_false(config.use_firestore_audit)
             assert_equals(config.gcp_project_id, "test-project")
@@ -81,7 +78,6 @@ class TestAuthConfigValidation:
             # Should use default values
             assert_true(config.auth_enabled)
             assert_equals(config.auth_mode, "user_password")
-            assert_false(config.use_firestore_telemetry)
             assert_false(config.use_firestore_auth)
             assert_false(config.use_firestore_audit)
             assert_equals(config.tenant_id_header, "X-BAS-Tenant")
@@ -95,7 +91,6 @@ class TestAuthConfigValidation:
         config_data = {
             "auth_enabled": False,
             "auth_mode": "enforced",
-            "use_firestore_telemetry": True,
             "use_firestore_auth": True,
             "use_firestore_audit": True,
             "gcp_project_id": "test-project",
@@ -121,7 +116,6 @@ class TestAuthConfigValidation:
             
             assert_false(config.auth_enabled)
             assert_equals(config.auth_mode, "enforced")
-            assert_true(config.use_firestore_telemetry)
             assert_true(config.use_firestore_auth)
             assert_true(config.use_firestore_audit)
             assert_equals(config.gcp_project_id, "test-project")
@@ -229,33 +223,27 @@ class TestAuthConfigValidation:
         """Test various Firestore settings combinations."""
         # Test all Firestore features enabled
         config1 = AuthConfig(
-            use_firestore_telemetry=True,
             use_firestore_auth=True,
             use_firestore_audit=True,
             gcp_project_id="test-project"
         )
-        assert_true(config1.use_firestore_telemetry)
         assert_true(config1.use_firestore_auth)
         assert_true(config1.use_firestore_audit)
         
         # Test partial Firestore features enabled
         config2 = AuthConfig(
-            use_firestore_telemetry=True,
             use_firestore_auth=False,
             use_firestore_audit=True,
             gcp_project_id="test-project"
         )
-        assert_true(config2.use_firestore_telemetry)
         assert_false(config2.use_firestore_auth)
         assert_true(config2.use_firestore_audit)
         
         # Test no Firestore features enabled
         config3 = AuthConfig(
-            use_firestore_telemetry=False,
             use_firestore_auth=False,
             use_firestore_audit=False
         )
-        assert_false(config3.use_firestore_telemetry)
         assert_false(config3.use_firestore_auth)
         assert_false(config3.use_firestore_audit)
 
@@ -313,7 +301,6 @@ class TestAuthConfigValidation:
         # Test that we can access all attributes
         assert_is_not_none(config.auth_enabled)
         assert_is_not_none(config.auth_mode)
-        assert_is_not_none(config.use_firestore_telemetry)
         assert_is_not_none(config.use_firestore_auth)
         assert_is_not_none(config.use_firestore_audit)
         assert_is_not_none(config.session_timeout)
@@ -368,24 +355,18 @@ class TestAuthConfigValidation:
         """Test boolean feature flag combinations."""
         # Test all combinations of boolean flags
         combinations = [
-            (True, True, True),
-            (True, True, False),
-            (True, False, True),
-            (True, False, False),
-            (False, True, True),
-            (False, True, False),
-            (False, False, True),
-            (False, False, False)
+            (True, True),
+            (True, False),
+            (False, True),
+            (False, False)
         ]
         
-        for telemetry, auth, audit in combinations:
+        for auth, audit in combinations:
             config = AuthConfig(
-                use_firestore_telemetry=telemetry,
                 use_firestore_auth=auth,
                 use_firestore_audit=audit
             )
             
-            assert_equals(config.use_firestore_telemetry, telemetry)
             assert_equals(config.use_firestore_auth, auth)
             assert_equals(config.use_firestore_audit, audit)
 

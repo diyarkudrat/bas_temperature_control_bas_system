@@ -10,18 +10,23 @@ class CacheTTLs:
 
     # Sessions: used as max TTL; services clamp to remaining expires_at
     session_max_seconds: int = 1800  # 30 minutes
+    
     # Devices
     device_by_id_seconds: int = 60
     device_list_first_page_seconds: int = 60
     device_count_seconds: int = 30
+
     # Audit dashboard views
     audit_dashboard_seconds: int = 20
+
     # Auth metadata tiered TTLs
     auth_metadata_ttl_critical_seconds: int = 60
     auth_metadata_ttl_standard_seconds: int = 300
 
     @classmethod
     def from_env(cls) -> "CacheTTLs":
+        """Load configuration from environment variables."""
+        
         return cls(
             session_max_seconds=int(os.getenv("BAS_TTL_SESSION_MAX_S", "1800")),
             device_by_id_seconds=int(os.getenv("BAS_TTL_DEVICE_BY_ID_S", "60")),

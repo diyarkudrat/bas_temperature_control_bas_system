@@ -109,6 +109,8 @@ def exponential_backoff(
     max_s = max(0.0, max_s)
 
     def decorator(func: F) -> F:
+        """Decorator to retry a function with exponential backoff to prevent retry storms."""
+        
         @wraps(func)
         def wrapper(*args: Any, **kwargs: Any):  # type: ignore[override]
             attempt = 0

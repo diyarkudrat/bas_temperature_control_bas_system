@@ -24,16 +24,15 @@ from typing import Any, Callable, Dict, Optional, Protocol
 @dataclass
 class _RedisConfig:
 	"""Backend configuration."""
-	url: Optional[str] = None
-	channel_prefix: str = "sse"
-	connect_timeout_s: float = 3.0
-	read_timeout_s: float = 3.0
-	# Soft per-op budget for hot-path ops (e.g., publish). This is a best-effort
-	# budget and cannot preempt a blocking socket call.
+
+	url: Optional[str] = None # Redis URL
+	channel_prefix: str = "sse" # default prefix for Redis channels
+	connect_timeout_s: float = 3.0 # timeout for connecting to Redis
+	read_timeout_s: float = 3.0 # timeout for reading from Redis
 	op_timeout_s: float = 0.01  # 10 ms target per publish
-	pool_maxsize: int = 8
-	max_retries: int = 5
-	health_check_interval_s: float = 30.0
+	pool_maxsize: int = 8 # maximum number of connections in the pool
+	max_retries: int = 5 # maximum number of retries for Redis operations
+	health_check_interval_s: float = 60.0 # interval for health checking Redis
 
 
 # ------------------------------
@@ -47,7 +46,10 @@ class _Serializer(Protocol):
 
 class _JSONSerializer:
 	"""Compact JSON serializer with stable separators."""
+
 	def serialize(self, obj: Any) -> bytes:
+		"""Serialize an object to JSON."""
+
 		try:
 			return json.dumps(obj, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
 		except Exception:
@@ -55,6 +57,8 @@ class _JSONSerializer:
 			return json.dumps({"error": "serialization_failed"}).encode("utf-8")
 
 	def deserialize(self, data: bytes) -> Any:
+		"""Deserialize a JSON object."""
+
 		try:
 			return json.loads(data.decode("utf-8"))
 		except Exception:
@@ -67,15 +71,28 @@ class _JSONSerializer:
 
 class _ChannelNamer:
 	"""Build hierarchical channels for multi-tenancy and device scope."""
+
 	def __init__(self, prefix: str = "sse") -> None:
+		"""Initialize the channel namer."""
+
+		if not prefix or not isinstance(prefix, str):
+			raise ValueError("prefix must be a non-empty string")
+		
 		self._prefix = prefix.rstrip(":")
 
 	def topic(self, kind: str, tenant_id: Optional[str] = None, device_id: Optional[str] = None) -> str:
+		"""Build a hierarchical channel for the given kind and tenant/device."""
+
+		if not kind or not isinstance(kind, str):
+			raise ValueError("kind must be a non-empty string")
+
 		parts = [self._prefix, kind]
+
 		if tenant_id:
 			parts.append(f"tenant:{tenant_id}")
 		if device_id:
 			parts.append(f"device:{device_id}")
+
 		return ":".join(parts)
 
 
@@ -85,13 +102,19 @@ class _ChannelNamer:
 
 class _BackoffPolicy:
 	"""Exponential backoff with jitter."""
+
 	def __init__(self, base: float = 0.25, factor: float = 2.0, cap: float = 10.0) -> None:
-		self._base = base
-		self._factor = factor
-		self._cap = cap
+		"""Initialize the backoff policy."""
+
+		self._base = base # base sleep time
+		self._factor = factor # factor for the exponential backoff
+		self._cap = cap # maximum sleep time
 
 	def next_sleep(self, attempt: int) -> float:
+		"""Get the next sleep time for the given attempt."""
+
 		sleep = min(self._base * (self._factor ** max(0, attempt)), self._cap)
+
 		# Full jitter
 		return random.uniform(0, sleep)
 
@@ -102,6 +125,7 @@ class _BackoffPolicy:
 
 class _MetricsSink:
 	"""No-op metrics sink; replace with real sink as needed."""
+
 	def inc(self, name: str, tags: Optional[Dict[str, str]] = None) -> None:
 		pass
 
@@ -115,6 +139,7 @@ class _MetricsSink:
 
 class _RedisClient(Protocol):
 	"""Thin protocol for a Redis client to enable easy swapping/mocking."""
+
 	def publish(self, channel: str, message: bytes) -> int: ...
 	def subscribe(self, channel: str) -> Any: ...
 	def get_message(self, timeout: float = 0.0) -> Optional[Dict[str, Any]]: ...
@@ -142,17 +167,19 @@ class _RedisBackend:
 		backoff: Optional[_BackoffPolicy] = None,
 		metrics: Optional[_MetricsSink] = None,
 	) -> None:
-		self._client = client
-		self._cfg = config or _RedisConfig()
-		self._ser = serializer or _JSONSerializer()
-		self._namer = channel_namer or _ChannelNamer(self._cfg.channel_prefix)
-		self._backoff = backoff or _BackoffPolicy()
-		self._metrics = metrics or _MetricsSink()
+		"""Initialize the Redis backend."""
+		
+		self._client = client # Redis client
+		self._cfg = config or _RedisConfig() # Redis configuration
+		self._ser = serializer or _JSONSerializer() # JSON serializer
+		self._namer = channel_namer or _ChannelNamer(self._cfg.channel_prefix) # channel namer
+		self._backoff = backoff or _BackoffPolicy() # backoff policy
+		self._metrics = metrics or _MetricsSink() # metrics sink
 
-		self._stop = threading.Event()
-		self._thread: Optional[threading.Thread] = None
-		self._on_message: Optional[Callable[[Any], None]] = None
-		self._subscribed_channel: Optional[str] = None
+		self._stop = threading.Event() # stop event
+		self._thread: Optional[threading.Thread] = None # thread
+		self._on_message: Optional[Callable[[Any], None]] = None # on message callback
+		self._subscribed_channel: Optional[str] = None # subscribed channel
 
 		# Local fallback queue for outage-resilient busting/replay.
 		# Bounded to avoid unbounded memory use.
@@ -162,32 +189,43 @@ class _RedisBackend:
 		self._fallback_enabled = True
 
 	def _enqueue_fallback(self, channel: str, data: bytes) -> None:
+		"""Enqueue a message for fallback."""
+
 		if not self._fallback_enabled:
 			return
+
 		try:
 			with self._fallback_lock:
 				self._fallback.append((channel, data))
+
 			self._metrics.inc("sse.redis.fallback.enqueued", {"channel": channel})
 		except Exception:
 			pass
 
 	def _flush_fallback(self, budget_s: float = 0.005) -> None:
 		"""Best-effort flush of queued messages within a tiny time budget."""
+
 		if not self._fallback_enabled:
 			return
+
 		start = time.monotonic()
+
 		while True:
 			if (time.monotonic() - start) >= budget_s:
 				break
+
 			item = None
 			try:
 				with self._fallback_lock:
 					item = self._fallback.popleft() if self._fallback else None
 			except Exception:
 				item = None
+
 			if not item:
 				break
+
 			channel, data = item
+
 			try:
 				self._client.publish(channel, data)
 				self._metrics.inc("sse.redis.fallback.flushed", {"channel": channel})
@@ -198,6 +236,7 @@ class _RedisBackend:
 						self._fallback.appendleft((channel, data))
 				except Exception:
 					pass
+
 				break
 
 	def publish(
@@ -212,47 +251,60 @@ class _RedisBackend:
 		Enforces a soft per-operation time budget (best effort) and retries with
 		exponential backoff + jitter up to `max_retries`.
 		"""
+
 		channel = self._namer.topic(kind, tenant_id=tenant_id, device_id=device_id)
 		data = self._ser.serialize(payload)
+
 		start = time.monotonic()
 		attempt = 0
 		success = False
+
 		# Opportunistically flush any queued messages first within a tiny budget
 		self._flush_fallback(budget_s=0.001)
+
 		while True:
 			try:
 				self._client.publish(channel, data)
 				self._metrics.inc("sse.redis.publish", {"channel": kind})
+
 				success = True
+
 				# After a success, try to flush a bit more queued items if any budget remains
 				elapsed = (time.monotonic() - start)
 				remaining = max(0.0, self._cfg.op_timeout_s - elapsed)
+
 				if remaining > 0:
 					self._flush_fallback(budget_s=min(0.002, remaining))
 				break
 			except Exception:
 				self._metrics.inc("sse.redis.publish.error", {"channel": kind})
+
 				# Check soft time budget
 				elapsed = (time.monotonic() - start)
 				if elapsed >= self._cfg.op_timeout_s:
 					# Enqueue for later replay
 					self._enqueue_fallback(channel, data)
 					break
+
 				# If max retries reached, stop
 				if attempt >= self._cfg.max_retries:
 					self._enqueue_fallback(channel, data)
 					break
+
 				# Sleep with jittered backoff and retry
 				sleep_s = self._backoff.next_sleep(attempt)
+
 				# Clamp sleep to remaining budget
 				remaining = max(0.0, self._cfg.op_timeout_s - elapsed)
 				if sleep_s > remaining:
 					sleep_s = remaining
+
 				attempt = min(attempt + 1, self._cfg.max_retries)
 				time.sleep(sleep_s)
+
 		return success
 
-	def start_subscriber(
+	def _start_subscriber(
 		self,
 		kind: str,
 		on_message: Callable[[Any], None],
@@ -263,8 +315,10 @@ class _RedisBackend:
 		Start a background subscriber loop for the derived channel.
 		Only one active subscription per backend instance is supported.
 		"""
+
 		if self._thread and self._thread.is_alive():
 			return
+			
 		self._on_message = on_message
 		self._subscribed_channel = self._namer.topic(kind, tenant_id=tenant_id, device_id=device_id)
 		self._client.subscribe(self._subscribed_channel)
@@ -272,40 +326,51 @@ class _RedisBackend:
 		self._thread = threading.Thread(target=self._reader_loop, name="sse-redis-reader", daemon=True)
 		self._thread.start()
 
-	def stop_subscriber(self) -> None:
+	def _stop_subscriber(self) -> None:
 		"""Stop background subscription and clean up."""
+
 		self._stop.set()
+
 		try:
 			if self._subscribed_channel:
 				self._client.unsubscribe(self._subscribed_channel)
 		except Exception:
 			pass
+
 		if self._thread:
 			self._thread.join(timeout=2.0)
+
 		self._thread = None
 		self._on_message = None
 		self._subscribed_channel = None
 
 	def _reader_loop(self) -> None:
 		"""Receive and dispatch messages with resilient backoff."""
+
 		attempt = 0
 		while not self._stop.is_set():
 			try:
 				msg = self._client.get_message(timeout=self._cfg.read_timeout_s)
+
 				if not msg:
 					continue
+
 				# Expect {'type': 'message', 'data': bytes, 'channel': str}
 				data = msg.get("data")
+
 				if isinstance(data, (bytes, bytearray)):
 					payload = self._ser.deserialize(data)
 				else:
 					payload = data
+
 				if self._on_message:
 					self._on_message(payload)
+
 				self._metrics.inc("sse.redis.message")
 				attempt = 0  # reset after success
 			except Exception:
 				self._metrics.inc("sse.redis.reader.error")
+
 				# Backoff before next poll to avoid hot loop on errors
 				sleep_s = self._backoff.next_sleep(attempt)
 				attempt = min(attempt + 1, self._cfg.max_retries)
@@ -313,7 +378,8 @@ class _RedisBackend:
 
 	def close(self) -> None:
 		"""Close backend and client."""
-		self.stop_subscriber()
+
+		self._stop_subscriber()
 		try:
 			self._client.close()
 		except Exception:
@@ -325,34 +391,40 @@ class _RedisBackend:
 # ------------------------------
 
 class _RedisPyClientAdapter:
-    """
-    Adapter around redis-py to match the minimal _RedisClient protocol.
-    Boundary-first: narrow surface for publishing and simple subscription
-    with polling via pubsub.get_message.
-    """
+    """Thin wrapper around redis-py client exposing the minimal protocol we need."""
 
     def __init__(self, redis_client: "Any") -> None:
+        """Store the redis client and initialize the pubsub handle lazily."""
+
         self._client = redis_client
         self._pubsub = None
 
     def publish(self, channel: str, message: bytes) -> int:
+        """Publish raw bytes to a channel, mirroring redis-py's return value."""
+
         return int(self._client.publish(channel, message) or 0)
 
     def subscribe(self, channel: str) -> Any:
-        # Lazily create pubsub; ensure single subscription context
+        """Subscribe to a channel, creating the pubsub object on first use."""
+
         if self._pubsub is None:
             self._pubsub = self._client.pubsub()
+
         self._pubsub.subscribe(channel)
+
         return self._pubsub
 
     def get_message(self, timeout: float = 0.0) -> Optional[Dict[str, Any]]:
+        """Fetch the next message dictionary from the pubsub if available."""
+
         if self._pubsub is None:
             return None
-        # redis-py expects timeout in seconds via blocking get_message
-        msg = self._pubsub.get_message(timeout=timeout)
-        return msg  # Already a dict or None
+			
+        return self._pubsub.get_message(timeout=timeout)
 
     def unsubscribe(self, channel: str) -> None:
+        """Unsubscribe from a channel when the pubsub has been created."""
+
         if self._pubsub is not None:
             try:
                 self._pubsub.unsubscribe(channel)
@@ -360,6 +432,8 @@ class _RedisPyClientAdapter:
                 pass
 
     def close(self) -> None:
+        """Close the pubsub (if created) and the underlying redis client."""
+
         try:
             if self._pubsub is not None:
                 try:
@@ -372,3 +446,4 @@ class _RedisPyClientAdapter:
                 self._client.close()
             except Exception:
                 pass
+
