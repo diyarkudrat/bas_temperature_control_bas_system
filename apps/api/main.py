@@ -1,16 +1,19 @@
 #!/usr/bin/env python3
 """
-BAS Server — Flask composition root for BAS (building automation system).
+BAS Server entrypoint:
 
-Responsibilities:
-- Wire controller, auth runtime, and optional Firestore + tenant middleware
-- Register HTTP routes, security headers, and API versioning headers
-- Provide request lifecycle hooks and lightweight metrics
-- Keep orchestration/DI here; business logic in application/auth/ and application/hardware/; HTTP handlers in apps/api/http/
+- wires Flask with controllers, auth runtime, and optional
+Firestore or tenant middleware.
 
-Notes:
-- Auth provider is built at import for fast /api/health/auth
-- Firestore is optional and health-checked before use
+- Keeps orchestration and dependency wiring here,
+while HTTP handlers live in `apps/api/http/` and business logic sits under the
+`application/` packages.
+
+- Also applies security/versioning headers, request
+hooks, and lightweight metrics.
+
+- Auth provider is constructed eagerly for
+responsive `/api/health/auth`; Firestore remains optional and health-checked.
 """
 
 import time
@@ -37,7 +40,7 @@ from apps.api.http.middleware import (
 
 from apps.api.http.versioning import build_versioning_applier
 from app_platform.errors.api import register_error_handlers
-from apps.api.bootstrap import load_server_config, build_auth_runtime, build_firestore_factory, build_tenant_middleware
+from apps.api.bootstrap import load_server_config, build_firestore_factory, build_tenant_middleware
 from app_platform.observability.metrics import AuthMetrics
 from adapters.providers.mock_auth0 import MockAuth0Provider
 from adapters.providers.base import AuthProvider
@@ -176,7 +179,7 @@ def _build_auth_runtime(cfg):
 
 
 # Initialize provider/metrics at import so /api/health/auth is responsive early
-auth_provider, auth_metrics = build_auth_runtime(server_config)
+auth_provider, auth_metrics = _build_auth_runtime(server_config)
 
 # Firestore/tenant globals
 firestore_factory = None
