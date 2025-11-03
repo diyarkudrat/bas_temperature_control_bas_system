@@ -26,6 +26,8 @@ def auth_login_page() -> str:
 
 
 def health(auth_config, firestore_factory) -> Tuple[Any, int]:
+    """Check the health of the API."""
+
     health_status: Dict[str, Any] = {
         "status": "healthy",
         "timestamp": time.time(),
@@ -57,10 +59,13 @@ def health(auth_config, firestore_factory) -> Tuple[Any, int]:
 
     response = jsonify(health_status)
     response.headers['Cache-Control'] = 'public, max-age=2'
+
     return response, 200
 
 
 def receive_sensor_data(controller, firestore_factory) -> Tuple[Any, int]:
+    """Receive sensor data from the controller."""
+
     try:
         data = request.get_json()
         if not data:
@@ -81,6 +86,7 @@ def receive_sensor_data(controller, firestore_factory) -> Tuple[Any, int]:
         )
 
         commands = controller.get_control_commands()
+
         return jsonify(commands), 200
     except Exception:
         sensor_logger.exception("Sensor data handling failed")
@@ -88,6 +94,8 @@ def receive_sensor_data(controller, firestore_factory) -> Tuple[Any, int]:
 
 
 def get_status(controller) -> Tuple[Any, int]:
+    """Get the status of the controller."""
+
     try:
         payload = {
             "temp_tenths": controller.current_temp_tenths,
@@ -107,6 +115,7 @@ def get_status(controller) -> Tuple[Any, int]:
                 "heat_active": controller.heat_active,
             },
         )
+
         return jsonify(payload), 200
     except Exception:
         controller_logger.exception("get_status failed")
@@ -114,6 +123,8 @@ def get_status(controller) -> Tuple[Any, int]:
 
 
 def set_setpoint(controller) -> Tuple[Any, int]:
+    """Set the setpoint and deadband of the controller."""
+
     try:
         data = request.get_json() or {}
         setpoint = data.get('setpoint_tenths')
@@ -145,6 +156,8 @@ def set_setpoint(controller) -> Tuple[Any, int]:
 
 
 def get_config(controller) -> Tuple[Any, int]:
+    """Get the configuration of the controller."""
+
     payload = {
         "setpoint_tenths": int(controller.setpoint_tenths),
         "deadband_tenths": int(controller.deadband_tenths),
@@ -153,6 +166,7 @@ def get_config(controller) -> Tuple[Any, int]:
     }
     response = jsonify(payload)
     response.headers['Cache-Control'] = 'public, max-age=2'
+
     return response, 200
 
 
@@ -189,6 +203,7 @@ def auth_health(provider) -> Tuple[Any, int]:
 
     response = jsonify(payload)
     response.headers['Cache-Control'] = 'public, max-age=2'
+    
     return response, 200
 
 

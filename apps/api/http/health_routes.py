@@ -18,17 +18,24 @@ logger = get_structured_logger("api.http.health")
 
 @health_bp.route("/api/health")
 def health():
+    """Check the health of the API."""
+
     firestore_factory = current_app.config.get("firestore_factory")
+
     logger.debug(
         "Health route invoked",
         extra={"firestore_enabled": firestore_factory is not None},
     )
+
     return http_routes.health(request.auth_config, firestore_factory)
 
 
 @health_bp.route("/api/health/auth")
 def auth_health():
+    """Check the health of the auth service."""
+
     logger.debug("Auth health route invoked")
+
     return http_routes.auth_health(request.auth_provider)
 
 
@@ -51,6 +58,7 @@ def readyz():
     if firestore_factory:
         try:
             firestore_status = firestore_factory.health_check()
+
             if firestore_status.get("status") != "healthy":
                 issues.append("firestore")
         except Exception as exc:  # pragma: no cover - defensive
@@ -60,10 +68,12 @@ def readyz():
     if auth_provider is not None:
         try:
             provider_status = auth_provider.healthcheck()
+
             if provider_status.get("status") not in {"ok", "healthy"}:
                 issues.append("auth_provider")
         except Exception as exc:  # pragma: no cover - defensive
             logger.warning("Auth provider readiness check failed", exc_info=True)
+
             issues.append("auth_provider:" + str(exc))
 
     status_code = 200 if not issues else 503
@@ -74,6 +84,5 @@ def readyz():
     }
     response = jsonify(payload)
     response.status_code = status_code
+
     return response
-
-

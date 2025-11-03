@@ -22,9 +22,13 @@ limits_logger = get_structured_logger("api.http.auth.limits")
 
 
 def _scrub_identifier(value: Optional[str]) -> Optional[str]:
+    """Scrub an identifier."""
+
     if not value:
         return None
+
     digest = hashlib.sha256(value.encode("utf-8")).hexdigest()
+
     return digest[:12]
 
 
@@ -54,21 +58,30 @@ def _get_auth_client() -> Optional[AuthServiceClient]:
         return fallback
 
     upstream_logger.error("Auth service client unavailable")
+
     return None
 
 
 def _forward_response(client_resp, *, default_error: str = "Auth service unavailable", default_code: str = "AUTH_UPSTREAM_ERROR"):
+    """Forward a response from the auth service."""
+
     payload = client_resp.json if client_resp and client_resp.json is not None else {"error": default_error, "code": default_code}
     flask_resp = jsonify(payload)
+
     if client_resp:
         for header, value in client_resp.headers.items():
             header_lc = header.lower()
+
             if header_lc in {"content-length", "transfer-encoding", "connection", "content-type", "set-cookie"}:
                 continue
+
             flask_resp.headers[header] = value
+
         for cookie_header in getattr(client_resp, "set_cookies", ()):  # type: ignore[attr-defined]
             flask_resp.headers.add("Set-Cookie", cookie_header)
+
     status_code = getattr(client_resp, "status_code", 502)
+
     upstream_logger.info(
         "Forwarding auth service response",
         extra={
@@ -78,30 +91,38 @@ def _forward_response(client_resp, *, default_error: str = "Auth service unavail
             "success": bool(client_resp and 200 <= status_code < 400),
         },
     )
+
     return flask_resp, status_code
 
 
 @auth_bp.route("/auth/login", methods=["POST"])
 def auth_login():
+    """Login to the auth service."""
+    
     cfg = getattr(request, "auth_config", None)
     if not cfg or not getattr(cfg, "auth_enabled", False):
         logger.warning("Auth login request rejected: auth disabled", extra={"config_present": cfg is not None})
+
         return jsonify({"error": "Authentication disabled"}), 503
 
     client = _get_auth_client()
+
     if client is None:
         upstream_logger.error("Auth login request failed: client unavailable")
+
         return jsonify({"error": "Auth service client unavailable"}), 503
 
     data = request.get_json(silent=True) or {}
     username = data.get("username")
     password = data.get("password")
+
     if not username or not password:
         logger.warning("Auth login missing credentials", extra={"username_present": bool(username)})
         return jsonify({"error": "Missing required fields", "code": "MISSING_FIELDS"}), 400
 
     username_hash = _scrub_identifier(username)
     remote_hash = _scrub_identifier(request.remote_addr)
+
     logger.info(
         "Auth login attempt received",
         extra={"username_hash": username_hash, "remote_hash": remote_hash},
@@ -132,14 +153,18 @@ def auth_login():
 
 @auth_bp.route("/auth/logout", methods=["POST"])
 def auth_logout():
+    """Logout from the auth service."""
+
     client = _get_auth_client()
     if client is None:
         upstream_logger.error("Auth logout request failed: client unavailable")
+
         return jsonify({"error": "Auth service client unavailable"}), 503
 
     payload = request.get_json(silent=True) or {}
     sid = request.cookies.get("bas_session_id") or payload.get("session_id")
     sid_hash = _scrub_identifier(sid) if sid else None
+
     logger.info(
         "Auth logout requested",
         extra={"session_present": bool(sid)},
@@ -158,19 +183,24 @@ def auth_logout():
         "Auth logout forwarded",
         extra={"session_hash": sid_hash, "upstream_status": getattr(upstream, "status_code", None)},
     )
+
     return _forward_response(upstream)
 
 
 @auth_bp.route("/auth/status")
 def auth_status():
+    """Check the status of the auth service."""
+
     client = _get_auth_client()
     if client is None:
         upstream_logger.error("Auth status request failed: client unavailable")
+
         return jsonify({"error": "Auth service client unavailable"}), 503
 
     sid = request.cookies.get("bas_session_id") or request.headers.get("X-Session-ID")
     if not sid:
         logger.info("Auth status request missing session identifier")
+
         return jsonify({"error": "No session provided", "code": "NO_SESSION"}), 400
 
     sid_hash = _scrub_identifier(sid)
@@ -194,22 +224,28 @@ def auth_status():
 @auth_bp.route("/auth/limits", methods=["POST"])
 @require_auth(required_role="admin")
 def update_per_user_limits():
+    """Update the per-user limits for the auth service."""
+
     api_key = os.getenv("DYNAMIC_LIMIT_API_KEY", "").strip()
     if api_key:
-        provided = (request.headers.get("X-Limits-Key") or "").strip()
+        provided = (request.headers.get("X-Limits-Key") or "").strip()  
+
         if provided != api_key:
             limits_logger.warning("Limits update forbidden: invalid API key")
             return jsonify({"error": "Forbidden", "code": "FORBIDDEN"}), 403
 
     body = request.get_json(silent=True) or {}
     limits = body.get("per_user_limits") if isinstance(body, dict) else None
+
     if not isinstance(limits, dict):
         limits_logger.warning("Limits update request invalid payload")
+
         return jsonify({"error": "Invalid payload", "code": "INVALID_ARGUMENT"}), 400
 
     client = _get_auth_client()
     if client is None:
         limits_logger.error("Limits update failed: client unavailable")
+
         return jsonify({"error": "Auth service client unavailable"}), 503
 
     try:
@@ -221,9 +257,11 @@ def update_per_user_limits():
     if upstream.ok and upstream.json:
         snapshot = upstream.json.get("per_user_limits")
         holder = current_app.config.get("rate_limit_holder")
+
         if holder and isinstance(snapshot, dict):
             try:
                 holder.update(per_user_limits=snapshot)
+
                 limits_logger.info(
                     "Applied per-user limits locally",
                     extra={"limit_count": len(snapshot)},
@@ -237,5 +275,3 @@ def update_per_user_limits():
         )
 
     return _forward_response(upstream)
-
-

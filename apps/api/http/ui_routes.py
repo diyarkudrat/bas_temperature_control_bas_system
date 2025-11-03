@@ -25,6 +25,8 @@ def _scrub_identifier(value: str | None) -> str | None:
 
 @ui_bp.route("/")
 def dashboard():
+    """Serve the dashboard."""
+
     # Redirect unauthenticated users to login instead of JSON error
     session_id = request.cookies.get('bas_session_id') or request.headers.get('X-Session-ID')
     if not session_id:
@@ -45,11 +47,14 @@ def dashboard():
         "UI dashboard served",
         extra={"session_hash": _scrub_identifier(session_id)},
     )
+
     return http_routes.dashboard()
 
 
 @ui_bp.route("/auth/login")
 def auth_login_page():
+    """Serve the authentication login page."""
+    
     logger.debug("UI auth login page served")
     return http_routes.auth_login_page()
 
