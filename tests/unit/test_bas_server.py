@@ -127,7 +127,7 @@ from flask import Flask
 # Import BAS server components (updated paths; no sys.path hacks)
 
 from apps.api.main import init_auth
-from application.hardware.bas_hardware_controller import BASController
+from legacy.application.hardware.bas_hardware_controller import BASController
 from app_platform.config.auth import AuthConfig
 from application.auth.managers import UserManager, SessionManager
 from application.auth.services import AuditLogger, RateLimiter

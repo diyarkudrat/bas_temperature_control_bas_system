@@ -4,6 +4,13 @@
 
 set -euo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
+LEGACY_ROOT="$REPO_ROOT/legacy"
+PICO_CLIENT_PATH="$LEGACY_ROOT/pico_client.py"
+
+cd "$REPO_ROOT"
+
 # Colors for output
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -173,9 +180,9 @@ except Exception as e:
 check_wifi_config() {
     print_hardware "Checking WiFi configuration..."
     
-    if [ -f "pico_client.py" ]; then
-        WIFI_SSID=$(grep 'WIFI_SSID =' pico_client.py | cut -d'"' -f2)
-        SERVER_URL=$(grep 'SERVER_URL =' pico_client.py | cut -d'"' -f2)
+    if [ -f "$PICO_CLIENT_PATH" ]; then
+        WIFI_SSID=$(grep 'WIFI_SSID =' "$PICO_CLIENT_PATH" | cut -d'"' -f2)
+        SERVER_URL=$(grep 'SERVER_URL =' "$PICO_CLIENT_PATH" | cut -d'"' -f2)
         
         print_info "WiFi SSID: $WIFI_SSID"
         print_info "Server URL: $SERVER_URL"
@@ -192,7 +199,7 @@ check_wifi_config() {
             print_status "Server URL configured"
         fi
     else
-        print_warning "pico_client.py not found"
+        print_warning "pico_client.py not found at $PICO_CLIENT_PATH"
     fi
 }
 

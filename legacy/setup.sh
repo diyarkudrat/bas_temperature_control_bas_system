@@ -4,6 +4,14 @@
 
 set -euo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+LEGACY_ROOT="$REPO_ROOT/legacy"
+PICO_CLIENT_PATH="$LEGACY_ROOT/pico_client.py"
+PICO_CLIENT_BACKUP="$LEGACY_ROOT/pico_client.py.backup"
+
+cd "$REPO_ROOT"
+
 echo "🏠 BAS Temperature Controller - Complete Setup"
 echo "=============================================="
 echo ""
@@ -155,24 +163,24 @@ if [ -n "$COMPUTER_IP" ]; then
     print_status "Computer IP address detected: $COMPUTER_IP"
     
     # Update pico_client.py with detected IP
-    if [ -f "pico_client.py" ]; then
+    if [ -f "$PICO_CLIENT_PATH" ]; then
         print_info "Updating pico_client.py with detected IP address..."
         
         # Create backup
-        cp pico_client.py pico_client.py.backup
+        cp "$PICO_CLIENT_PATH" "$PICO_CLIENT_BACKUP"
         
         # Update SERVER_URL
-        sed -i.tmp "s|SERVER_URL = \"http://[^\"]*\"|SERVER_URL = \"http://$COMPUTER_IP:8080\"|g" pico_client.py
-        rm -f pico_client.py.tmp
+        sed -i.tmp "s|SERVER_URL = \"http://[^\"]*\"|SERVER_URL = \"http://$COMPUTER_IP:8080\"|g" "$PICO_CLIENT_PATH"
+        rm -f "$PICO_CLIENT_PATH".tmp
         
         print_status "pico_client.py updated with IP: $COMPUTER_IP"
         print_warning "Please manually update WiFi credentials in pico_client.py"
     else
-        print_warning "pico_client.py not found - please update SERVER_URL manually"
+        print_warning "pico_client.py not found at $PICO_CLIENT_PATH - please update SERVER_URL manually"
     fi
 else
     print_warning "Could not auto-detect IP address"
-    print_info "Please manually update SERVER_URL in pico_client.py"
+    print_info "Please manually update SERVER_URL in $PICO_CLIENT_PATH"
 fi
 
 echo ""
@@ -182,6 +190,7 @@ print_info "Making scripts executable..."
 chmod +x deploy_pico.sh 2>/dev/null || true
 chmod +x start_server.sh 2>/dev/null || true
 chmod +x scripts/*.sh 2>/dev/null || true
+chmod +x legacy/scripts/*.sh 2>/dev/null || true
 
 print_status "Scripts made executable"
 
@@ -189,15 +198,15 @@ echo ""
 print_info "Checking hardware configuration..."
 
 # Check if pico_client.py has WiFi credentials configured
-if [ -f "pico_client.py" ]; then
-    if grep -q "YOUR_WIFI_NETWORK" pico_client.py; then
+if [ -f "$PICO_CLIENT_PATH" ]; then
+    if grep -q "YOUR_WIFI_NETWORK" "$PICO_CLIENT_PATH"; then
         print_warning "WiFi credentials not configured in pico_client.py"
         print_info "Please update WIFI_SSID and WIFI_PASSWORD before deploying"
     else
         print_status "WiFi credentials appear to be configured"
     fi
 else
-    print_error "pico_client.py not found"
+    print_error "pico_client.py not found at $PICO_CLIENT_PATH"
 fi
 
 echo ""
@@ -211,7 +220,7 @@ print_status "✅ Scripts prepared for execution"
 
 echo ""
 print_info "Next Steps:"
-echo "1. Update WiFi credentials in pico_client.py:"
+echo "1. Update WiFi credentials in legacy/pico_client.py:"
 echo "   WIFI_SSID = \"Your Network Name\""
 echo "   WIFI_PASSWORD = \"Your Password\""
 echo ""

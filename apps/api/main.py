@@ -47,7 +47,7 @@ from adapters.providers.base import AuthProvider
 from adapters.providers.factory import build_auth0_provider
 from adapters.providers.deny_all import DenyAllAuthProvider
 from adapters.providers.secret_manager import SecretManagerAdapter
-from application.hardware.bas_hardware_controller import BASController
+from legacy.application.hardware.bas_hardware_controller import BASController
 from app_platform.config.rate_limit import AtomicRateLimitConfig
 from apps.api.http.router import register_routes
 from apps.api.clients import AuthServiceClient, AuthServiceClientConfig

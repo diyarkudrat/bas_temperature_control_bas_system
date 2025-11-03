@@ -3,6 +3,14 @@
 
 set -euo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+LEGACY_ROOT="$REPO_ROOT/legacy"
+PICO_CLIENT_PATH="$LEGACY_ROOT/pico_client.py"
+LEGACY_SCRIPTS="$LEGACY_ROOT/scripts"
+
+cd "$REPO_ROOT"
+
 # Colors for output
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -67,14 +75,14 @@ print_info "Checking project structure..."
 
 # Essential files
 ESSENTIAL_FILES=(
-    "pico_client.py"
-    "setup.sh"
+    "legacy/pico_client.py"
+    "legacy/setup.sh"
     "server/bas_server.py"
     "apps/api/main.py"
     "apps/api/requirements.txt"
     "apps/api/templates/dashboard.html"
-    "scripts/start_bas.sh"
-    "scripts/start_hardware.sh"
+    "legacy/scripts/start_bas.sh"
+    "legacy/scripts/start_hardware.sh"
 )
 
 for file in "${ESSENTIAL_FILES[@]}"; do
@@ -91,7 +99,7 @@ echo ""
 # Check script permissions
 print_info "Checking script permissions..."
 
-SCRIPTS=("setup.sh" "scripts/start_bas.sh" "scripts/start_hardware.sh")
+SCRIPTS=("legacy/setup.sh" "legacy/scripts/start_bas.sh" "legacy/scripts/start_hardware.sh")
 
 for script in "${SCRIPTS[@]}"; do
     if [ -x "$script" ]; then
@@ -107,8 +115,8 @@ echo ""
 # Check pico_client.py size
 print_info "Checking Pico client optimization..."
 
-if [ -f "pico_client.py" ]; then
-    CLIENT_SIZE=$(wc -c < pico_client.py)
+if [ -f "$PICO_CLIENT_PATH" ]; then
+    CLIENT_SIZE=$(wc -c < "$PICO_CLIENT_PATH")
     print_status "pico_client.py size: $CLIENT_SIZE bytes ($(($CLIENT_SIZE/1024)) KB)"
     
     if [ $CLIENT_SIZE -lt 50000 ]; then
@@ -117,7 +125,7 @@ if [ -f "pico_client.py" ]; then
         print_warning "Client size may be too large for optimal Pico W usage"
     fi
 else
-    print_error "pico_client.py not found"
+    print_error "pico_client.py not found at $PICO_CLIENT_PATH"
     VERIFICATION_PASSED=false
 fi
 
@@ -140,23 +148,23 @@ echo ""
 # Check WiFi configuration
 print_info "Checking WiFi configuration..."
 
-if [ -f "pico_client.py" ]; then
-    if grep -q "YOUR_WIFI_NETWORK" pico_client.py; then
+if [ -f "$PICO_CLIENT_PATH" ]; then
+    if grep -q "YOUR_WIFI_NETWORK" "$PICO_CLIENT_PATH"; then
         print_warning "WiFi credentials not configured"
-        print_info "Update WIFI_SSID and WIFI_PASSWORD in pico_client.py"
+        print_info "Update WIFI_SSID and WIFI_PASSWORD in $PICO_CLIENT_PATH"
     else
         print_status "WiFi credentials configured"
     fi
     
     # Check server URL
-    if grep -q "192.168.1.100" pico_client.py; then
+    if grep -q "192.168.1.100" "$PICO_CLIENT_PATH"; then
         print_warning "Server URL may need updating"
-        print_info "Current SERVER_URL: $(grep 'SERVER_URL =' pico_client.py)"
+        print_info "Current SERVER_URL: $(grep 'SERVER_URL =' "$PICO_CLIENT_PATH")"
     else
         print_status "Server URL configured"
     fi
 else
-    print_error "pico_client.py not found"
+    print_error "pico_client.py not found at $PICO_CLIENT_PATH"
     VERIFICATION_PASSED=false
 fi
 
@@ -187,10 +195,10 @@ if [ "$VERIFICATION_PASSED" = true ]; then
     print_status "✅ System verification PASSED"
     echo ""
     print_info "Ready to deploy! Next steps:"
-    echo "1. Update WiFi credentials in pico_client.py"
+    echo "1. Update WiFi credentials in legacy/pico_client.py"
     echo "2. Connect your Pico W via USB"
-    echo "3. Run: ./scripts/start_hardware.sh --deploy-only"
-    echo "4. Run: ./scripts/start_bas.sh --server-only"
+    echo "3. Run: ./legacy/scripts/start_hardware.sh --deploy-only"
+    echo "4. Run: ./legacy/scripts/start_bas.sh --server-only"
     echo "5. Open: http://localhost:8080"
     echo ""
     print_status "System is ready for deployment! 🎉"
@@ -198,5 +206,5 @@ else
     print_error "❌ System verification FAILED"
     echo ""
     print_info "Please fix the issues above before deploying"
-    echo "Run ./setup.sh to resolve most issues automatically"
+    echo "Run ./legacy/setup.sh to resolve most issues automatically"
 fi

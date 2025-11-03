@@ -4,6 +4,13 @@
 
 set -euo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
+LEGACY_ROOT="$REPO_ROOT/legacy"
+PICO_CLIENT_PATH="$LEGACY_ROOT/pico_client.py"
+
+cd "$REPO_ROOT"
+
 # Colors for output
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -74,9 +81,9 @@ while [[ $# -gt 0 ]]; do
             echo "  $0 --hardware-only --device /dev/ttyACM0 # Start only hardware with specific device"
             echo ""
             echo "Note: For hardware-only operations, consider using:"
-            echo "  ./scripts/start_hardware.sh          # Dedicated hardware startup script"
-            echo "  ./scripts/stop_hardware.sh            # Stop hardware"
-            echo "  ./scripts/status_hardware.sh          # Check hardware status"
+            echo "  ./legacy/scripts/start_hardware.sh          # Dedicated hardware startup script"
+            echo "  ./legacy/scripts/stop_hardware.sh           # Stop hardware"
+            echo "  ./legacy/scripts/status_hardware.sh         # Check hardware status"
             exit 0
             ;;
         *)
@@ -251,8 +258,8 @@ start_pico() {
     fi
     
     # Check if pico_client.py exists
-    if [ ! -f "pico_client.py" ]; then
-        print_error "pico_client.py not found"
+    if [ ! -f "$PICO_CLIENT_PATH" ]; then
+        print_error "pico_client.py not found at $PICO_CLIENT_PATH"
         return 1
     fi
     
@@ -285,7 +292,7 @@ start_pico() {
     
     # Deploy and run client
     print_info "Deploying pico_client.py..."
-    if mpremote connect "$DEVICE" cp pico_client.py :; then
+    if mpremote connect "$DEVICE" cp "$PICO_CLIENT_PATH" :pico_client.py; then
         print_status "pico_client.py deployed successfully"
     else
         print_error "Failed to deploy pico_client.py"
@@ -340,7 +347,7 @@ if [ "$START_PICO" = true ]; then
     
     # Use dedicated hardware script for better control
     print_info "Using dedicated hardware startup script..."
-    ./scripts/start_hardware.sh --device "$DEVICE"
+    ./legacy/scripts/start_hardware.sh --device "$DEVICE"
 else
     # If only starting server, keep it running
     if [ "$START_SERVER" = true ]; then

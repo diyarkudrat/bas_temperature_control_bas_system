@@ -4,6 +4,13 @@
 
 set -euo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
+LEGACY_ROOT="$REPO_ROOT/legacy"
+PICO_CLIENT_PATH="$LEGACY_ROOT/pico_client.py"
+
+cd "$REPO_ROOT"
+
 # Colors for output
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -92,9 +99,9 @@ check_prerequisites() {
     print_status "mpremote found"
     
     # Check if pico_client.py exists
-    if [ ! -f "pico_client.py" ]; then
+    if [ ! -f "$PICO_CLIENT_PATH" ]; then
         print_error "pico_client.py not found"
-        print_info "Please run this script from the BAS System Project root directory"
+        print_info "Expected Pico client at: $PICO_CLIENT_PATH"
         return 1
     fi
     print_status "pico_client.py found"
@@ -141,9 +148,9 @@ check_configuration() {
     print_hardware "Checking configuration..."
     
     # Check WiFi configuration
-    if grep -q "YOUR_WIFI_NETWORK" pico_client.py; then
+    if grep -q "YOUR_WIFI_NETWORK" "$PICO_CLIENT_PATH"; then
         print_warning "WiFi credentials not configured!"
-        print_info "Please edit pico_client.py and update:"
+        print_info "Please edit $PICO_CLIENT_PATH and update:"
         print_info "  WIFI_SSID = \"Your Network Name\""
         print_info "  WIFI_PASSWORD = \"Your Password\""
         echo ""
@@ -158,15 +165,15 @@ check_configuration() {
     fi
     
     # Check server URL configuration
-    if grep -q "192.168.1.100" pico_client.py; then
+    if grep -q "192.168.1.100" "$PICO_CLIENT_PATH"; then
         print_warning "Server URL may need updating"
-        SERVER_URL=$(grep 'SERVER_URL =' pico_client.py | cut -d'"' -f2)
+        SERVER_URL=$(grep 'SERVER_URL =' "$PICO_CLIENT_PATH" | cut -d'"' -f2)
         print_info "Current SERVER_URL: $SERVER_URL"
         echo ""
         read -p "Continue with current server URL? (Y/n): " -n 1 -r
         echo
         if [[ $REPLY =~ ^[Nn]$ ]]; then
-            print_info "Please update SERVER_URL in pico_client.py first"
+        print_info "Please update SERVER_URL in $PICO_CLIENT_PATH first"
             return 1
         fi
     else
@@ -201,7 +208,7 @@ deploy_client() {
     sleep 2
     
     # Deploy the client
-    if mpremote connect "$DEVICE" cp pico_client.py :; then
+    if mpremote connect "$DEVICE" cp "$PICO_CLIENT_PATH" :pico_client.py; then
         print_status "pico_client.py deployed successfully"
     else
         print_error "Failed to deploy pico_client.py"
@@ -262,7 +269,7 @@ show_hardware_connections() {
 show_next_steps() {
     echo ""
     print_info "Next Steps:"
-    echo "1. Start the server: ./scripts/start_bas.sh --server-only"
+    echo "1. Start the server: ./legacy/scripts/start_bas.sh --server-only"
     echo "2. The Pico W will automatically connect and start sending data"
     echo "3. Open dashboard: http://localhost:8080"
     echo "4. Login: http://localhost:8080/auth/login"
