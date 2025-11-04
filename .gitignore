@@ -78,6 +78,8 @@ dist/
 *.egg-info/
 .coverage
 htmlcov/
+coverage/html/
+coverage/*.json
 
 # Node.js (if web dashboard uses npm)
 node_modules/

@@ -1,0 +1,28 @@
+[run]
+source =
+    apps/api
+    apps/auth_service
+    logging_lib
+branch = True
+parallel = True
+omit =
+    apps/api/main.py
+    apps/api/cli/*.py
+    apps/api/scripts/*.py
+    apps/auth_service/main.py
+    apps/auth_service/scripts/*.py
+    logging_lib/sinks/gcl_api.py
+    logging_lib/sinks/gcl_async.py
+
+[report]
+# Phase R1: document targets, enforce per-component thresholds in later phases.
+precision = 2
+show_missing = True
+skip_covered = False
+
+[paths]
+source =
+    apps/
+    */apps/
+
+

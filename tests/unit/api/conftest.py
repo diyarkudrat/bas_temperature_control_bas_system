@@ -13,7 +13,10 @@ from typing import Any, Callable, Iterator, Mapping, MutableMapping
 import pytest
 from flask import Flask, Request
 
-from tests.utils.flask_client_factory import flask_test_client
+from tests.utils.flask_app_factory import (
+    assert_stateless_app_factory,
+    stateless_test_client,
+)
 
 
 @dataclass
@@ -193,6 +196,7 @@ def create_api_app(
 
         return app
 
+    assert_stateless_app_factory(_builder)
     return _builder
 
 
@@ -204,8 +208,8 @@ def api_app(create_api_app: Callable[[], Flask]) -> Flask:
 @pytest.fixture
 def api_client(create_api_app: Callable[[], Flask]):
     """Yield a test client for the API app."""
-    
-    with flask_test_client(create_api_app) as (_app, client):
+
+    with stateless_test_client(create_api_app) as (_app, client):
         yield client
 
 

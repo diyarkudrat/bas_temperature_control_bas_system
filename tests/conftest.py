@@ -1,3 +1,72 @@
+"""Top-level pytest configuration for BAS System tests.
+
+This module keeps startup lightweight for unit suites while still allowing legacy
+contract fixtures and heavy plugins to be opted in when required.
+"""
+
+from __future__ import annotations
+
+import os
+import sys
+from pathlib import Path
+
+import pytest
+
+
+_PROJECT_ROOT = Path(__file__).resolve().parent.parent
+_EXTRA_PATHS = ("server", "src", "infra")
+
+for relative in _EXTRA_PATHS:
+    candidate = _PROJECT_ROOT / relative
+    if candidate.exists():
+        path_str = str(candidate)
+        if path_str not in sys.path:
+            sys.path.insert(0, path_str)
+
+
+pytest_plugins: list[str] = []
+
+if os.getenv("BAS_DISABLE_PLUGINS", "1") != "1":
+    pytest_plugins.extend(
+        [
+            "tests.plugins.contract_validator",
+            "tests.plugins.contract_reporter",
+            "tests.plugins.business_rules_validator",
+            "tests.plugins.import_manager",
+        ]
+    )
+
+_CONTRACT_FIXTURES_ENABLED = os.getenv("BAS_ENABLE_CONTRACT_FIXTURES", "1") != "0"
+if _CONTRACT_FIXTURES_ENABLED:
+    pytest_plugins.append("tests.conftest_contracts")
+
+
+from tests.fixtures.firestore_fixtures import *  # noqa: F401,F403 - re-export shared fixtures
+
+
+def pytest_configure(config: pytest.Config) -> None:  # pragma: no cover - configuration hook
+    """Register global markers used across the repository."""
+
+    config.addinivalue_line("markers", "unit: Unit tests")
+    config.addinivalue_line("markers", "integration: Integration tests")
+    config.addinivalue_line("markers", "performance: Performance tests")
+    config.addinivalue_line("markers", "auth: Authentication related tests")
+    config.addinivalue_line("markers", "logging: Logging library focused tests")
+
+
+def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item]) -> None:
+    """Ensure sensible default markers based on collection context."""
+
+    for item in items:
+        if not any(marker.name in {"integration", "performance"} for marker in item.iter_markers()):
+            item.add_marker(pytest.mark.unit)
+
+        fspath = str(item.fspath)
+        if "auth" in fspath:
+            item.add_marker(pytest.mark.auth)
+        if "logging" in fspath:
+            item.add_marker(pytest.mark.logging)
+
 """
 Pytest configuration and shared fixtures for BAS System tests.
 """

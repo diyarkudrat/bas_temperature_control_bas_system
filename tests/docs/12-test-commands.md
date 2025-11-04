@@ -46,43 +46,42 @@ python3 -m pytest tests -m "not no_contract_validation" -v
 Test coverage measures how much of your code runs during tests. Higher coverage helps reveal untested paths, reduce regressions, and build confidence when refactoring. Aim for meaningful coverage of critical paths rather than 100% everywhere.
 
 ```bash
-# Default component coverage (mirrors pytest.ini)
-python3 -m pytest tests -v \
-  --cov=apps/api \
-  --cov=apps/auth_service \
-  --cov=logging_lib \
-  --cov-report=term-missing \
-  --cov-config=coverage/.coveragerc
+# Default component coverage (mirrors pytest.ini + `.coveragerc`)
+python3 -m pytest tests -v --cov --cov-report=term-missing --cov-config=.coveragerc
 
 # Component-specific focus runs
-python3 -m pytest tests/unit/api --cov=apps/api --cov-config=coverage/.coveragerc -v
-python3 -m pytest tests/unit/auth --cov=apps/auth_service --cov-config=coverage/.coveragerc -v
-python3 -m pytest tests/unit/logging --cov=logging_lib --cov-config=coverage/.coveragerc -v
+python3 -m pytest tests/unit/api --cov --cov-config=.coveragerc -m "api or http" -v
+python3 -m pytest tests/unit/auth --cov --cov-config=.coveragerc -m auth -v
+python3 -m pytest tests/unit/logging --cov --cov-config=.coveragerc -m logging -v
 
-# Generate XML/HTML artifacts
-python3 -m pytest tests -v \
-  --cov=apps/api --cov=apps/auth_service --cov=logging_lib \
-  --cov-config=coverage/.coveragerc \
-  --cov-report=term-missing --cov-report=xml --cov-report=html
+# Run the roadmap-themed baseline (HTML + JSON outputs)
+scripts/coverage_baseline.sh --suite all
+
+# Make/Nox wrappers (Phase R2 orchestration)
+make test-api-unit          # delegates to nox -s tests_unit_api
+make test-auth-unit         # delegates to nox -s tests_unit_auth
+make test-logging-unit      # delegates to nox -s tests_unit_logging
+
+# Re-enable legacy plugins (contract validation) when required
+BAS_DISABLE_PLUGINS=0 BAS_ENABLE_CONTRACT_FIXTURES=1 make test-api-unit
 
 # Open HTML report (macOS)
-open htmlcov/index.html
+open coverage/html/index.html
 ```
 
 ### Quick bash examples
 
 ```bash
 # Fast signal on logging library only
-python3 -m pytest tests/unit/logging --cov=logging_lib --maxfail=1 -q
+python3 -m pytest tests/unit/logging --cov --maxfail=1 -q
 
 # Run with branch coverage for a single file
 python3 -m pytest tests/unit/auth/test_services.py \
-  --cov=apps/auth_service --cov-branch --cov-config=coverage/.coveragerc -v
+  --cov --cov-branch --cov-config=.coveragerc -v
 
 # CI-friendly XML only (for pipelines/tools)
 python3 -m pytest tests -q \
-  --cov=apps/api --cov=apps/auth_service --cov=logging_lib \
-  --cov-config=coverage/.coveragerc --cov-report=xml
+  --cov --cov-config=.coveragerc --cov-report=xml
 
 # (Planned) nox session once added to repo
 # nox -s tests(unit_api)
