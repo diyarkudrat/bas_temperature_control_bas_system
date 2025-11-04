@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import importlib
-from contextlib import contextmanager
+from contextlib import ExitStack, contextmanager
 from typing import Any, Callable, Iterator, Mapping, MutableMapping
 
 from flask import Flask
@@ -44,17 +44,45 @@ def apply_config_overrides(app: Flask, overrides: Mapping[str, Any] | None = Non
 
 
 @contextmanager
+def override_dependencies(target: Any, overrides: Mapping[str, Any]):
+    """Temporarily override attributes on a target object."""
+
+    sentinel = object()
+    original: dict[str, Any] = {}
+
+    for attr, replacement in overrides.items():
+        original[attr] = getattr(target, attr, sentinel)
+        setattr(target, attr, replacement)
+
+    try:
+        yield target
+    finally:
+        for attr, previous in original.items():
+            if previous is sentinel:
+                delattr(target, attr)
+            else:
+                setattr(target, attr, previous)
+
+
+@contextmanager
 def flask_test_client(
     app_builder: Callable[[], Flask],
     *,
     config_overrides: Mapping[str, Any] | None = None,
+    dependency_overrides: Mapping[Any, Mapping[str, Any]] | None = None,
 ) -> Iterator[tuple[Flask, Any]]:
-    """Provide a Flask test client with optional config overrides."""
+    """Provide a Flask test client with optional config and dependency overrides."""
 
     app = app_builder()
     apply_config_overrides(app, config_overrides)
-    with app.test_client() as client:
-        yield app, client
+
+    with ExitStack() as stack:
+        if dependency_overrides:
+            for target, overrides in dependency_overrides.items():
+                stack.enter_context(override_dependencies(target, overrides))
+
+        client_cm = stack.enter_context(app.test_client())
+        yield app, client_cm
 
 
 def set_default_context(app: Flask, base_context: MutableMapping[str, Any] | None = None) -> None:

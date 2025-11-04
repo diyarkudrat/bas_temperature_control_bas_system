@@ -216,3 +216,31 @@
 - Assemble baseline portfolio packet: executive summary slide, metrics dashboard screenshot, leadership log template.
 
 
+## 12. Remaining Work Multi-Phase Execution Plan
+- **Phase R1 — Coverage Infrastructure (2 days)**
+  - Deliver `.coveragerc` with scoped `source`, `omit`, and context sections plus updated `pytest.ini` `addopts` and `pytest-cov` wiring.
+  - Stand up repeatable coverage baseline script that emits HTML + JSON artifacts under `coverage/` with roadmap tags (architecture/reliability/security).
+  - Exit criteria: baseline coverage snapshot published, coverage exception register seeded with current carve-outs.
+- **Phase R2 — Test Orchestration (2 days)**
+  - Add `nox` sessions (`unit_api`, `unit_auth`, `unit_logging`) and lightweight `make` wrappers; document local usage expectations.
+  - Confirm CI runner environment, caching strategy, and artifact retention; capture decisions in tracking issue.
+  - Exit criteria: engineers can run each suite via `nox`/`make`; CI decision doc approved.
+- **Phase R3 — Fixture & Utility Refactor (4 days)**
+  - Split monolithic `tests/conftest.py` into layered unit-level conftests with opt-in heavy plugins.
+  - Introduce shared helpers in `tests/utils/` (Flask app factory, env context manager, logging dispatcher harness, health-check simulator) and update docs.
+  - Exit criteria: pilot suite runs with new fixtures, statelessness assertions in place, legacy fixtures aliased for backward compatibility.
+- **Phase R4 — Component Test Expansions (10 days total)**
+  - `R4A API (4 days)`: Cover bootstrap paths, middleware ordering, client/service resilience, and observability hooks with ≥90% coverage and documented exceptions.
+  - `R4B Auth (3 days)`: Test app factory boot failures, service-token settings, replay cache wiring, and Auth0 client interactions; target ≥92% coverage.
+  - `R4C Logging (3 days)`: Exercise dispatcher/queue fallbacks, sink failures, sampling/redaction edges, and schema enforcement; enforce ≥90% coverage.
+  - Exit criteria: coverage gates passing locally for each component; risk-based carve-outs reviewed.
+- **Phase R5 — CI & Governance Hardening (3 days)**
+  - Implement CI matrix jobs with per-component fail-under thresholds (soft 85% → hard 90%) and publish XML/JSON artifacts with roadmap tags.
+  - Wire weekly metrics digest capturing coverage deltas, runtime, and flaky reruns; automate alerts for >2% regressions.
+  - Exit criteria: CI pipeline blocks sub-threshold coverage; governance dashboard live.
+- **Phase R6 — Documentation & Portfolio Enablement (3 days)**
+  - Finalize playbooks (`tests/docs/`), update `tests/docs/12-test-commands.md`, publish fixture RFC outcomes, and refresh alignment checklist.
+  - Produce portfolio packet (exec summary, metrics trends, leadership log) and schedule cadence for snapshot updates.
+  - Exit criteria: documentation merged, portfolio assets delivered, cadence set on team calendar.
+
+
