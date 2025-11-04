@@ -1,0 +1,24 @@
+[run]
+branch = True
+dynamic_context = test_function
+source =
+    apps/api
+    apps/auth_service
+    logging_lib
+omit =
+    apps/api/main.py
+    apps/auth_service/main.py
+    logging_lib/sinks/gcl_api.py
+
+[report]
+show_missing = True
+precision = 2
+exclude_lines =
+    pragma: no cover
+    if __name__ == .__main__.
+
+[coverage:contexts]
+api = apps/api
+auth = apps/auth_service
+logging = logging_lib
+

@@ -4,11 +4,8 @@ Pytest configuration and shared fixtures for BAS System tests.
 
 import os
 import sys
-import tempfile
 import pytest
 import logging
-from unittest.mock import Mock, patch
-from typing import Generator, Dict, Any
 
 # Ensure critical project paths are available before any fixture imports
 # This must run early so that modules like `auth.*` (from `server/auth`) resolve during fixture import
@@ -49,48 +46,6 @@ _contract_validator = ContractValidator() if CONTRACTS_AVAILABLE else None
 _business_rules = BusinessRules() if CONTRACTS_AVAILABLE else None
 
 _fs_skipped_count = 0  # Count of tests skipped due to missing Firestore helpers
-
-@pytest.fixture
-def temp_db_file() -> Generator[str, None, None]:
-    """Provide a temporary database file for testing."""
-    temp_file = tempfile.NamedTemporaryFile(delete=False, suffix='.db')
-    temp_file.close()
-    yield temp_file.name
-    # Cleanup
-    try:
-        os.unlink(temp_file.name)
-    except FileNotFoundError:
-        pass
-
-
-@pytest.fixture
-def temp_config_file() -> Generator[str, None, None]:
-    """Provide a temporary config file for testing."""
-    temp_file = tempfile.NamedTemporaryFile(delete=False, suffix='.json')
-    temp_file.close()
-    yield temp_file.name
-    # Cleanup
-    try:
-        os.unlink(temp_file.name)
-    except FileNotFoundError:
-        pass
-
-
-@pytest.fixture
-def mock_request():
-    """Provide a mock Flask request object."""
-    request = Mock()
-    request.headers = {
-        'User-Agent': 'Mozilla/5.0 (Test Browser)',
-        'Accept-Language': 'en-US,en;q=0.9',
-        'Accept-Encoding': 'gzip, deflate'
-    }
-    request.remote_addr = '192.168.1.100'
-    request.endpoint = 'test_endpoint'
-    return request
-
-
-
 
 # Test markers for categorization
 def pytest_configure(config):
