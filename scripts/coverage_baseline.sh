@@ -97,6 +97,14 @@ else
 fi
 
 mkdir -p coverage/html
+mkdir -p coverage/xml
+mkdir -p coverage/json
+
+report_basename="${suite}"
+if [[ "${report_basename}" == "" || "${report_basename}" == "all" ]]; then
+  report_basename="combined"
+fi
+report_basename="${report_basename//[^a-zA-Z0-9_-]/-}"
 
 echo "[coverage] Erasing previous data..."
 "${coverage_cmd[@]}" erase
@@ -128,15 +136,26 @@ echo "[coverage] Combining data files..."
 "${coverage_cmd[@]}" combine
 
 echo "[coverage] Generating reports..."
-"${coverage_cmd[@]}" report -m
-"${coverage_cmd[@]}" html -d coverage/html
-"${coverage_cmd[@]}" json -o coverage/baseline.json
+
+fail_under="${COVERAGE_FAIL_UNDER:-}"
+report_args=(-m)
+if [[ -n "${fail_under}" ]]; then
+  report_args+=("--fail-under=${fail_under}")
+fi
+
+"${coverage_cmd[@]}" report "${report_args[@]}"
+"${coverage_cmd[@]}" html -d coverage/html/${report_basename}
+"${coverage_cmd[@]}" xml -o coverage/xml/${report_basename}.xml
+"${coverage_cmd[@]}" json -o coverage/json/${report_basename}.json
+
+cp coverage/json/${report_basename}.json coverage/baseline.json 2>/dev/null || true
 
 cat <<'SUMMARY'
 
 Coverage artifacts generated:
-  - coverage/html/index.html
-  - coverage/baseline.json
+  - coverage/html/${report_basename}/index.html
+  - coverage/xml/${report_basename}.xml
+  - coverage/json/${report_basename}.json
 
 Each coverage run is tagged via --context (architecture, reliability, security). Downstream
 analysis tools can consume the JSON report for theme-specific slices.

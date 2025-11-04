@@ -62,6 +62,20 @@ make test-api-unit          # delegates to nox -s tests_unit_api
 make test-auth-unit         # delegates to nox -s tests_unit_auth
 make test-logging-unit      # delegates to nox -s tests_unit_logging
 
+# CI-equivalent run (enforces fail-under)
+COVERAGE_FAIL_UNDER=90 nox -s "tests(unit_api)"
+
+# Update coverage exceptions register after a local run
+python scripts/coverage/update_exceptions.py \
+  --suite api \
+  --coverage-json coverage/json/api.json \
+  --owner "Your Name" --mitigation "Increase tests" --dry-run
+
+# Compare against the committed baseline before pushing
+python scripts/coverage/regression_guard.py \
+  --current coverage/json/api.json \
+  --previous coverage/baselines/api.json
+
 # Re-enable legacy plugins (contract validation) when required
 BAS_DISABLE_PLUGINS=0 BAS_ENABLE_CONTRACT_FIXTURES=1 make test-api-unit
 
@@ -85,6 +99,10 @@ python3 -m pytest tests -q \
 
 # (Planned) nox session once added to repo
 # nox -s tests(unit_api)
+
+# Generate the weekly coverage digest locally
+python scripts/coverage/generate_digest.py coverage/json/api.json \
+  coverage/json/auth.json coverage/json/logging.json --output docs/metrics/coverage-weekly.md
 ```
 
 ## Useful Tips

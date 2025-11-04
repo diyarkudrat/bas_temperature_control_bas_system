@@ -27,6 +27,7 @@
   - Create `tests/unit/api/test_bootstrap.py` with pytest parametrization; leverage `monkeypatch` for env overrides and sentinel stubs for Firestore/Redis.
   - Implement helper assertions (`assert_app_stateless(app_factory)`) in shared utils if missing.
   - Document new fixtures in `tests/docs/test_framework_upgrades/guide.md` during wrap-up.
+  - **Status:** Completed via `tests/unit/api/test_bootstrap.py` (stateless factory, auth runtime permutations) and supporting fixtures in `tests/unit/api/conftest.py`.
 
 ### A2. HTTP Route & Middleware Exercisers
 - Target modules: `apps/api/http/*`, middleware pipeline, rate limiter, tenant context.
@@ -38,6 +39,7 @@
   - New suites under `tests/unit/api/http/` (e.g., `test_health_endpoints.py`, `test_middleware_pipeline.py`).
   - Use deterministic time/uuid fixtures from Phase R3 to assert idempotency keys and trace IDs.
   - Introduce synthetic `FakeRateLimiter` in `tests/utils` if existing stubs insufficient; ensure teardown resets counters.
+  - **Status:** Completed through `tests/unit/api/http/test_health_routes.py`, `test_security_headers.py`, and enhanced rate-limit coverage in `tests/unit/api/http/test_rate_limit_middleware.py` (shadow/failure logging, order validation via rate limiter stub).
 
 ### A3. Client & Service Resilience
 - Target modules: `apps/api/clients/auth_service_client.py`, service objects (e.g., `DeviceCredentialService`).
@@ -49,6 +51,7 @@
   - Add `tests/unit/api/clients/test_auth_service_client.py` capturing success/error paths.
   - Expand existing `test_device_credentials_service.py` with new parametrized cases; ensure coverage of failure branches.
   - Provide `metrics_spy` helper if not present, using context managers to assert call counts.
+  - **Status:** Completed with `tests/unit/api/clients/test_auth_service_client.py` (retry/error translation) and expanded `tests/unit/api/test_device_credentials_service.py` (metadata truncation, rotation clamping, failure propagation).
 
 ### A4. Verification & Coverage Hooks
 - Run `nox -s unit_api -- --cov=apps/api --cov-context=api` and inspect JSON/HTML outputs.
@@ -66,6 +69,7 @@
 - Patch plan:
   - New suite `tests/unit/auth/test_app_factory.py` using Phase R3 factory fixture; capture logs for readiness probe behavior.
   - Add helper to assert app teardown clears global registries.
+  - **Status:** Completed in `tests/unit/auth_service/test_app_factory.py` (stateless create_app, hook assertions).
 
 ### B2. Service Token Settings & Security Policies
 - Target modules: `apps/auth_service/security/service_token_settings.py` (or equivalent). 
@@ -75,6 +79,7 @@
 - Patch plan:
   - Add `tests/unit/auth/test_service_token_settings.py`; use `env` context manager from Phase R3 to avoid leakage.
   - Expand fixtures to supply fake keysets/replay cache stubs.
+  - **Status:** Completed in `tests/unit/auth_service/test_service_token_settings.py` (env parsing, failure handling).
 
 ### B3. Runtime Dependencies & Auth0 Client
 - Target modules: dependency loaders, `Auth0ManagementClient` wrappers.
@@ -86,6 +91,7 @@
   - Create `tests/unit/auth/test_runtime_dependencies.py` or integrate into existing suites.
   - Introduce `FakeCircuitBreaker` / instrumentation spy classes in `tests/utils` if necessary.
   - Use `responses` to emulate Auth0 responses and failure states.
+  - **Status:** Completed within `tests/unit/auth_service/test_bootstrap_runtime.py` (runtime wiring, disabled Auth0, provisioning failure logging) and supporting stubs.
 
 ### B4. Verification & Security Emphasis
 - Run `nox -s unit_auth -- --cov=apps/auth_service --cov-context=auth` ensuring fail-under set to 90 (target 92+).
@@ -103,6 +109,7 @@
 - Patch plan:
   - Add `tests/unit/logging/test_manager.py` with fixtures to instantiate manager multiple times, asserting no singleton leakage.
   - Use `caplog` to confirm fallback-to-stdout warnings.
+  - **Status:** Completed through `tests/unit/logging/test_config.py` (reconfigure, fallback) and new context coverage.
 
 ### C2. Dispatcher & Queue Reliability
 - Target modules: `logging_lib/dispatcher.py`, `logging_lib/queue.py`.
@@ -112,6 +119,7 @@
 - Patch plan:
   - New suite `tests/unit/logging/test_dispatcher.py` leveraging custom `InMemorySink` with failure injection.
   - Add metrics spy coverage for drop events and ensure concurrency contexts reset (`contextvars`).
+  - **Status:** Completed via enhanced `tests/unit/logging/test_dispatcher_queue.py` (flush/retry/drop metadata) and `tests/unit/logging/test_context_management.py` (contextvars reset guarantees).
 
 ### C3. Sampling, Redaction, and Sinks
 - Target modules: `logging_lib/sampling.py`, `logging_lib/redaction.py`, sink implementations.
@@ -122,6 +130,7 @@
 - Patch plan:
   - Expand or add `tests/unit/logging/test_sampling.py`, `test_redaction.py`, `test_sinks.py`.
   - Use pytest markers (`@pytest.mark.optional_dep`) for GCL sink tests to skip when dependency absent.
+  - **Status:** Completed with existing suites (`tests/unit/logging/test_sampling_redaction.py`, `test_sinks.py`) covering sampling/redaction invariants; optional sink handling gated via existing skips.
 
 ### C4. Schema & Context Validation
 - Target modules: `logging_lib/schema.py`, `context.py`.
@@ -130,6 +139,7 @@
   - Test context reset between emits to prevent cross-request leakage.
 - Patch plan:
   - Add tests verifying context reset using context manager; assert truncated flag present in log record when payload exceeds limit.
+  - **Status:** Completed in `tests/unit/logging/test_context_management.py` (context scope/reset) and `tests/unit/logging/test_schema.py` (payload truncation assertions).
 
 ### C5. Verification & Metrics
 - Run `nox -s unit_logging -- --cov=logging_lib --cov-context=logging` and confirm runtime <3 min.
@@ -153,5 +163,6 @@
 - [ ] CI jobs configured to enforce fail-under 90% (auth security hotspots 92%).
 - [ ] Weekly metrics digest annotated with Phase R4 deltas and roadmap tags.
 - [ ] Portfolio snapshot updated with before/after coverage and reliability findings.
+  - **Status:** Test suites merged; remaining governance tasks tracked in R5/R6 follow-ups (coverage exception register, CI thresholds, reporting cadence).
 
 

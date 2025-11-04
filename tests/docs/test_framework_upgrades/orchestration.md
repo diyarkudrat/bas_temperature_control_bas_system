@@ -25,6 +25,19 @@ to pass additional pytest flags (for example `--maxfail=1`).
 Each session installs local pytest/coverage tooling inside its own virtual env and
 exports the repo root on `PYTHONPATH` so imports like `auth.*` resolve consistently.
 
+### CI Matrix & Governance
+- Workflow: `.github/workflows/tests.yml` fans out the NOX sessions across
+  `unit-api`, `unit-auth`, and `unit-logging`, enforcing `COVERAGE_FAIL_UNDER`
+  (default 90%) and uploading JSON/XML/HTML artifacts.
+- Coverage exceptions are regenerated per job via
+  `scripts/coverage/update_exceptions.py`, keeping the register in sync with the
+  latest run.
+- The regression guard (`scripts/coverage/regression_guard.py`) compares against
+  baselines under `coverage/baselines/`; update those files on `main` whenever a
+  new acceptable threshold is reached.
+- Weekly digest: `.github/workflows/coverage-digest.yml` produces
+  `docs/metrics/coverage-weekly.md` for portfolio sharing.
+
 ### Fixture Architecture
 - `tests/conftest.py` now limits itself to path setup, lightweight marker registration,
   and optional opt-in to legacy contract fixtures via `BAS_ENABLE_CONTRACT_FIXTURES`.
@@ -40,6 +53,8 @@ exports the repo root on `PYTHONPATH` so imports like `auth.*` resolve consisten
 - `PYTEST_TARGETS` — configure via `nox` helpers; override manually for bespoke runs.
 - `PYTEST_MARKER_ARCHITECTURE|RELIABILITY|SECURITY` — optional pytest expressions to
   further slice contexts without changing the script.
+- `COVERAGE_FAIL_UNDER` — fail-under percentage for `coverage report`; CI sets
+  this to 90 (or higher for critical modules).
 - `BAS_DISABLE_PLUGINS` — defaults to `1` for unit suites; set to `0` to re-enable
   heavy contract plugins or legacy behaviors.
 - `BAS_ENABLE_CONTRACT_FIXTURES` — defaults to `1`; set to `0` for faster runs when

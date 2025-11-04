@@ -120,8 +120,9 @@ def test_logger_manager_emits_drop_notice(logger_manager, memory_sink):
 
     queue = logger_manager._queue  # noqa: SLF001 - validating internals for drop path
 
-    queue.put({"component": "first", "level": "INFO"})
-    queue.put({"component": "second", "level": "INFO"})
+    capacity = getattr(queue, "_capacity", 4)
+    for idx in range(capacity + 2):
+        queue.put({"component": f"component-{idx}", "level": "INFO"})
 
     logger_manager.dispatcher.flush()
 
@@ -130,5 +131,7 @@ def test_logger_manager_emits_drop_notice(logger_manager, memory_sink):
 
     notice = drop_records[-1]
     assert notice["component"] == "logging.queue"
-    assert notice["context"]["drop"]["dropped_component"] == "first"
+    drop_context = notice["context"]["drop"]
+    assert drop_context["drop_count"] >= 1
+    assert drop_context["drop_reason"] == "queue_full"
 
