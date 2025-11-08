@@ -33,5 +33,12 @@ Operational Notes:
 - Additional dashboards (Codecov, Grafana, etc.) can ingest the JSON artifacts
   if desired; ensure tokens or webhooks are added to repository secrets before
   extending the workflows.
+- **Cadence & Ownership:**
+  - Weekly (Mondays): Review `coverage-weekly` artifact; QA chapter logs
+    regressions/non-actionable deltas.
+  - Monthly: Test leads audit `coverage_exceptions.md`, updating owner/remediation
+    status; capture notes in `knowledge_share_R6.md` or successors.
+  - Quarterly: Refresh portfolio memo & slides with latest metrics and note
+    updates in the alignment checklist.
 
 
