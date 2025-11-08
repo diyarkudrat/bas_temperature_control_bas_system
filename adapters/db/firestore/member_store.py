@@ -1,8 +1,5 @@
 """Firestore repository for tenant members."""
 
-from adapters.db.firestore.models import TenantMember
-
-
 from __future__ import annotations
 
 from typing import Any, Dict, List, Optional

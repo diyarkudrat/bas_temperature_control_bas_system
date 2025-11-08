@@ -1,8 +1,5 @@
 """Durable outbox repository backed by Firestore."""
 
-from adapters.db.firestore.models import OutboxEvent
-
-
 from __future__ import annotations
 
 from typing import Any, Dict, Optional

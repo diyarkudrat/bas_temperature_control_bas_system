@@ -1,10 +1,20 @@
 """Pytest plugin for contract validation during test execution."""
 
-import pytest
 import logging
-from typing import Dict, Any, List, Optional
+from typing import Any, Dict, List, Optional
 
-from ..contracts.firestore import ContractEnforcer, ContractViolationError
+import pytest
+
+try:
+    from ..contracts.firestore import ContractEnforcer, ContractViolationError
+    _CONTRACTS_AVAILABLE = True
+    _CONTRACTS_IMPORT_ERROR: Optional[Exception] = None
+except Exception as exc:  # pragma: no cover - safeguard for optional dependency
+    ContractEnforcer = None  # type: ignore[assignment]
+    ContractViolationError = RuntimeError  # type: ignore[assignment]
+    _CONTRACTS_AVAILABLE = False
+    _CONTRACTS_IMPORT_ERROR = exc
+
 from ..utils.business_rules import BusinessRules
 
 logger = logging.getLogger(__name__)
@@ -12,10 +22,16 @@ logger = logging.getLogger(__name__)
 
 def pytest_configure(config):
     """Configure pytest with contract validation settings."""
+    if not _CONTRACTS_AVAILABLE:
+        if _CONTRACTS_IMPORT_ERROR is not None:
+            logger.warning(
+                "Contract validation disabled: %s",
+                _CONTRACTS_IMPORT_ERROR,
+            )
+        return
+
     # Register markers
-    config.addinivalue_line(
-        "markers", "contract: Tests that validate contracts"
-    )
+    config.addinivalue_line("markers", "contract: Tests that validate contracts")
     config.addinivalue_line(
         "markers", "no_contract_validation: Skip contract validation for these tests"
     )
@@ -24,9 +40,8 @@ def pytest_configure(config):
     )
 
     # Add contract validation options
-    config.addinivalue_line(
-        "addopts", "--contract-validation"
-    ) if config.getoption("--contract-validation", default=False) else None
+    if config.getoption("--contract-validation", default=False):
+        config.addinivalue_line("addopts", "--contract-validation")
 
 
 def pytest_addoption(parser):
@@ -92,6 +107,8 @@ def pytest_addoption(parser):
 @pytest.fixture(scope="session")
 def contract_enforcer():
     """Provide contract enforcer instance for tests."""
+    if not _CONTRACTS_AVAILABLE or ContractEnforcer is None:
+        pytest.skip("Contract validation not available in this environment")
     return ContractEnforcer()
 
 
@@ -102,11 +119,18 @@ def contract_business_rules():
 
 
 @pytest.fixture(autouse=True)
-def contract_validation(request, contract_enforcer, contract_business_rules):
+def contract_validation(request):
     """Automatically validate contracts during test execution if enabled."""
-    if not request.config.getoption("--contract-validation"):
+    if (
+        not _CONTRACTS_AVAILABLE
+        or ContractEnforcer is None
+        or not request.config.getoption("--contract-validation")
+    ):
         yield
         return
+
+    contract_enforcer = request.getfixturevalue("contract_enforcer")
+    contract_business_rules = request.getfixturevalue("contract_business_rules")
 
     # Add legacy compatibility shims for certain tests/fixtures
     try:

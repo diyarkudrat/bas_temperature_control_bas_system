@@ -1,8 +1,5 @@
 """Firestore repository for invite documents."""
 
-from adapters.db.firestore.models import Invite
-
-
 from __future__ import annotations
 
 from typing import Any, Dict, Optional

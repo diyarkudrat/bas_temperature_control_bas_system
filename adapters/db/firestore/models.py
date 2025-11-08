@@ -1,5 +1,7 @@
 """Domain models for Firestore entities."""
 
+from __future__ import annotations
+
 from dataclasses import dataclass, field
 from typing import Dict, Any, Optional, List
 from datetime import datetime, timezone

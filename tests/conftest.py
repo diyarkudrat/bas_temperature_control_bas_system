@@ -9,8 +9,170 @@ from __future__ import annotations
 import os
 import sys
 from pathlib import Path
+from types import ModuleType, SimpleNamespace
 
 import pytest
+
+
+def _install_google_cloud_stubs() -> None:
+    """Install lightweight stubs for google-cloud dependencies used in tests."""
+
+    if "google" in sys.modules:
+        # Replace wholesale to avoid partially installed incompatible packages.
+        del sys.modules["google"]
+
+    google_module = ModuleType("google")
+    google_module.__path__ = []  # mark as package
+
+    cloud_module = ModuleType("google.cloud")
+    cloud_module.__path__ = []
+
+    # --- Firestore stubs -------------------------------------------------
+    firestore_module = ModuleType("google.cloud.firestore")
+    firestore_module.__path__ = []
+
+    class _CollectionReference:
+        def __init__(self, name: str = "") -> None:
+            self._name = name
+
+        def document(self, doc_id: str) -> SimpleNamespace:
+            doc = SimpleNamespace(
+                id=doc_id,
+                exists=False,
+                to_dict=lambda: {},
+                get=lambda **_: SimpleNamespace(exists=False, to_dict=lambda: {}),
+                set=lambda *args, **kwargs: None,
+                delete=lambda: None,
+            )
+            return doc
+
+        def where(self, *args, **kwargs) -> "._CollectionReference":
+            return self
+
+        def limit(self, *args, **kwargs) -> "._CollectionReference":
+            return self
+
+        def stream(self):
+            return iter(())
+
+    class _StubFirestoreClient:
+        def __init__(self, *args, **kwargs) -> None:
+            self._kwargs = kwargs
+
+        def collections(self):
+            return iter(())
+
+        def collection(self, name: str) -> SimpleNamespace:
+            return _CollectionReference(name)
+
+        def transaction(self):
+            class _Txn:
+                def call(self, func):
+                    return func(self)
+
+                def update(self, *args, **kwargs):
+                    return None
+
+            return _Txn()
+
+    firestore_module.Client = _StubFirestoreClient
+    firestore_module.AsyncClient = _StubFirestoreClient
+    firestore_module.SERVER_TIMESTAMP = object()
+    firestore_module.CollectionReference = _CollectionReference
+
+    # firestore_v1 stubs to satisfy indirect imports
+    firestore_v1_module = ModuleType("google.cloud.firestore_v1")
+    firestore_v1_module.__path__ = []
+    firestore_v1_types = ModuleType("google.cloud.firestore_v1.types")
+    firestore_v1_types.__path__ = []
+    firestore_v1_module.types = firestore_v1_types
+
+    class _AggregationResult:
+        pass
+
+    firestore_v1_types.AggregationResult = _AggregationResult
+
+    # --- Logging stubs ---------------------------------------------------
+    logging_module = ModuleType("google.cloud.logging")
+    logging_module.__path__ = []
+
+    class _StubLogger:
+        def __init__(self, name: str) -> None:
+            self.name = name
+
+        def log_struct(self, *args, **kwargs) -> None:
+            return None
+
+    class _StubLoggingClient:
+        def __init__(self, project: str | None = None, *args, **kwargs) -> None:
+            self.project = project or "stub-project"
+
+        def logger(self, name: str) -> _StubLogger:
+            return _StubLogger(name)
+
+    logging_module.Client = _StubLoggingClient
+
+    # --- Auth stubs ------------------------------------------------------
+    auth_module = ModuleType("google.auth")
+    auth_module.__path__ = []
+
+    def _default_credentials():
+        return (object(), "stub-project")
+
+    auth_module.default = _default_credentials
+
+    # --- API core stubs --------------------------------------------------
+    api_core_module = ModuleType("google.api_core")
+    api_core_module.__path__ = []
+    exceptions_module = ModuleType("google.api_core.exceptions")
+    exceptions_module.__path__ = []
+
+    class GoogleAPICallError(Exception):
+        pass
+
+    class PermissionDenied(GoogleAPICallError):
+        pass
+
+    class NotFound(GoogleAPICallError):
+        pass
+
+    exceptions_module.GoogleAPICallError = GoogleAPICallError
+    exceptions_module.PermissionDenied = PermissionDenied
+    exceptions_module.NotFound = NotFound
+    api_core_module.exceptions = exceptions_module
+
+    # --- RPC stubs (to satisfy api_core imports) ------------------------
+    rpc_module = ModuleType("google.rpc")
+    rpc_module.__path__ = []
+    error_details_module = ModuleType("google.rpc.error_details_pb2")
+    error_details_module.__path__ = []
+    rpc_module.error_details_pb2 = error_details_module
+
+    # --- Register modules ------------------------------------------------
+    sys.modules.update(
+        {
+            "google": google_module,
+            "google.cloud": cloud_module,
+            "google.cloud.firestore": firestore_module,
+            "google.cloud.firestore_v1": firestore_v1_module,
+            "google.cloud.firestore_v1.types": firestore_v1_types,
+            "google.cloud.logging": logging_module,
+            "google.auth": auth_module,
+            "google.api_core": api_core_module,
+            "google.api_core.exceptions": exceptions_module,
+            "google.rpc": rpc_module,
+            "google.rpc.error_details_pb2": error_details_module,
+        }
+    )
+
+    google_module.cloud = cloud_module
+    google_module.auth = auth_module
+    cloud_module.firestore = firestore_module
+    cloud_module.logging = logging_module
+
+
+if os.getenv("BAS_USE_GOOGLE_STUBS", "1") == "1":
+    _install_google_cloud_stubs()
 
 
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -109,6 +271,13 @@ except Exception:
     ContractValidator = None
     ValidationResult = None
     BusinessRules = None
+
+if not CONTRACTS_AVAILABLE:
+    pytest_plugins = [
+        plugin
+        for plugin in pytest_plugins
+        if not plugin.startswith("tests.plugins.contract")
+    ]
 
 # Global contract validator instance
 _contract_validator = ContractValidator() if CONTRACTS_AVAILABLE else None

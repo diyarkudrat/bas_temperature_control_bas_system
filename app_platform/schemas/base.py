@@ -18,7 +18,7 @@ class SchemaValidationError(ValueError):
 T = TypeVar("T", bound="BaseSchema")
 
 
-@dataclass(slots=True)
+@dataclass(slots=True, frozen=True)
 class BaseSchema:
     """Dataclass base providing convenience helpers."""
 

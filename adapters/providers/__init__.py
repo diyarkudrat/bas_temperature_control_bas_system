@@ -1,10 +1,19 @@
-"""Authentication providers package.
+"""
+Authentication providers package.
 
-Import specific providers directly from their modules, e.g.:
- - adapters.providers.base.AuthProvider
- - adapters.providers.factory.build_auth0_provider
- - adapters.providers.mock_auth0.MockAuth0Provider
- - adapters.providers.deny_all.DenyAllAuthProvider
+Convenience re-exports keep legacy imports working during the adapters
+module refactor. Callers may continue to import provider factories from
+``adapters.providers`` without chasing the new module layout.
 """
 
+from .auth0 import Auth0Provider
+from .deny_all import DenyAllAuthProvider
+from .factory import build_auth0_provider
+from .mock_auth0 import MockAuth0Provider
 
+__all__ = [
+    "Auth0Provider",
+    "DenyAllAuthProvider",
+    "MockAuth0Provider",
+    "build_auth0_provider",
+]
