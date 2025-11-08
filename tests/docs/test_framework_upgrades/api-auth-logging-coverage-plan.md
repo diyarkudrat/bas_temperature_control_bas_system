@@ -1,29 +1,28 @@
 # Test Framework Upgrade Plan — API Service, Auth Service, Logging Library
 
 ## Executive Summary (Portfolio View)
-- **Current state:** fragmented fixtures, legacy-weighted coverage (~55–60% across API/auth/logging), and no CI gating.
-- **Goal:** lift API, auth, and logging components to ≥90% unit coverage with documented exceptions while validating reliability and security behaviors (health checks, JWT validation, redaction).
-- **Timeline:** seven-week phased rollout with governance checkpoints, ADRs, and knowledge-sharing milestones.
-- **Impact:** expect 40% faster unit feedback loops, ≥50% fewer flaky reruns, and auditable proof of stateless factories and observability ready for hiring-manager review.
-- **Ownership:** end-to-end design and execution led by me, including roadmap alignment, tooling upgrades, and stakeholder communication.
+- **Current state:** fragmented fixtures, uneven coverage (~55–60% across API/auth/logging), and local-only workflows.
+- **Immediate goal:** achieve ≥90% unit coverage across `apps/api`, `apps/auth_service`, `adapters`, and `app_platform` using straightforward contract-based and mock-based tests, with exceptions documented but minimal.
+- **Timeline:** four lightweight iterations focused on fast local feedback before layering CI automation.
+- **Impact:** deliver auditable coverage gains, showcase stateless factories and defensive adapters, and keep the workflow simple enough to demo quickly for hiring conversations.
+- **Ownership:** end-to-end design, execution, and documentation led by me; defer GitHub Actions and governance guardrails until the coverage milestone is locked in.
 
 ## 1. Outcomes & Success Criteria
-- Achieve and enforce ≥90% line coverage for `apps/api`, `apps/auth_service`, and `logging_lib` by the end of Phase 4, while surfacing architecture, reliability, and security regressions called out in `docs/SYSTEM_IMPROVEMENTS.md`. Treat 90% as the default unit-test baseline, with explicitly documented exceptions for low-signal code and higher targets for critical flows.
-- Modernize the pytest-based framework so API and auth services are stateless and testable via explicit factories (no module-level singletons), supporting the roadmap’s “Adopt Stateless Deployment Model”.
-- Ship fast, reliable unit suites (≤4 min wall-clock on CI runners) with deterministic seeds and hermetic dependencies so chaos/load testing and observability upgrades can layer on with confidence.
-- Provide CI coverage gating, per-component dashboards, and actionable failure output to keep coverage from regressing and to document coverage deltas for the personal learning portfolio.
-- Explicitly verify roadmap-critical behaviors: health/readiness endpoints, observability hooks, security hardening (JWT validation, redaction), and durable fallbacks for rate limiting/idempotency stores.
-- Track complementary quality metrics (runtime, flaky reruns, escaped defects) to show hiring managers the tangible reliability gains alongside coverage.
+- Lift `apps/api`, `apps/auth_service`, `adapters`, and `app_platform` to ≥90% line coverage with contract-based and mock-based unit tests; keep carve-outs explicit and rare.
+- Keep fixtures and helpers minimal: stateless factories, deterministic fakes, and focused pytest sessions that run fast on a laptop.
+- Validate critical behaviors—JWT validation, readiness/health probes, adapter fallbacks, and platform guards—without introducing heavy plugins or CI orchestration yet.
+- Capture before/after coverage evidence and short write-ups for the portfolio, emphasizing design intent, statelessness, and coverage efficacy.
 
 ## 2. Scope & Non-Goals
 - **In scope:**
-  - Unit-level suites plus focused service-layer integration seams (Flask middleware, service bootstrap, logging dispatcher) that validate roadmap improvements (stateless factories, holistic health checks, observability hooks, modular middleware).
-  - Pytest plugins/fixtures, coverage tooling, and developer workflow updates that enable architectural refactors (modular middleware, domain-centric packages).
+  - Focused unit suites that lean on contracts and mocks for API, auth, adapter, and platform code paths; integration seams are exercised only when they unlock coverage for high-risk flows (bootstrap, middleware wiring, adapter fallbacks).
+  - Lightweight pytest configuration, stateless fixtures, and helper utilities needed to reach the 90% coverage goal without introducing heavy orchestration or CI dependencies.
 - **Out of scope (captured for later phases):** Long-running chaos/load tests, full contract rewrites, infrastructure provisioning (Docker/Helm), and mutation testing—these remain stretch goals once core coverage and fixtures stabilize.
 - **Target components:**
   - API service (`apps/api`): bootstrap, HTTP layer, middleware, clients, service wiring, readiness endpoints, security headers.
   - Auth service (`apps/auth_service`): Flask app factory, runtime bootstrap, service token plumbing, readiness endpoints, replay protection.
-  - Logging library (`logging_lib`): configuration, logger manager, dispatcher/queue, sinks, sampling/redaction helpers supporting DLP and observability requirements.
+  - Adapters (`adapters/`): outbound client wrappers, retries, error translation, and data-shaping helpers.
+  - Platform layer (`app_platform/`): shared bootstrap, feature toggles, security headers, and observability hooks required across services.
 
 ## 3. Current State Assessment
 ### 3.1 Repository Layout & Fixtures
@@ -39,18 +38,18 @@
 
 ### 3.3 Tooling Gaps
 - `pytest.ini` duplicates `addopts` blocks and points coverage at `server/`, which no longer exists for API/auth services.
-- No `.coveragerc` to define component-specific include/exclude rules, nor coverage contexts aligned to roadmap themes (architecture, reliability, security).
-- CI scripts (per `scripts/start_backend.sh` etc.) do not run targeted coverage suites; there is no fail-under guard or reporting that ties into roadmap metrics (health checks, observability).
-- Plugins for contract/business-rule validation are always imported, lengthening startup time. Opt-out via `BAS_DISABLE_PLUGINS=1` is manual.
+- No lightweight `.coveragerc` that scopes measurements to `apps/api`, `apps/auth_service`, `adapters`, and `app_platform` while ignoring legacy paths.
+- CI scripts (per `scripts/start_backend.sh` etc.) do not run targeted coverage suites; we will intentionally defer automation until local coverage goals are reached.
+- Plugins for contract/business-rule validation are always imported, lengthening startup time. Opt-out via `BAS_DISABLE_PLUGINS=1` is manual; the simplified plan favors explicit opt-in.
 - Statlessness and externalized state requirements are not currently validated by tests, so regressions would go unnoticed.
 
 ## 4. Design Goals & Constraints
 - Preserve developer ergonomics: tests must run via `pytest` without bespoke harnesses; new fixtures should be discoverable and documented for future learning iterations.
 - Keep suites deterministic and offline: all new unit tests must stub network, filesystem, Firestore, Redis,/Auth0 calls so load/chaos tooling can plug in later.
-- Provide opt-in contract/business-rule validators without blocking unit development speed.
+- Provide opt-in contract/business-rule validators without blocking unit development speed; default to mocks/fakes for fast feedback.
 - Ensure new tests align with the layered structure (application, domains, platform) and roadmap mandates (modular middleware, domain-centric packages).
 - Maintain compatibility with macOS (local dev) and Linux (CI runners), Python 3.11 runtime (per `System/pyvenv.cfg`).
-- Surface roadmap-driven behavior (health checks, observability, security) via coverage reports tagged by context to showcase personal learning outcomes.
+- Capture simple coverage reports (terminal + HTML) and short write-ups highlighting roadmap-driven behaviors for portfolio storytelling—no multi-context tagging yet.
 
 ## 5. Alignment with `docs/SYSTEM_IMPROVEMENTS.md`
 - **Architecture & Scalability:**
@@ -119,128 +118,93 @@
 ## 6. Coverage Strategy by Component
 ### 6.1 API Service (`apps/api`)
 - **Bootstrap & Config (`apps/api/main.py`, `bootstrap.py`):**
-  - Add tests that exercise `_build_auth_provider` branches (auth0, mock, deny-all) using patched env/config and confirm no module-level singletons leak between app instances.
-  - Cover `init_auth`, `init_firestore`, `init_tenant` flows by injecting fake configs and verifying state on the Flask app, including toggles for durable stores (Redis/Firestore) to align with externalized state goals.
-  - Validate error handling paths (missing auth0 config, Firestore failures) with `pytest.raises`, ensuring circuit-breaker logging is triggered.
+  - Exercise `_build_auth_provider` branches (auth0, mock, deny-all) via patched environment/config fixtures and assert factories stay stateless between tests.
+  - Cover `init_auth`, `init_firestore`, and `init_tenant` flows using deterministic fakes; confirm wiring of feature toggles and fallback logging.
+  - Force error paths (missing config, dependency failure) with `pytest.raises` and assert safe responses surfaced through health endpoints.
 - **HTTP Layer (`apps/api/http/*`):**
-  - Use Flask test client fixture to cover auth routes, health endpoints (readiness + liveness), org flows, versioning header injection, and security headers.
-  - Add middleware tests for rate limiting (`rate_limit.py`), idempotency store, security headers, tenant context—assert order of operations, durable backend fallback, and failure responses requested in the roadmap.
-  - Parameterize tests around headers (tenant missing, user agent variations) to exercise logging context and observability metadata.
+  - Use a simple Flask test client fixture to cover readiness/liveness endpoints, tenant context propagation, and security headers.
+  - Validate middleware ordering and fallbacks (rate limiting, idempotency, auth decorators) with mocks instead of live services.
 - **Clients & Services:**
-  - Mock outbound HTTP (AuthServiceClient) using `responses` or built-in `requests_mock` to validate retries, metrics increments, breaker activation, and error translation.
-  - Expand `DeviceCredentialService` tests to cover rotation window math, metadata defaults, secret manager fallbacks, failure scenarios, and logging redaction of secrets.
-- **Utilities & Observability:**
-  - Add property-style tests for version negotiation in `http/versioning.py` and schema validations in `http/schemas/*`.
-  - Assert structured logging payloads include trace/request identifiers per roadmap DLP/observability guidance.
-- **Target Coverage:** 90%+ line coverage, with branch coverage on auth provider selection, middleware fallback logic, and health-check failure states.
+  - Mock outbound HTTP/queue clients to validate retries, metrics, and redaction logic without network calls.
+- **Coverage Target:** ≥90% line coverage with branch attention on provider selection, middleware fallbacks, and error handling.
 
 ### 6.2 Auth Service (`apps/auth_service`)
 - **Application Factory (`create_app`, `bootstrap_runtime`):**
-  - Build parametric tests that instantiate the Flask app with stubbed configs; assert hooks, blueprints, error handlers, and stateless context initialization are registered.
-  - Verify exception handling when configuration files are missing/corrupt (`ServiceConfigurationError`) and ensure failures propagate meaningful health-check responses.
+  - Instantiate the Flask app with stubbed configs; assert blueprints, hooks, and stateless teardown.
+  - Validate failure scenarios (missing secrets, invalid config) and ensure readiness endpoints expose clear diagnostics.
 - **Service Tokens & Security (`_build_service_token_settings`):**
-  - Use env fixtures to cover success, missing keyset, mismatched issuers, replay cache backend selection, and required scopes aligned with “Service-to-Service Policy”.
-  - Validate `ServiceTokenSettings` dataclass inputs (audience, subjects, required scopes) with boundary cases (empty env, CSV parsing).
-- **Runtime Dependencies:**
-  - Mock `load_service_keyset_from_env`, `load_replay_cache_from_env`, `CircuitBreaker` to assert logging side-effects, replay protection, and rate limiter wiring.
-  - Test `register_healthcheck` and request hooks (context logging, metrics counters) using Flask request contexts, ensuring observability context attaches request IDs and tenant info.
-- **Service Layer (`apps/auth_service/services/*`):**
-  - Add tests for email verification, invite service token expiration, Auth0 management client request shaping (HTTP verbs, endpoints, error decoding) with redacted logging of sensitive payloads.
-  - Use fake HTTP session objects to ensure retries and error classification behave as expected, including circuit breaker transitions.
-- **Target Coverage:** ≥92% line coverage, branch emphasis on token error handling, configuration fallbacks, and security logging.
+  - Parameterize tests around keyset loading, issuer mismatches, replay cache backend toggles, and required scope enforcement.
+- **Runtime Dependencies & Services:**
+  - Mock Auth0 sessions, replay caches, and breakers to inspect logging, retries, and redaction behavior deterministically.
+- **Coverage Target:** ≥90% line coverage, with emphasis on token error handling and guardrails.
 
-### 6.3 Logging Library (`logging_lib`)
-- **Configuration & Manager:**
-  - Cover `LoggerManager.configure`, ensuring sink selection, queue sizing, redactor setup, and metrics reset; test fallback to stdout when sinks list empty.
-  - Exercise lazy initialization paths for `dispatcher` and `settings` properties and confirm stateless reconfiguration between tests.
-- **Dispatcher & Queue:**
-  - Create synchronous dispatcher fixture to test batch flushing, retry backoff, and drop handling; assert metadata produced by `RingBufferQueue.emit_drop_event` for multiple drops and verify durable retry semantics envisioned for resiliency.
-  - Simulate sink failure to ensure retry/backoff logic, metrics increment, and chaos-test hooks succeed.
-- **Sampling & Redaction:**
-  - Parameterized tests for `should_emit` across levels, sticky fields, deterministic token behavior (already partially covered) and fallback when context missing.
-  - Validate `build_registry` denies/includes nested fields, truncation lengths, strict mode errors, and DLP compliance for sensitive keys (password, secrets, tokens).
-- **Sinks & Observability:**
-  - Test `StdoutSink`, `InMemorySink`, and (conditional) Google Cloud sink stubs by mocking dependencies to ensure payload transformation and ensure metrics/traces emitted when sinks fail.
-- **Schema & Context:**
-  - Add tests that ensure `build_log_record` enforces payload limits, attaches context, marks truncated payloads, and includes correlation IDs for tracing goals.
-- **Target Coverage:** ≥90% line coverage, with explicit tests around concurrency edge cases (e.g., contextvars reset, queue overrun) and observability instrumentation.
+### 6.3 Adapters (`adapters/`)
+- **Client Wrappers & Retries:**
+  - Define protocols/contracts for outbound clients and use in-memory fakes to exercise retry, timeout, and error translation branches.
+- **Data Shaping Helpers:**
+  - Cover serialization/deserialization helpers with table-driven tests; include failure cases that confirm safe defaults and redactions.
+- **Coverage Target:** ≥90% line coverage focused on deterministic handling of success, retry, and terminal failure paths.
+
+### 6.4 Platform Layer (`app_platform/`)
+- **Bootstrap & Configuration:**
+  - Test feature toggles, environment parsing, and shared app setup using fixtures that reset global state.
+- **Security & Observability Hooks:**
+  - Use contract-based tests to ensure headers, tracing IDs, and logging context propagate consistently into consuming services.
+- **Shared Utilities:**
+  - Validate helpers (tenant resolution, request context) with parameterized tests and mocks for external dependencies.
+- **Coverage Target:** ≥90% line coverage, proving shared behaviors remain stateless and reusable.
+
+### 6.5 Logging Library (`logging_lib`) – optional stretch
+- While not a top-level milestone, maintain existing logging tests and opportunistically expand coverage for dispatcher fallbacks and redaction helpers when it accelerates API/auth/platform work.
+- Document any remaining gaps in `coverage_exceptions.md` with owners and follow-up dates once core directories meet the 90% goal.
 
 ## 7. Phased Implementation Plan
-| Phase | Duration | Key Deliverables | Coverage Targets | Exit Criteria |
-|-------|----------|------------------|------------------|---------------|
-| 0. Baseline (Week 0) | 2 days | Coverage audit script, `.coveragerc`, cleaned `pytest.ini`, coverage-exception rubric draft, baseline metrics snapshot | Document current % + note proposed exceptions | Coverage report published, CI job skeleton created, exception rubric reviewed |
-| 1. Framework Foundations (Week 1) | 5 days | Fixture split, lightweight conftests, helper utils, docs updates (`tests/docs/test_framework_upgrades/guide.md`), coverage exception register checked into repo, knowledge-share notes | Maintain baseline with documented exceptions | New fixtures adopted by one pilot suite, tests run <2 min locally, exception register linked from docs, mentoring recap logged |
-| 2. Logging Library Focus (Week 2) | 5 days | Expanded logging tests, deterministic dispatcher harness, coverage gating at 85% warn, exception review (e.g., optional sinks), mutation test spike | ≥85% logging (default), higher target for critical paths | Logging CI job passes with new tests, fail-under warning enabled, exceptions justified, mutation results recorded |
-| 3. API Service Coverage (Weeks 3-4) | 10 days | Route/middleware/unit tests, AuthServiceClient mocks, coverage instrumentation in CI, risk-based coverage plan for adapters, stakeholder demo deck | ≥85% API mid-week, ≥90% by end (with tracked carve-outs) | API CI job enforces 90% fail-under, exceptions reviewed and approved, demo feedback captured |
-| 4. Auth Service Coverage (Weeks 5-6) | 10 days | App factory, token settings, service layer tests; unify auth fixtures; security hotspot coverage deeper than 90%; post-mortem simulation dry run | ≥90% auth baseline, ≥95% on security-critical modules | Auth CI job enforces 90% fail-under, shared fixtures stable, high-risk modules documented, dry-run report filed |
-| 5. Harden & Document (Week 7) | 3 days | Coverage dashboards, developer docs, regression playbook, pre-commit integration, roadmap alignment summary, coverage exception ADR, executive summary slide | Maintain 90%+ across components (minus approved exceptions) | Coverage trend monitored for 2 successful CI cycles, roadmap alignment doc published, exception ADR merged, slide added to portfolio |
+| Phase | Focus | Key Deliverables | Exit Criteria |
+|-------|-------|------------------|---------------|
+| 0. Simplify Framework (2 days) | Establish lightweight tooling | Single `.coveragerc` scoped to `apps/api`, `apps/auth_service`, `adapters`, `app_platform`; trimmed `pytest.ini`; baseline coverage snapshot and exception register seeded | Local `pytest --cov` run completes <4 min with documented baseline numbers |
+| 1. API Coverage (4 days) | Hit 90%+ in `apps/api` | Contract-focused fixtures, expanded HTTP/middleware/client tests, portfolio notes on stateless factories | Coverage report shows ≥90% with exceptions noted; key auth/middleware behaviors asserted |
+| 2. Auth Coverage (4 days) | Hit 90%+ in `apps/auth_service` | Token settings, factory bootstraps, replay protection, and failure-path tests using mocks | Coverage report shows ≥90%; token failure scenarios documented for portfolio |
+| 3. Adapters & Platform (5 days) | Hit 90%+ in `adapters/` and `app_platform/` | Protocol contracts, retry behavior tests, platform bootstrap coverage, shared helper documentation | Both directories at ≥90%; shared fixtures prove statelessness |
+| 4. Polish & Share (optional, 2 days) | Storytelling and cleanup | Update docs, prepare before/after metrics, identify follow-up work for future enhancements | Portfolio packet updated; backlog for automation/future work captured |
 
 ### Coverage Governance Across Phases
-- Maintain a living `coverage_exceptions.md` that records rationale, owner, review date, and planned remediation for every module below 90%.
-- Pair quantitative coverage gates with qualitative reviews: mutation tests or targeted scenario tests for high-risk modules each phase.
-- Require phase exit reviews to confirm exceptions remain justified and that critical modules exceed the baseline (e.g., auth token verification, logging redaction).
-- Embed coverage tags (architecture/reliability/security) into reports so roadmap themes stay visible across phases.
-- Document learnings per phase in the roadmap alignment summary to reinforce the personal project’s educational goals.
-- Track supplemental quality metrics—mean unit test runtime, flaky reruns, escaped defect count—to connect coverage to reliability outcomes.
+- Maintain `tests/docs/test_framework_upgrades/coverage_exceptions.md` as a lightweight ledger for any module below 90%, including rationale and planned remediation.
+- Re-run the `pytest --cov` baseline at the end of each phase; update the ledger and capture a short note (win/learn) for the portfolio.
+- Keep runtime, coverage %, and notable regressions in a simple markdown log for later automation—no dashboards or gating yet.
 
 ## 8. Metrics & Reporting
-- Nightly coverage pipeline producing JSON + HTML per component and per roadmap theme (architecture, reliability, security), stored under `coverage/` and uploaded to artifact storage.
-- Trend dashboard (Grafana/Looker/Codecov or simple markdown summary) with 4-week rolling coverage delta; alert when drop >2% or fail-under breached, annotated with roadmap category.
-- Track test runtime, failure rate, flaky test incidents (CI re-runs) to quantify stability improvements and readiness for chaos/load testing; target ≥50% reduction in flaky reruns by Phase 5.
-- Document manual run commands and expected runtime in `tests/docs/12-test-commands.md`, including commands grouped by roadmap theme.
-- Produce a quarterly portfolio snapshot summarizing coverage, reliability metrics, and key decisions for hiring-manager conversations.
+- Use `python -m pytest tests --cov --cov-config=coverage/.coveragerc --cov-report=term-missing` for fast local snapshots; capture HTML reports only when preparing portfolio updates.
+- Log coverage %, runtime, and notable regressions in `docs/metrics/coverage-notes.md` (simple markdown checklist).
+- Attach short “what changed / what is next” blurbs to each phase to reinforce the learning narrative.
+- Update `tests/docs/12-test-commands.md` with the streamlined commands so the workflow remains easy to follow.
 
 ## 9. Risks & Mitigations
 - **Global state in Flask apps:** Import-time singletons (`apps/api/main.py`) complicate isolation and violate stateless deployment goals. *Mitigation:* centralize app factory fixture that resets globals via helper functions; use monkeypatch to swap `BASController`/Firestore factories and assert cleanup in teardown.
 - **Heavy dependency graph in `tests/conftest.py`:** Could break when splitting fixtures. *Mitigation:* incremental refactor with fallback to legacy imports; run full suite each phase to catch regressions.
-- **Coverage gating false negatives:** Build pipeline differences vs local env. *Mitigation:* pin coverage tool versions, run dedicated coverage job on clean virtualenv, compare JSON outputs.
+- **Manual coverage drift:** Without CI guardrails, coverage reports can become stale. *Mitigation:* save hashes of local reports with each phase’s notes and re-run the baseline before publishing portfolio updates.
 - **Optional dependencies (Google Cloud sink):** Hard to exercise without libs. *Mitigation:* mock modules, mark tests with `@pytest.mark.optional_dep` and skip gracefully when packages missing.
 - **Parallel test execution:** Splitting fixtures may expose hidden race conditions. *Mitigation:* enforce deterministic queue draining, leverage `pytest-xdist --dist=loadscope` once suites stabilized, and add stress tests targeting roadmap reliability goals.
 - **Roadmap drift:** System improvements evolve; tests may lag updated requirements. *Mitigation:* maintain alignment checklist in documentation and update coverage contexts when roadmap changes.
 
 ## 10. Open Questions & Follow-Ups
-- Confirm CI environment (GitHub Actions vs internal) to finalize job definitions and caching strategy.
-- Decide on adoption of `nox` vs extending existing shell scripts (`scripts/start_backend.sh`) for test orchestration.
-- Determine whether to migrate auth-domain tests from `tests/unit/auth` into layered structure during Phase 4 or defer to later phase.
-- Evaluate need for contract tests on the new API routes once unit coverage stabilized (possible Phase 8 work).
-- Clarify timeline for integrating chaos/load testing so unit coverage can expose the right seams ahead of reliability experiments.
-- Identify tooling (e.g., Semgrep/Bandit) integration schedule to tie security tests into coverage contexts.
-- Plan cadence for updating portfolio snapshots (monthly vs per phase) to keep hiring collateral fresh.
+- When should GitHub Actions coverage guardrails come online once local runs stabilize at ≥90%?
+- Do existing `tests/unit/auth` suites migrate into the new layered layout during the coverage push or after the milestone?
+- Which contract validators merit re-enabling first (API vs Auth) when preparing CI automation?
+- What lightweight stress/concurrency harness (xdist, hypothesis) best showcases horizontal scale behavior for adapters and platform helpers?
+- How often should the portfolio snapshot refresh (per phase vs monthly) to reflect measurable coverage progress?
 
-## 11. Next Steps (Immediate)
-- Approve Phase 0 tasks; schedule coverage baseline run using current `pytest` invocation to set reference metrics and capture roadmap-aligned coverage tags.
-- Author fixture split RFC (1-pager) to align team before refactoring `conftest`, highlighting stateless deployment and modular middleware requirements.
-- Create tracking issues for each phase, including owners, due dates, roadmap mapping, and dependencies on config or secret management.
-- Begin drafting developer documentation updates in parallel with fixture refactor to minimize knowledge gaps and tie tests to roadmap outcomes.
-- Draft a lightweight alignment checklist that maps each roadmap bullet to planned or existing tests for ongoing validation.
-- Assemble baseline portfolio packet: executive summary slide, metrics dashboard screenshot, leadership log template.
+## 11. Future Enhancements
+- Automate coverage guardrails (GitHub Actions matrix jobs, fail-under thresholds, artifact uploads) once local coverage stabilizes.
+- Reintroduce themed coverage contexts (architecture/reliability/security) using `coverage run --context`, pairing them with lightweight dashboards or digests.
+- Expand stress/concurrency scenarios (xdist, property-based fuzzers) to demonstrate horizontal scale readiness for adapters and platform code.
+- Integrate contract validation toggles into CI with alerting, enabling portfolio-friendly "contract failure" metrics.
+- Layer in security/static analysis tooling (Semgrep, Bandit) after the 90% milestone to round out the reliability narrative.
 
-
-## 12. Remaining Work Multi-Phase Execution Plan
-- **Phase R1 — Coverage Infrastructure (2 days)**
-  - Deliver `.coveragerc` with scoped `source`, `omit`, and context sections plus updated `pytest.ini` `addopts` and `pytest-cov` wiring.
-  - Stand up repeatable coverage baseline script that emits HTML + JSON artifacts under `coverage/` with roadmap tags (architecture/reliability/security).
-  - Exit criteria: baseline coverage snapshot published, coverage exception register seeded with current carve-outs.
-- **Phase R2 — Test Orchestration (2 days)**
-  - Add `nox` sessions (`unit_api`, `unit_auth`, `unit_logging`) and lightweight `make` wrappers; document local usage expectations.
-  - Confirm CI runner environment, caching strategy, and artifact retention; capture decisions in tracking issue.
-  - Exit criteria: engineers can run each suite via `nox`/`make`; CI decision doc approved.
-- **Phase R3 — Fixture & Utility Refactor (4 days)**
-  - Split monolithic `tests/conftest.py` into layered unit-level conftests with opt-in heavy plugins.
-  - Introduce shared helpers in `tests/utils/` (Flask app factory, env context manager, logging dispatcher harness, health-check simulator) and update docs.
-  - Exit criteria: pilot suite runs with new fixtures, statelessness assertions in place, legacy fixtures aliased for backward compatibility.
-- **Phase R4 — Component Test Expansions (10 days total)**
-  - `R4A API (4 days)`: Cover bootstrap paths, middleware ordering, client/service resilience, and observability hooks with ≥90% coverage and documented exceptions.
-  - `R4B Auth (3 days)`: Test app factory boot failures, service-token settings, replay cache wiring, and Auth0 client interactions; target ≥92% coverage.
-  - `R4C Logging (3 days)`: Exercise dispatcher/queue fallbacks, sink failures, sampling/redaction edges, and schema enforcement; enforce ≥90% coverage.
-  - Exit criteria: coverage gates passing locally for each component; risk-based carve-outs reviewed.
-- **Phase R5 — CI & Governance Hardening (3 days)**
-  - Implement CI matrix jobs with per-component fail-under thresholds (soft 85% → hard 90%) and publish XML/JSON artifacts with roadmap tags.
-  - Wire weekly metrics digest capturing coverage deltas, runtime, and flaky reruns; automate alerts for >2% regressions.
-  - Exit criteria: CI pipeline blocks sub-threshold coverage; governance dashboard live.
-- **Phase R6 — Documentation & Portfolio Enablement (3 days)**
-  - Finalize playbooks (`tests/docs/`), update `tests/docs/12-test-commands.md`, publish fixture RFC outcomes, and refresh alignment checklist.
-  - Produce portfolio packet (exec summary, metrics trends, leadership log) and schedule cadence for snapshot updates.
-  - Exit criteria: documentation merged, portfolio assets delivered, cadence set on team calendar.
+## 12. Next Steps (Immediate)
+- Approve Phase 0 work; run the simplified `pytest --cov` baseline and capture current coverage per directory.
+- Draft the fixture split outline focused on stateless factories and deterministic mocks/fakes.
+- Create lightweight tracking notes for Phases 1–3 (API, Auth, Adapters/Platform) with coverage checkpoints and contract priorities.
+- Update `tests/docs/12-test-commands.md` and `docs/metrics/coverage-notes.md` to reflect the streamlined workflow.
+- Assemble an initial portfolio snapshot (baseline metrics + qualitative learnings) to showcase progress after Phase 1.
 
 

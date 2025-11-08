@@ -3,6 +3,7 @@
 ## Goals
 
 - Reliability-first tests that catch regressions early
+- Consistent ≥90% line coverage across `apps/api`, `apps/auth_service`, `adapters`, and `app_platform` using contract- and mock-driven suites
 - Clear organization mirroring application domains (auth, firestore, services)
 - Contract-based validation of behaviors and data models
 - Centralized business rules to keep behaviors consistent and avoid duplication
@@ -19,8 +20,8 @@
 ## Quick Start
 
 ```bash
-# 1. Bootstrap the local environment (once per shell)
-python3 -m venv .venv
+# 1. Activate the project virtual environment (once per shell)
+test -d .venv || python3 -m venv .venv
 source .venv/bin/activate
 pip install -r apps/api/requirements.txt
 
@@ -42,6 +43,13 @@ nox -s tests_unit_logging
 # 6. Generate the roadmap-themed coverage baseline
 scripts/coverage_baseline.sh --suite all
 ```
+
+## Current Focus
+
+- Phase 0: simplify tooling with a scoped `.coveragerc`, trimmed `pytest.ini`, and fast `pytest --cov` baseline runs.
+- Capture coverage percentages and runtime notes in `docs/metrics/coverage-notes.md` after each local run.
+- Draft the fixture split outline emphasizing stateless factories and deterministic fakes for API, auth, adapters, and platform layers.
+- Keep workflow lightweight; defer GitHub Actions guardrails and dashboards until coverage milestones are consistently met.
 
 ## Documentation Map
 

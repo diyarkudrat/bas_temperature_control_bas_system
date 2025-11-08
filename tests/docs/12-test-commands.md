@@ -12,7 +12,7 @@
 
 ```bash
 # Activate the project virtual environment (once per shell)
-python3 -m venv .venv  # skip if already created
+test -d .venv || python3 -m venv .venv
 source .venv/bin/activate
 
 # Run the full unit suite with fast failure feedback
@@ -49,43 +49,23 @@ python -m pytest tests -m "not no_contract_validation" -v
 ```
 
 ## Coverage
-Test coverage measures how much of your code runs during tests. Higher coverage helps reveal untested paths, reduce regressions, and build confidence when refactoring. Aim for meaningful coverage of critical paths rather than 100% everywhere.
+Test coverage measures how much of your code runs during tests. Higher coverage helps reveal untested paths, reduce regressions, and build confidence when refactoring. Aim for meaningful coverage of critical paths—our immediate goal is ≥90% line coverage across `apps/api`, `apps/auth_service`, `adapters`, and `app_platform`.
 
 ```bash
-# Default component coverage (mirrors pytest.ini + `.coveragerc`)
+# Baseline coverage run (logs to terminal + HTML if requested)
 python -m pytest tests -v --cov --cov-report=term-missing --cov-config=coverage/.coveragerc
 
-# Component-specific focus runs
+# Component-specific focus runs (API/Auth/Adapters/Platform)
 python -m pytest tests/unit/api --cov --cov-config=coverage/.coveragerc -m "api or http" -v
 python -m pytest tests/unit/auth --cov --cov-config=coverage/.coveragerc -m auth -v
-python -m pytest tests/unit/logging --cov --cov-config=coverage/.coveragerc -m logging -v
+python -m pytest tests/unit/adapters --cov --cov-config=coverage/.coveragerc -m adapters -v
+python -m pytest tests/unit/platform --cov --cov-config=coverage/.coveragerc -m platform -v
 
-# Run the roadmap-themed baseline (HTML + JSON outputs)
-scripts/coverage_baseline.sh --suite all
+# Optional HTML report for portfolio snapshots
+python -m pytest tests --cov --cov-config=coverage/.coveragerc --cov-report=html
 
-# Make/Nox wrappers (Phase R2 orchestration)
-make test-api-unit          # delegates to nox -s tests_unit_api
-make test-auth-unit         # delegates to nox -s tests_unit_auth
-make test-logging-unit      # delegates to nox -s tests_unit_logging
-
-# CI-equivalent run (enforces fail-under)
-COVERAGE_FAIL_UNDER=90 nox -s "tests(unit_api)"
-COVERAGE_FAIL_UNDER=90 nox -s "tests(unit_auth)"
-COVERAGE_FAIL_UNDER=90 nox -s "tests(unit_logging)"
-
-# Update coverage exceptions register after a local run
-python scripts/coverage/update_exceptions.py \
-  --suite api \
-  --coverage-json coverage/json/api.json \
-  --owner "Your Name" --mitigation "Increase tests" --dry-run
-
-# Compare against the committed baseline before pushing
-python scripts/coverage/regression_guard.py \
-  --current coverage/json/api.json \
-  --previous coverage/baselines/api.json
-
-# Re-enable legacy plugins (contract validation) when required
-BAS_DISABLE_PLUGINS=0 BAS_ENABLE_CONTRACT_FIXTURES=1 make test-api-unit
+# Re-enable contract plugins when validating interfaces
+BAS_DISABLE_PLUGINS=0 BAS_ENABLE_CONTRACT_FIXTURES=1 python -m pytest tests/unit/api -m contract -v
 
 # Open HTML report (macOS)
 open coverage/html/index.html
@@ -100,8 +80,8 @@ modules in `tests/docs/test_framework_upgrades/coverage_exceptions.md`.
 ### Quick bash examples
 
 ```bash
-# Fast signal on logging library only
-python -m pytest tests/unit/logging --cov --maxfail=1 -q
+# Fast signal on adapters only
+python -m pytest tests/unit/adapters --cov --maxfail=1 -q
 
 # Run with branch coverage for a single file
 python -m pytest tests/unit/auth/test_services.py \
@@ -111,9 +91,8 @@ python -m pytest tests/unit/auth/test_services.py \
 python -m pytest tests -q \
   --cov --cov-config=coverage/.coveragerc --cov-report=xml
 
-# Generate the weekly coverage digest locally
-python scripts/coverage/generate_digest.py coverage/json/api.json \
-  coverage/json/auth.json coverage/json/logging.json --output docs/metrics/coverage-weekly.md
+# Record a manual note for the coverage log
+echo \"$(date '+%Y-%m-%d') | api 91.2 | auth 92.0 | adapters 90.5 | platform 90.1 | notes\" >> docs/metrics/coverage-notes.md
 ```
 
 ## Useful Tips
